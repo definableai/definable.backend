@@ -93,6 +93,8 @@ def upgrade():
 def downgrade():
   for table in ["prompts", "conversations", "chat_sessions"]:
     op.execute(f"DROP TRIGGER IF EXISTS update_{table}_updated_at ON {table}")
+  # drop chat_session_status enum
   op.drop_table("chat_sessions")
+  op.execute("DROP TYPE IF EXISTS chat_session_status")
   op.drop_table("prompts")
   op.drop_table("conversations")
