@@ -1,0 +1,12 @@
+{
+    "[python]": {
+      "editor.tabSize": 2,
+      "editor.defaultFormatter": "charliermarsh.ruff",
+      "editor.formatOnSave": true,
+      "editor.codeActionsOnSave": {
+        "source.organizeImports.ruff": "explicit"
+      }
+    },
+    "ruff.configuration": "../ruff.toml",
+    "ruff.trace.server": "off",
+}
