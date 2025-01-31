@@ -25,18 +25,16 @@ def upgrade():
   op.create_table(
     "messages",
     sa.Column("id", postgresql.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
-    sa.Column("conversation_id", postgresql.UUID(), nullable=False),
-    sa.Column("prompt_id", postgresql.UUID(), nullable=True),
-    sa.Column("role", sa.Enum("user", "assistant", name="message_role"), nullable=False),
+    sa.Column("chat_session_id", postgresql.UUID(), nullable=False),
+    sa.Column("role", sa.Enum("USER", "AGENT", "SYSTEM", name="message_role"), nullable=False),
     sa.Column("content", sa.Text(), nullable=False),
+    sa.Column("token_used", sa.Integer(), nullable=True),
     sa.Column("metadata", postgresql.JSONB(), nullable=True),
     sa.Column("created_at", sa.TIMESTAMP(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
     sa.PrimaryKeyConstraint("id"),
-    sa.ForeignKeyConstraint(["conversation_id"], ["conversations.id"], ondelete="CASCADE"),
-    sa.ForeignKeyConstraint(["prompt_id"], ["prompts.id"], ondelete="SET NULL"),
+    sa.ForeignKeyConstraint(["chat_session_id"], ["chat_sessions.id"], ondelete="CASCADE"),
   )
-  op.create_index("ix_messages_conversation_id", "messages", ["conversation_id"])
-  op.create_index("ix_messages_prompt_id", "messages", ["prompt_id"])
+  op.create_index("ix_messages_chat_session_id", "messages", ["chat_session_id"])
   op.create_index("ix_messages_created_at", "messages", ["created_at"])
 
   # Create user_favorites table

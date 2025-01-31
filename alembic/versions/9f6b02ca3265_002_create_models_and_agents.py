@@ -25,7 +25,6 @@ def upgrade():
   op.create_table(
     "models",
     sa.Column("id", postgresql.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
-    sa.Column("organization_id", postgresql.UUID(), nullable=False),
     sa.Column("name", sa.String(255), nullable=False),
     sa.Column("provider", sa.String(100), nullable=False),
     sa.Column("version", sa.String(50), nullable=False),
@@ -34,16 +33,14 @@ def upgrade():
     sa.Column("created_at", sa.TIMESTAMP(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
     sa.Column("updated_at", sa.TIMESTAMP(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
     sa.PrimaryKeyConstraint("id"),
-    sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
-    sa.UniqueConstraint("organization_id", "name", "provider", "version"),
+    sa.UniqueConstraint("name", "provider", "version"),
   )
-  op.create_index("ix_models_org_name_provider_version", "models", ["organization_id", "name", "provider", "version"], unique=True)
+  op.create_index("ix_models_name_provider_version", "models", ["name", "provider", "version"], unique=True)
 
   # Create agents table
   op.create_table(
     "agents",
     sa.Column("id", postgresql.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
-    sa.Column("organization_id", postgresql.UUID(), nullable=False),
     sa.Column("name", sa.String(255), nullable=False),
     sa.Column("description", sa.Text(), nullable=False),
     sa.Column("model_id", postgresql.UUID(), nullable=False),
@@ -52,11 +49,10 @@ def upgrade():
     sa.Column("created_at", sa.TIMESTAMP(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
     sa.Column("updated_at", sa.TIMESTAMP(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
     sa.PrimaryKeyConstraint("id"),
-    sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
     sa.ForeignKeyConstraint(["model_id"], ["models.id"], ondelete="CASCADE"),
-    sa.UniqueConstraint("organization_id", "name"),
+    sa.UniqueConstraint("name"),
   )
-  op.create_index("ix_agents_org_name", "agents", ["organization_id", "name"], unique=True)
+  op.create_index("ix_agents_name", "agents", ["name"], unique=True)
   op.create_index("ix_agents_model_id", "agents", ["model_id"])
 
   # Create updated_at triggers
