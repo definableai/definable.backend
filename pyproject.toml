@@ -1,45 +1,41 @@
-[project]
+[tool.poetry]
 name = "zyeta-backend"
 version = "0.1.0"
-description = ""
-authors = [
-    {name = "Anandesh Sharma",email = "anandesh.sharma@dolbo.ai"}
-]
+description = "Your project description here"
+authors = ["Anandesh Sharma <anandesh.sharma@dolbo.ai>"]
 readme = "README.md"
-requires-python = ">=3.9,<4.0"
-dependencies = [
-    "fastapi[standard] (>=0.115.6,<0.116.0)",
-    "pre-commit (>=4.0.1,<5.0.0)",
-    "ruff (>=0.8.6,<0.9.0)",
-    "mypy (>=1.14.1,<2.0.0)",
-    "insightface (>=0.7.3,<0.8.0)",
-    "opencv-python (>=4.10.0.84,<5.0.0.0)",
-    "onnxruntime (>=1.20.1,<2.0.0)",
-    "pytest (>=8.3.4,<9.0.0)",
-    "pydantic-ai (>=0.0.19,<0.0.20)",
-    "pyjwt (>=2.10.1,<3.0.0)",
-    "python-dotenv (>=1.0.1,<2.0.0)",
-    "pydantic-settings (>=2.7.1,<3.0.0)",
-    "alembic (>=1.14.0,<2.0.0)",
-    "asyncpg (>=0.30.0,<0.31.0)",
-    "sqlalchemy[asyncio] (>=2.0.37,<3.0.0)",
-    "resend (>=2.5.1,<3.0.0)",
-    "apscheduler (>=3.11.0,<4.0.0)",
-    "stripe (>=11.4.1,<12.0.0)",
-    "python-jose[cryptography] (>=3.3.0,<4.0.0)",
-    "langchain (>=0.3.17,<0.4.0)",
-    "langchain-community (>=0.3.16,<0.4.0)",
-    "langchain-core (>=0.3.33,<0.4.0)",
-    "langchain-openai (>=0.3.3,<0.4.0)",
-    "langchain-anthropic (>=0.3.5,<0.4.0)",
-    "psycopg-pool (>=3.2.4,<4.0.0)",
-    "langgraph-checkpoint-postgres (>=2.0.13,<3.0.0)",
-    "langgraph (>=0.2.69,<0.3.0)",
-]
-
-[tool.poetry]
 packages = [{include = "src"}]
 
+
+[tool.poetry.dependencies]
+python = ">=3.9,<4.0"
+fastapi = ">=0.115.6,<0.116.0"
+pre-commit = ">=4.0.1,<5.0.0"
+ruff = ">=0.8.6,<0.9.0"
+mypy = ">=1.14.1,<2.0.0"
+insightface = ">=0.7.3,<0.8.0"
+opencv-python = ">=4.10.0.84,<5.0.0.0"
+onnxruntime = ">=1.20.1,<2.0.0"
+pytest = ">=8.3.4,<9.0.0"
+pydantic-ai = ">=0.0.19,<0.0.20"
+pyjwt = ">=2.10.1,<3.0.0"
+python-dotenv = ">=1.0.1,<2.0.0"
+pydantic-settings = ">=2.7.1,<3.0.0"
+alembic = ">=1.14.0,<2.0.0"
+asyncpg = ">=0.30.0,<0.31.0"
+sqlalchemy = {version = ">=2.0.37,<3.0.0", extras = ["asyncio"]}
+resend = ">=2.5.1,<3.0.0"
+apscheduler = ">=3.11.0,<4.0.0"
+stripe = ">=11.4.1,<12.0.0"
+python-jose = {version = ">=3.3.0,<4.0.0", extras = ["cryptography"]}
+langchain = ">=0.3.17,<0.4.0"
+langchain-community = ">=0.3.16,<0.4.0"
+langchain-core = ">=0.3.33,<0.4.0"
+langchain-openai = ">=0.3.3,<0.4.0"
+langchain-anthropic = ">=0.3.5,<0.4.0"
+psycopg-pool = ">=3.2.4,<4.0.0"
+langgraph-checkpoint-postgres = ">=2.0.13,<3.0.0"
+langgraph = ">=0.2.69,<0.3.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

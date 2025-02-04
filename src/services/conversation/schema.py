@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -79,6 +79,22 @@ class MessageResponse(BaseModel):
   content: str
   token_used: Optional[int]
   created_at: datetime
+
+  class Config:
+    from_attributes = True
+
+
+class ChatSessionDetailResponse(ChatSessionResponse):
+  """Chat session response with model and agent names."""
+
+  model_name: Optional[str]
+  agent_name: Optional[str]
+
+
+class ConversationWithSessionsResponse(ConversationResponse):
+  """Conversation response with detailed chat sessions."""
+
+  chat_sessions: List[ChatSessionDetailResponse]
 
   class Config:
     from_attributes = True
