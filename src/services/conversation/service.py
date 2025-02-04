@@ -1,3 +1,4 @@
+import json
 from typing import AsyncGenerator
 from uuid import UUID
 
@@ -7,11 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from dependencies import get_llm
 from dependencies.security import RBAC
-from libs.chats.models import LLMFactory
+from libs.chats.streaming import LLMFactory
 from services.__base.acquire import Acquire
+from services.llm.model import LLMModel
 
-from .model import ChatSessionModel, ConversationModel, MessageModel, MessageRole
+from .model import ChatSessionModel, ConversationModel, Message_Role, MessageModel
 from .schema import (
   ChatMessageCreate,
   ChatSessionCreate,
@@ -19,7 +22,6 @@ from .schema import (
   ConversationCreate,
   ConversationResponse,
   ConversationUpdate,
-  MessageResponse,
 )
 
 
@@ -32,21 +34,22 @@ class ConversationService:
     "delete=remove",
     "post=create_session",
     "post=chat",
-    "get=stream_chat",
+    "post=stream_chat",
   ]
 
   def __init__(self, acquire: Acquire):
     self.acquire = acquire
-    self.llm_factory = LLMFactory()
+    self.chunk_size = 10
 
   async def post_create(
     self,
+    org_id: UUID,
     conversation_data: ConversationCreate,
     session: AsyncSession = Depends(get_db),
-    user: dict = Depends(RBAC("conversations", "write")),
+    user: dict = Depends(RBAC("chats", "write")),
   ) -> ConversationResponse:
     """Create a new conversation."""
-    db_conversation = ConversationModel(organization_id=user["organization_id"], user_id=user["id"], **conversation_data.model_dump())
+    db_conversation = ConversationModel(organization_id=org_id, user_id=user["id"], **conversation_data.model_dump())
     session.add(db_conversation)
     await session.commit()
     await session.refresh(db_conversation)
@@ -57,7 +60,7 @@ class ConversationService:
     conversation_id: UUID,
     conversation_data: ConversationUpdate,
     session: AsyncSession = Depends(get_db),
-    user: dict = Depends(RBAC("conversations", "write")),
+    user: dict = Depends(RBAC("chats", "write")),
   ) -> ConversationResponse:
     """Update a conversation."""
     query = select(ConversationModel).where(ConversationModel.id == conversation_id, ConversationModel.organization_id == user["organization_id"])
@@ -77,15 +80,15 @@ class ConversationService:
 
   async def post_create_session(
     self,
+    org_id: UUID,
     session_data: ChatSessionCreate,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("chats", "write")),
   ) -> ChatSessionResponse:
     """Create a new chat session."""
     # Verify conversation exists and belongs to user's organization
-    query = select(ConversationModel).where(
-      ConversationModel.id == session_data.conversation_id, ConversationModel.organization_id == user["organization_id"]
-    )
+    print(session_data)
+    query = select(ConversationModel).where(ConversationModel.id == session_data.conversation_id, ConversationModel.organization_id == org_id)
     result = await session.execute(query)
     if not result.scalar_one():
       raise HTTPException(status_code=404, detail="Conversation not found")
@@ -96,73 +99,61 @@ class ConversationService:
     await session.refresh(db_session)
     return ChatSessionResponse.model_validate(db_session)
 
-  async def post_chat(
+  async def post_stream_chat(
     self,
+    org_id: UUID,
     chat_data: ChatMessageCreate,
     session: AsyncSession = Depends(get_db),
-    user: dict = Depends(RBAC("chats", "write")),
-  ) -> MessageResponse:
-    """Send a chat message and get response."""
-    # Get chat session
-    chat_session = await self._get_chat_session(chat_data.chat_session_id, session)
-    if not chat_session:
-      raise HTTPException(status_code=404, detail="Chat session not found")
-
-    # Save user message
-    user_message = MessageModel(chat_session_id=chat_session.id, role=MessageRole.USER, content=chat_data.message)
-    session.add(user_message)
-    await session.flush()
-
-    # Get AI response
-    response = await self.llm_factory.chat(llm=str(chat_session.model_id), chat_session_id=str(chat_session.id), message=chat_data.message)
-
-    # Save AI response
-    ai_message = MessageModel(
-      chat_session_id=chat_session.id,
-      role=MessageRole.AGENT,
-      content=response.content if hasattr(response, "content") else str(response),
-      token_used=len(response.content) if hasattr(response, "content") else len(str(response)),
-    )
-    session.add(ai_message)
-    await session.commit()
-
-    return MessageResponse.model_validate(ai_message)
-
-  async def get_stream_chat(
-    self,
-    chat_session_id: UUID,
-    message: str,
-    session: AsyncSession = Depends(get_db),
+    llm: LLMFactory = Depends(get_llm),
     user: dict = Depends(RBAC("chats", "write")),
   ) -> StreamingResponse:
     """Stream chat response."""
 
     async def generate_response() -> AsyncGenerator[str, None]:
-      chat_session = await self._get_chat_session(chat_session_id, session)
-      if not chat_session:
+      data = await self._get_chat_session(chat_data.chat_session_id, session)
+      if not data:
         raise HTTPException(status_code=404, detail="Chat session not found")
 
+      chat_session, model_name = data
+
       # Save user message
-      user_message = MessageModel(chat_session_id=chat_session.id, role=MessageRole.USER, content=message)
+      user_message = MessageModel(chat_session_id=chat_session.id, role=Message_Role.USER, content=chat_data.message)
       session.add(user_message)
       await session.flush()
 
       try:
         full_response = ""
-        async for token in self.llm_factory.stream_chat(llm=str(chat_session.model_id), chat_session_id=str(chat_session.id), message=message):
+        buffer: list[str] = []
+        # Consume the generator from LLMFactory
+        for token in llm.chat(llm=model_name, chat_session_id=str(chat_session.id), message=chat_data.message):
+          buffer.append(token)
           full_response += token
-          yield f"data: {token}\n\n"
+          if len(buffer) >= self.chunk_size:
+            d = {"message": "".join(buffer)}
+            yield f"data: {json.dumps(d)}\n\n"
+            buffer = []
 
+        if buffer:
+          d = {"message": "".join(buffer)}
+          yield f"data: {json.dumps(d)}\n\n"
+
+        yield f"data: {json.dumps({'message': 'DONE'})}\n\n"
         # Save AI response after streaming
-        ai_message = MessageModel(chat_session_id=chat_session.id, role=MessageRole.AGENT, content=full_response, token_used=len(full_response))
+        ai_message = MessageModel(chat_session_id=chat_session.id, role=Message_Role.AGENT, content=full_response, token_used=len(full_response))
         session.add(ai_message)
         await session.commit()
 
       except Exception as e:
-        yield f"error: {str(e)}\n\n"
+        yield f"data: {json.dumps({'message': 'ERROR', 'error': str(e)})}\n\n"
 
     return StreamingResponse(generate_response(), media_type="text/event-stream")
 
-  async def _get_chat_session(self, chat_session_id: UUID, session: AsyncSession) -> ChatSessionModel | None:
+  async def _get_chat_session(self, chat_session_id: UUID, session: AsyncSession) -> tuple[ChatSessionModel, str] | None:
     """Get chat session."""
-    return await session.get(ChatSessionModel, chat_session_id)
+    query = (
+      select(ChatSessionModel, LLMModel.name).join(LLMModel, ChatSessionModel.model_id == LLMModel.id).where(ChatSessionModel.id == chat_session_id)
+    )
+
+    result = await session.execute(query)
+    chat_session, model_name = result.one()
+    return chat_session, model_name

@@ -75,6 +75,7 @@ class LLMService:
 
   async def get_list(
     self,
+    org_id: UUID,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("models", "read")),
   ) -> List[LLMResponse]:

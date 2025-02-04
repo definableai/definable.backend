@@ -35,10 +35,8 @@ class RBAC:
     self.required_action = required_action
 
   async def __call__(self, request: Request, token_payload: dict = Depends(JWTBearer()), session: AsyncSession = Depends(get_db)) -> dict:
-    print(request.query_params)
     user_id = UUID(token_payload.get("id"))
     org_id = request.query_params.get("org_id")
-    print(user_id, org_id)
     # Get user's role in organization
     member_query = select(OrganizationMemberModel).where(
       and_(OrganizationMemberModel.user_id == user_id, OrganizationMemberModel.organization_id == org_id, OrganizationMemberModel.status == "active")

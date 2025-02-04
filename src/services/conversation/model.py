@@ -9,14 +9,14 @@ from sqlalchemy.orm import Mapped, mapped_column
 from database import CRUD
 
 
-class ChatSessionStatus(str, Enum):
+class Chat_Session_Status(str, Enum):
   """Chat session status enum."""
 
-  ACTIVE = "active"
-  INACTIVE = "inactive"
+  active = "active"
+  inactive = "inactive"
 
 
-class MessageRole(str, Enum):
+class Message_Role(str, Enum):
   """Message role enum."""
 
   USER = "USER"
@@ -44,7 +44,7 @@ class ChatSessionModel(CRUD):
   conversation_id: Mapped[UUID] = mapped_column(ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
   agent_id: Mapped[UUID] = mapped_column(ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
   model_id: Mapped[UUID] = mapped_column(ForeignKey("models.id", ondelete="SET NULL"), nullable=True)
-  status: Mapped[ChatSessionStatus] = mapped_column(SQLEnum(ChatSessionStatus), nullable=False)
+  status: Mapped[Chat_Session_Status] = mapped_column(SQLEnum(Chat_Session_Status), nullable=False)
   settings: Mapped[dict] = mapped_column(JSONB, nullable=False)
   _metadata: Mapped[dict] = mapped_column("metadata", JSONB, nullable=True)
 
@@ -55,7 +55,7 @@ class MessageModel(CRUD):
   __tablename__ = "messages"
 
   chat_session_id: Mapped[UUID] = mapped_column(ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False)
-  role: Mapped[MessageRole] = mapped_column(SQLEnum(MessageRole), nullable=False)
+  role: Mapped[Message_Role] = mapped_column(SQLEnum(Message_Role), nullable=False)
   content: Mapped[str] = mapped_column(Text, nullable=False)
   token_used: Mapped[int] = mapped_column(Integer, nullable=True)
   _metadata: Mapped[dict] = mapped_column("metadata", JSONB, nullable=True)

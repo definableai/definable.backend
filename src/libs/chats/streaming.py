@@ -18,14 +18,20 @@ class LLMFactory:
       "o1": ChatOpenAI(model="o1-preview"),
     }
 
-    # setup checkpointer
+    # Fix connection string format
     connection_kwargs = {
       "autocommit": True,
       "prepare_threshold": 0,
+      "application_name": "llm_factory",
     }
+
+    # Format: postgresql://user:password@host:port/dbname
+    db_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
+
     self.pool = ConnectionPool(
-      conninfo=settings.database_url,
-      max_size=20,
+      conninfo=db_url,
+      max_size=5,
+      min_size=1,
       kwargs=connection_kwargs,
     )
     self.checkpointer = PostgresSaver(self.pool)  # type: ignore
@@ -46,7 +52,8 @@ class LLMFactory:
     graph = builder.compile(checkpointer=self.checkpointer)
     for message, metadata in graph.stream({"messages": [HumanMessage(content=message)]}, config, stream_mode="messages"):
       if message.content and not isinstance(message, HumanMessage):  # type: ignore
-        print(message.content, end="|", flush=True)  # type: ignore
+        yield message.content  # type: ignore
 
   def __del__(self):
+    print("Closing pool")
     self.pool.close()
