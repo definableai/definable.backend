@@ -110,18 +110,12 @@ class ConversationService:
     """Stream chat response."""
 
     async def generate_response() -> AsyncGenerator[str, None]:
-      data = await self._get_chat_session(chat_data.chat_session_id, session)
-      if not data:
-        raise HTTPException(status_code=404, detail="Chat session not found")
-
-      chat_session, model_name = data
-
-      # Save user message
-      user_message = MessageModel(chat_session_id=chat_session.id, role=Message_Role.USER, content=chat_data.message)
-      session.add(user_message)
-      await session.flush()
-
       try:
+        data = await self._get_chat_session(chat_data.chat_session_id, session)
+        if not data:
+          raise Exception("Chat session not found")
+
+        chat_session, model_name = data
         full_response = ""
         buffer: list[str] = []
         # Consume the generator from LLMFactory
