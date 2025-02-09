@@ -1,12 +1,12 @@
 import json
-from typing import AsyncGenerator, List
+from datetime import datetime, timezone
+from typing import AsyncGenerator, List, Optional
 from uuid import UUID
 
 from fastapi import Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
 
 from database import get_db
 from dependencies import get_llm
@@ -25,6 +25,8 @@ from .schema import (
   ConversationResponse,
   ConversationUpdate,
   ConversationWithSessionsResponse,
+  MessageWithDetailsResponse,
+  PaginatedMessagesResponse,
 )
 
 
@@ -40,6 +42,7 @@ class ConversationService:
     "post=stream_chat",
     "get=get_with_sessions",
     "get=list",
+    "get=messages",
   ]
 
   def __init__(self, acquire: Acquire):
@@ -93,10 +96,9 @@ class ConversationService:
   ) -> ChatSessionResponse:
     """Create a new chat session."""
     # Verify conversation exists and belongs to user's organization
-    print(session_data)
     query = select(ConversationModel).where(ConversationModel.id == session_data.conversation_id, ConversationModel.organization_id == org_id)
     result = await session.execute(query)
-    if not result.scalar_one():
+    if not result.unique().scalar_one_or_none():
       raise HTTPException(status_code=404, detail="Conversation not found")
 
     db_session = ChatSessionModel(status="active", **session_data.model_dump())
@@ -120,6 +122,16 @@ class ConversationService:
         data = await self._get_chat_session(chat_data.chat_session_id, session)
         if not data:
           raise Exception("Chat session not found")
+        # add user's message to the chat session
+        user_message = MessageModel(
+          chat_session_id=chat_data.chat_session_id,
+          role=Message_Role.USER,
+          content=chat_data.message,
+          token_used=len(chat_data.message.split(" ")),
+          created_at=datetime.now(timezone.utc),
+        )
+        session.add(user_message)
+        await session.commit()
 
         chat_session, model_name = data
         full_response = ""
@@ -139,7 +151,13 @@ class ConversationService:
 
         yield f"data: {json.dumps({'message': 'DONE'})}\n\n"
         # Save AI response after streaming
-        ai_message = MessageModel(chat_session_id=chat_session.id, role=Message_Role.AGENT, content=full_response, token_used=len(full_response))
+        ai_message = MessageModel(
+          chat_session_id=chat_session.id,
+          role=Message_Role.AGENT,
+          content=full_response,
+          token_used=len(full_response.split(" ")),
+          created_at=datetime.now(timezone.utc),
+        )
         session.add(ai_message)
         await session.commit()
 
@@ -199,6 +217,81 @@ class ConversationService:
     conversations = result.scalars().all()
 
     return [ConversationResponse.model_validate(conv) for conv in conversations]
+
+  async def get_messages(
+    self,
+    org_id: UUID,
+    conversation_id: UUID,
+    cursor: Optional[datetime] = None,
+    offset: int = 0,
+    limit: int = 50,
+    session: AsyncSession = Depends(get_db),
+    user: dict = Depends(RBAC("chats", "read")),
+  ) -> PaginatedMessagesResponse:
+    """Get paginated messages for a conversation."""
+    # Base query for total count
+    count_query = (
+      select(func.count(MessageModel.id))
+      .join(ChatSessionModel, MessageModel.chat_session_id == ChatSessionModel.id)
+      .join(
+        ConversationModel,
+        and_(
+          ChatSessionModel.conversation_id == ConversationModel.id,
+          ConversationModel.organization_id == org_id,
+          ConversationModel.id == conversation_id,
+        ),
+      )
+    )
+
+    # Main query with joins for details
+    query = (
+      select(
+        MessageModel,
+        ChatSessionModel,
+        LLMModel.id.label("model_id"),
+        LLMModel.name.label("model_name"),
+        AgentsModel.id.label("agent_id"),
+        AgentsModel.name.label("agent_name"),
+      )
+      .join(ChatSessionModel, MessageModel.chat_session_id == ChatSessionModel.id)
+      .join(
+        ConversationModel,
+        and_(
+          ChatSessionModel.conversation_id == ConversationModel.id,
+          ConversationModel.organization_id == org_id,
+          ConversationModel.id == conversation_id,
+        ),
+      )
+      .outerjoin(LLMModel, ChatSessionModel.model_id == LLMModel.id)
+      .outerjoin(AgentsModel, ChatSessionModel.agent_id == AgentsModel.id)
+      .order_by(MessageModel.created_at.desc())
+    )
+
+    # Add cursor pagination
+    if cursor:
+      query = query.where(MessageModel.created_at < cursor)
+
+    # Add offset and limit
+    query = query.offset(offset * limit).limit(limit + 1)  # Get one extra to check if there are more
+
+    # Execute queries
+    total = await session.scalar(count_query)
+    result = await session.execute(query)
+    rows = result.unique().all()
+
+    # Process results
+    messages = []
+    for row in rows[:limit]:  # Don't include the extra item in response
+      message_dict = {
+        **row.MessageModel.__dict__,
+        "model_id": row.model_id,
+        "model_name": row.model_name,
+        "agent_id": row.agent_id,
+        "agent_name": row.agent_name,
+      }
+      messages.append(MessageWithDetailsResponse.model_validate(message_dict))
+
+    return PaginatedMessagesResponse(messages=messages, total=total if total is not None else 0, has_more=len(rows) > limit)
 
   ### Private methods ###
   async def _get_chat_session(self, chat_session_id: UUID, session: AsyncSession) -> tuple[ChatSessionModel, str] | None:

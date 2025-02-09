@@ -98,3 +98,20 @@ class ConversationWithSessionsResponse(ConversationResponse):
 
   class Config:
     from_attributes = True
+
+
+class MessageWithDetailsResponse(MessageResponse):
+  """Message response with model and agent details."""
+
+  model_id: Optional[UUID]
+  model_name: Optional[str]
+  agent_id: Optional[UUID]
+  agent_name: Optional[str]
+
+
+class PaginatedMessagesResponse(BaseModel):
+  """Paginated messages response."""
+
+  messages: List[MessageWithDetailsResponse]
+  total: int
+  has_more: bool
