@@ -162,6 +162,9 @@ class ConversationService:
         await session.commit()
 
       except Exception as e:
+        import traceback
+
+        traceback.print_exc()
         yield f"data: {json.dumps({'message': 'ERROR', 'error': str(e)})}\n\n"
 
     return StreamingResponse(generate_response(), media_type="text/event-stream")

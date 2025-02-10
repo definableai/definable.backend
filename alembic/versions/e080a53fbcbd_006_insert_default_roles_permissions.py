@@ -51,6 +51,10 @@ def upgrade() -> None:
     ("role_read", "View roles", "roles", "read"),
     ("role_write", "Create/modify roles", "roles", "write"),
     ("role_delete", "Delete roles", "roles", "delete"),
+    # Knowledge base permissions
+    ("kb_read", "View knowledge bases", "kb", "read"),
+    ("kb_write", "Create/modify knowledge bases", "kb", "write"),
+    ("kb_delete", "Delete knowledge bases", "kb", "delete"),
   ]
 
   permission_ids = {}

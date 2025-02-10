@@ -1,10 +1,51 @@
 import importlib
 import inspect
 import os
+import sys
+import traceback
+from functools import wraps
+from typing import Any, Callable
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, HTTPException
+
+from config.settings import settings
 
 from .acquire import Acquire
+
+
+# TODO: it doesn't capture fastapi exceptions
+def handle_service_exceptions(func: Callable) -> Callable:
+  """Wrapper for handling service exceptions."""
+
+  @wraps(func)
+  async def wrapper(*args, **kwargs) -> Any:
+    try:
+      return await func(*args, **kwargs)
+    except HTTPException:
+      # Re-raise HTTP exceptions as they are already handled
+      raise
+    except Exception:
+      # Get the full traceback
+      exc_type, exc_value, exc_traceback = sys.exc_info()
+
+      # Get the stack trace as a list of frames
+      stack_trace = []
+      for frame in traceback.extract_tb(exc_traceback):
+        stack_trace.append({"filename": frame.filename, "line": frame.line, "lineno": frame.lineno, "name": frame.name})
+      error_info = {
+        "error_type": exc_type.__name__,  # type: ignore
+        "error_message": str(exc_value),
+        "traceback": stack_trace,
+      }
+
+      # Log the error (you might want to use a proper logger)
+      # print(f"Service Error: {str(e)}\n{json.dumps(error_info, indent=2)}")
+
+      if settings.environment == "dev":
+        raise HTTPException(status_code=500, detail=error_info)
+      raise HTTPException(status_code=500, detail="Internal server error")
+
+  return wrapper
 
 
 # TODO: clean the manager class
@@ -60,7 +101,8 @@ class Manager:
             for method in ["get", "post", "put", "delete"]:
               if hasattr(service_instance, method):
                 endpoint = getattr(service_instance, method)
-                router.add_api_route(path="", endpoint=endpoint, methods=[method.upper()])
+                wrapped_endpoint = handle_service_exceptions(endpoint)
+                router.add_api_route(path="", endpoint=wrapped_endpoint, methods=[method.upper()])
 
             # Register exposed methods specified in http_exposed
             if hasattr(service_instance, "http_exposed"):
@@ -70,7 +112,8 @@ class Manager:
                 # print(f"endpoint_name: {endpoint_name}")
                 if hasattr(service_instance, endpoint_name):
                   endpoint = getattr(service_instance, endpoint_name)
-                  router.add_api_route(path=f"/{sub_path}", endpoint=endpoint, methods=[http_method.upper()])
+                  wrapped_endpoint = handle_service_exceptions(endpoint)
+                  router.add_api_route(path=f"/{sub_path}", endpoint=wrapped_endpoint, methods=[http_method.upper()])
 
           self.app.include_router(router)
         except ModuleNotFoundError:
