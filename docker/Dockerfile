@@ -28,7 +28,7 @@ COPY . .
 # Expose port
 EXPOSE 8000
 
-HEALTHCHECK CMD ["echo" "HEAD / HTTP/1.0" ">/dev/tcp/127.0.0.1/8000"]
+HEALTHCHECK CMD curl -f http://127.0.0.1:8000 || exit 1
 
 # Run the application
 CMD ["fastapi", "run", "src/app.py"]
