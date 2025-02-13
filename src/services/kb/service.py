@@ -189,21 +189,27 @@ class KnowledgeBaseService:
     user: dict = Depends(RBAC("kb", "write")),
   ) -> KBDocumentResponse:
     """Add a document to a knowledge base."""
+    match doc_type:
+      case 0:
+        # Validate file extension
+        if file.filename:
+          validate_file_extension(file.filename)
+        else:
+          raise HTTPException(status_code=400, detail="File name is required")
 
-    # Validate file extension
-    if file.filename:
-      validate_file_extension(file.filename)
-    else:
-      raise HTTPException(status_code=400, detail="File name is required")
+        file_type = file.filename.split(".")[-1]
+        s3_key = f"kb/{kb_id}/{self.utils.generate_unique_filename(file.filename)}"
 
-    file_type = file.filename.split(".")[-1]
-    # Verify knowledge base exists
+      case 1:
+        # TODO: add url to the knowledge base
+        pass
+
+      # Verify knowledge base exists
     db_kb = await self._get_kb(kb_id, org_id, session)
     if not db_kb:
       raise HTTPException(status_code=404, detail="Knowledge base not found")
 
     # Upload file to S3
-    s3_key = f"kb/{kb_id}/{self.utils.generate_unique_filename(file.filename)}"
     try:
       file_content = await file.read()
       await s3_client.upload_file(BytesIO(file_content), s3_key, content_type=file.content_type)
@@ -214,19 +220,20 @@ class KnowledgeBaseService:
     db_doc = KBDocumentModel(
       kb_id=kb_id,
       s3_key=s3_key,
-      original_filename=file.filename,
-      file_size=file.size,
+      original_filename=file.filename if doc_type == 0 else None,
+      file_size=file.size if doc_type == 0 else None,
       processing_status=ProcessingStatus.PENDING,
       last_processed_at=None,
       title=title,
       description=description,
       doc_type=doc_type,
-      file_type=file_type,
+      file_type=file_type if doc_type == 0 else None,
     )
     session.add(db_doc)
     await session.commit()
     await session.refresh(db_doc)
-    # create a background task to process the document
+
+    # create a background task to process
     background_tasks.add_task(self._process_document_task, db_doc.id, org_id, kb_id)
 
     return KBDocumentResponse.model_validate(db_doc)
@@ -281,12 +288,11 @@ class KnowledgeBaseService:
         ORDER BY cmetadata->>'chunk_index'
         LIMIT :limit OFFSET :offset
       """)
-
       result = await session.execute(query, {"collection_id": kb_model.collection_id, "doc_id": str(doc_id), "limit": limit, "offset": offset})
 
       chunks = []
       for row in result:
-        chunk = DocumentChunk(chunk_id=row.id, content=row.document, metadata=row.cmetadata)
+        chunk = DocumentChunk(chunk_id=row.cmetadata.get("chunk_index"), content=row.document, metadata=row.cmetadata)
         chunks.append(chunk)
 
       return KBDocumentChunksResponse(document_id=doc_id, title=doc_model.title, chunks=chunks, total_chunks=len(chunks))
@@ -491,7 +497,7 @@ class KnowledgeBaseService:
       chunks = []
       for doc, score in results:
         chunk = DocumentChunk(
-          chunk_id=int(doc.metadata.get("id", 0)),  # Convert to int with default 0
+          chunk_id=int(doc.metadata.get("chunk_index", 0)),  # Convert to int with default 0
           content=doc.page_content,
           metadata=doc.metadata,
           score=score,
