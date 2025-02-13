@@ -85,7 +85,7 @@ class KnowledgeBaseService:
     kb_id: UUID,
     kb_data: KnowledgeBaseUpdate,
     session: AsyncSession = Depends(get_db),
-    user: dict = Depends(RBAC("knowledge_base", "write")),
+    user: dict = Depends(RBAC("kb", "write")),
   ) -> KnowledgeBaseResponse:
     """Update a knowledge base."""
     # Get knowledge base
@@ -452,7 +452,7 @@ class KnowledgeBaseService:
     kb_id: UUID,
     query: str = Body(..., description="Search query text"),
     limit: int = Body(default=5, description="Maximum number of results to return"),
-    score_threshold: float = Body(default=0.7, description="Minimum similarity score threshold"),
+    score_threshold: float = Body(default=0.0, description="Minimum similarity score threshold"),
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("kb", "read")),
   ) -> List[DocumentChunk]:
@@ -477,6 +477,7 @@ class KnowledgeBaseService:
       if not kb_model:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
 
+      # TODO: make a generic vector lib.
       # Initialize vector store
       vectorstore = PGVector(
         collection_name=str(kb_model.organization_id) + "_" + kb_model.name,

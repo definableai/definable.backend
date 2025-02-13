@@ -54,7 +54,7 @@ class FileLoader:
       # Load documents
       if loader:
         docs = loader.load()
-        for idx, doc in enumerate(docs):
+        for doc in docs:
           # Enhance metadata
           doc.metadata.update({
             "id": str(uuid4()),
@@ -63,7 +63,6 @@ class FileLoader:
             "title": self.document.title,
             "file_type": self.document.file_type,
             "original_filename": self.document.original_filename,
-            "chunk_index": idx,
             "tokens": len(doc.page_content),
           })
           yield doc
@@ -126,6 +125,10 @@ class DocumentProcessor:
 
       # Chunk documents
       chunks = self.text_splitter.split_documents(documents)
+
+      # add index to metadata
+      for idx, chunk in enumerate(chunks):
+        chunk.metadata["chunk_index"] = idx
 
       # Store in vector DB
       await vectorstore.aadd_documents(chunks)
