@@ -72,7 +72,7 @@ class S3Client:
           contents = await stream.read()
           return BytesIO(contents)
 
-    except Exception as e:
+    except Exception:
       raise
 
   async def delete_file(self, key: str) -> bool:
@@ -90,7 +90,7 @@ class S3Client:
         await client.delete_object(Bucket=self.bucket, Key=key)
         return True
 
-    except Exception as e:
+    except Exception:
       raise
 
   async def get_presigned_url(self, key: str, expires_in: int = 3600, operation: str = "get_object") -> str:
@@ -110,7 +110,7 @@ class S3Client:
         url = await client.generate_presigned_url(ClientMethod=operation, Params={"Bucket": self.bucket, "Key": key}, ExpiresIn=expires_in)
         return url
 
-    except Exception as e:
+    except Exception:
       raise
 
   @staticmethod

@@ -1,12 +1,10 @@
-"""Common logging module."""
-
 import json
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from loguru import logger
+from loguru import Record, logger
 
 
 class LogConfig:
@@ -23,7 +21,7 @@ class LogConfig:
     logger.remove()
 
     # Custom log format for JSON logging
-    def json_formatter(record: Dict[str, Any]) -> str:
+    def json_formatter(record: Record) -> str:
       log_data = {
         "timestamp": datetime.utcnow().isoformat(),
         "level": record["level"].name,
@@ -34,11 +32,12 @@ class LogConfig:
         "extra": record["extra"],
       }
 
-      if "exception" in record:
+      if record["exception"]:
+        exc = record["exception"]
         log_data["exception"] = {
-          "type": record["exception"].get("type"),
-          "value": record["exception"].get("value"),
-          "traceback": record["exception"].get("traceback"),
+          "type": exc.__class__.__name__,
+          "value": str(exc),
+          "traceback": exc.traceback,
         }
 
       return json.dumps(log_data)

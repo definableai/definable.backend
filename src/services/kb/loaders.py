@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import AsyncIterator, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import (
@@ -57,6 +57,7 @@ class FileLoader:
         for idx, doc in enumerate(docs):
           # Enhance metadata
           doc.metadata.update({
+            "id": str(uuid4()),
             "kb_id": str(self.kb_id),
             "doc_id": str(self.document.id),
             "title": self.document.title,

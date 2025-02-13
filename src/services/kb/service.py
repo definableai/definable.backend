@@ -3,12 +3,13 @@ from io import BytesIO
 from typing import Annotated, List
 from uuid import UUID
 
-from fastapi import BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Body, Depends, File, Form, HTTPException, UploadFile
 from langchain_openai import OpenAIEmbeddings
+from langchain_postgres import PGVector
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_db
+from database import async_engine, get_db
 from dependencies.security import RBAC
 from libs.s3 import s3_client
 from libs.vectorstore import create_vectorstore
@@ -40,11 +41,11 @@ class KnowledgeBaseService:
     "get=get",
     "get=list",
     "post=add_document",
-    "put=update_document",
     "delete=remove_document",
     "get=get_document_chunks",
     "put=update_document_chunk",
     "delete=delete_document_chunks",
+    "post=search_chunks",
   ]
 
   def __init__(self, acquire: Acquire):
@@ -106,7 +107,7 @@ class KnowledgeBaseService:
     org_id: UUID,
     kb_id: UUID,
     session: AsyncSession = Depends(get_db),
-    user: dict = Depends(RBAC("knowledge_base", "delete")),
+    user: dict = Depends(RBAC("kb", "delete")),
   ) -> dict:
     """Delete a knowledge base."""
     # Get knowledge base
@@ -181,10 +182,6 @@ class KnowledgeBaseService:
       int,  # Changed from DocumentType to int for form data
       Form(description="Document type (0: FILE, 1: URL)", examples=[0, 1]),
     ],
-    file_type: Annotated[
-      str,
-      Form(max_length=20, description="File extension without dot (e.g., 'pdf', 'docx')", examples=["pdf", "docx", "txt"], pattern=r"^[a-zA-Z0-9]+$"),
-    ],
     file: Annotated[UploadFile, File(description="Document file to upload")],
     background_tasks: BackgroundTasks,
     description: Annotated[str, Form(description="Optional document description")] = "",
@@ -192,12 +189,14 @@ class KnowledgeBaseService:
     user: dict = Depends(RBAC("kb", "write")),
   ) -> KBDocumentResponse:
     """Add a document to a knowledge base."""
+
     # Validate file extension
     if file.filename:
       validate_file_extension(file.filename)
     else:
       raise HTTPException(status_code=400, detail="File name is required")
 
+    file_type = file.filename.split(".")[-1]
     # Verify knowledge base exists
     db_kb = await self._get_kb(kb_id, org_id, session)
     if not db_kb:
@@ -294,29 +293,6 @@ class KnowledgeBaseService:
 
     except Exception as e:
       raise HTTPException(status_code=500, detail=f"Failed to fetch document chunks: {str(e)}")
-
-  # async def put_update_document(
-  #   self,
-  #   org_id: UUID,
-  #   doc_id: UUID,
-  #   doc_data: KBDocumentUpdate,
-  #   session: AsyncSession = Depends(get_db),
-  #   user: dict = Depends(RBAC("knowledge_base", "write")),
-  # ) -> KBDocumentResponse:
-  #   """Update a document."""
-  #   # Get document and verify organization
-  #   db_doc = await self._get_document(doc_id, org_id, session)
-  #   if not db_doc:
-  #     raise HTTPException(status_code=404, detail="Document not found")
-
-  #   # Update fields
-  #   update_data = doc_data.model_dump(exclude_unset=True)
-  #   for field, value in update_data.items():
-  #     setattr(db_doc, field, value)
-
-  #   await session.commit()
-  #   await session.refresh(db_doc)
-  #   return KBDocumentResponse.model_validate(db_doc)
 
   async def delete_remove_document(
     self,
@@ -464,6 +440,69 @@ class KnowledgeBaseService:
     except Exception as e:
       raise HTTPException(status_code=500, detail=f"Failed to delete document chunks: {str(e)}")
 
+  async def post_search_chunks(
+    self,
+    org_id: UUID,
+    kb_id: UUID,
+    query: str = Body(..., description="Search query text"),
+    limit: int = Body(default=5, description="Maximum number of results to return"),
+    score_threshold: float = Body(default=0.7, description="Minimum similarity score threshold"),
+    session: AsyncSession = Depends(get_db),
+    user: dict = Depends(RBAC("kb", "read")),
+  ) -> List[DocumentChunk]:
+    """
+    Search for similar document chunks using vector similarity.
+
+    Args:
+        org_id: Organization ID
+        kb_id: Knowledge Base ID
+        query: Search query text
+        limit: Maximum number of results to return (default: 5)
+        score_threshold: Minimum similarity score threshold (default: 0.7)
+        session: Database session
+        user: User information
+
+    Returns:
+        List of similar DocumentChunks with their similarity scores
+    """
+    try:
+      # Get knowledge base
+      kb_model = await self._get_kb(kb_id, org_id, session)
+      if not kb_model:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+
+      # Initialize vector store
+      vectorstore = PGVector(
+        collection_name=str(kb_model.organization_id) + "_" + kb_model.name,
+        connection=async_engine,
+        embeddings=OpenAIEmbeddings(model=kb_model.embedding_model),
+        use_jsonb=True,
+        create_extension=False,
+      )
+
+      # Search for similar documents
+      results = await vectorstore.asimilarity_search_with_relevance_scores(
+        query,
+        k=limit,
+        score_threshold=score_threshold,
+      )
+
+      # Format results
+      chunks = []
+      for doc, score in results:
+        chunk = DocumentChunk(
+          chunk_id=int(doc.metadata.get("id", 0)),  # Convert to int with default 0
+          content=doc.page_content,
+          metadata=doc.metadata,
+          score=score,
+        )
+        chunks.append(chunk)
+
+      return chunks
+
+    except Exception:
+      raise
+
   ### PRIVATE METHODS ###
 
   async def _get_kb(
@@ -524,7 +563,7 @@ class KnowledgeBaseService:
           session.add(doc_model)
           await session.commit()
 
-        except Exception as e:
+        except Exception:
           # Update status to failed
           doc_model.processing_status = ProcessingStatus.FAILED
           session.add(doc_model)
@@ -533,5 +572,5 @@ class KnowledgeBaseService:
 
           traceback.print_exc()
 
-    except Exception as e:
+    except Exception:
       raise

@@ -130,7 +130,7 @@ class KnowledgeBaseDetailResponse(KnowledgeBaseResponse):
 class DocumentChunk(BaseModel):
   """Document chunk schema."""
 
-  chunk_id: str
+  chunk_id: int
   content: str
   metadata: dict
   score: Optional[float] = None
