@@ -55,7 +55,25 @@ def upgrade() -> None:
     ("kb_read", "View knowledge bases", "kb", "read"),
     ("kb_write", "Create/modify knowledge bases", "kb", "write"),
     ("kb_delete", "Delete knowledge bases", "kb", "delete"),
+    # all access
+    ("*_*", "Access to all resources", "*", "*"),
   ]
+
+  llm_models = [
+    ("gpt-4o", "OpenAI", "gpt-4o", True),
+    ("gpt-4o-mini", "OpenAI", "gpt-4o-mini", True),
+    ("gpt-3.5-turbo", "OpenAI", "gpt-3.5-turbo", True),
+    ("o1-preview", "OpenAI", "o1-preview", True),
+    ("o1", "OpenAI", "o1", True),
+    ("claude-3.5-sonnet", "Anthropic", "claude-3-5-sonnet", True),
+    ("claude-3.5-haiku", "Anthropic", "claude-3-5-haiku", True),
+  ]
+
+  for name, provider, version, is_active in llm_models:
+    op.execute(f"""
+      INSERT INTO models (id, name, provider, version, is_active, config, created_at, updated_at)
+      VALUES ('{str(uuid4())}', '{name}', '{provider}', '{version}', {is_active}, '{{}}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    """)
 
   permission_ids = {}
   for name, desc, resource, action in permissions:
@@ -137,3 +155,4 @@ def downgrade() -> None:
   """)
 
   op.execute("DELETE FROM permissions")
+  op.execute("DELETE FROM models")

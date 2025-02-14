@@ -1,51 +1,11 @@
 import importlib
 import inspect
 import os
-import sys
-import traceback
-from functools import wraps
-from typing import Any, Callable
+from typing import Any, Dict, Type
 
-from fastapi import APIRouter, FastAPI, HTTPException
-
-from config.settings import settings
+from fastapi import APIRouter, FastAPI, WebSocket
 
 from .acquire import Acquire
-
-
-# TODO: it doesn't capture fastapi exceptions
-def handle_service_exceptions(func: Callable) -> Callable:
-  """Wrapper for handling service exceptions."""
-
-  @wraps(func)
-  async def wrapper(*args, **kwargs) -> Any:
-    try:
-      return await func(*args, **kwargs)
-    except HTTPException:
-      # Re-raise HTTP exceptions as they are already handled
-      raise
-    except Exception:
-      # Get the full traceback
-      exc_type, exc_value, exc_traceback = sys.exc_info()
-
-      # Get the stack trace as a list of frames
-      stack_trace = []
-      for frame in traceback.extract_tb(exc_traceback):
-        stack_trace.append({"filename": frame.filename, "line": frame.line, "lineno": frame.lineno, "name": frame.name})
-      error_info = {
-        "error_type": exc_type.__name__,  # type: ignore
-        "error_message": str(exc_value),
-        "traceback": stack_trace,
-      }
-
-      # Log the error (you might want to use a proper logger)
-      # print(f"Service Error: {str(e)}\n{json.dumps(error_info, indent=2)}")
-
-      if settings.environment == "dev":
-        raise HTTPException(status_code=500, detail=error_info)
-      raise HTTPException(status_code=500, detail="Internal server error")
-
-  return wrapper
 
 
 # TODO: clean the manager class
@@ -74,6 +34,7 @@ class Manager:
     self.mws_dir = os.path.join(os.path.dirname(__file__), "..", "..", "middlewares")
     if not os.path.exists(self.mws_dir):
       raise FileNotFoundError(f"Middlewares directory not found: {self.mws_dir}")
+    self.ws_routes: Dict[str, Type] = {}
 
   def register_services(self) -> None:
     """
@@ -101,19 +62,18 @@ class Manager:
             for method in ["get", "post", "put", "delete"]:
               if hasattr(service_instance, method):
                 endpoint = getattr(service_instance, method)
-                wrapped_endpoint = handle_service_exceptions(endpoint)
-                router.add_api_route(path="", endpoint=wrapped_endpoint, methods=[method.upper()])
+                router.add_api_route(path="", endpoint=endpoint, methods=[method.upper()])
 
             # Register exposed methods specified in http_exposed
             if hasattr(service_instance, "http_exposed"):
               for route in service_instance.http_exposed:
+                # register ws routes
+                self.register_ws_routes(router, service_instance, service_name)
                 http_method, sub_path = route.split("=")
                 endpoint_name = f"{http_method}_{sub_path}"
-                # print(f"endpoint_name: {endpoint_name}")
                 if hasattr(service_instance, endpoint_name):
                   endpoint = getattr(service_instance, endpoint_name)
-                  wrapped_endpoint = handle_service_exceptions(endpoint)
-                  router.add_api_route(path=f"/{sub_path}", endpoint=wrapped_endpoint, methods=[http_method.upper()])
+                  router.add_api_route(path=f"/{sub_path}", endpoint=endpoint, methods=[http_method.upper()])
 
           self.app.include_router(router)
         except ModuleNotFoundError:
@@ -134,8 +94,40 @@ class Manager:
         mw_module = importlib.import_module(mw_module_path)
         mw_class = getattr(mw_module, "Middleware", None)
         if mw_class:
-          self.app.add_middleware(mw_class)
+          init_params = inspect.signature(mw_class.__init__).parameters
+          if "acquire" in init_params:
+            self.app.add_middleware(mw_class, acquire=self.acquire)
+          else:
+            self.app.add_middleware(mw_class)
         else:
           print(f"Middleware class not found: {mw_name}")
       else:
         print(f"Not a valid middleware: {mw_path}")
+
+  def register_ws_routes(self, router: APIRouter, service_instance: Any, service_name: str) -> None:
+    """Register WebSocket routes for a service."""
+    for route in service_instance.http_exposed:
+      if not route.startswith("ws="):
+        continue
+
+      _, sub_path = route.split("=")
+      endpoint_name = f"ws_{sub_path}"
+
+      if hasattr(service_instance, endpoint_name):
+        endpoint = getattr(service_instance, endpoint_name)
+
+        # Create WebSocket endpoint wrapper
+        async def ws_endpoint(websocket: WebSocket) -> None:
+          try:
+            await endpoint(websocket)
+          except Exception as e:
+            # Log error
+            print(f"WebSocket error in {service_name}: {str(e)}")
+            if websocket.client_state.CONNECTED:
+              await websocket.close(code=4000, reason=str(e))
+
+        # Register WebSocket route
+        router.add_api_websocket_route(path=f"/{sub_path}", endpoint=endpoint)
+
+        # Store WebSocket route for reference
+        self.ws_routes[f"{service_name}.{sub_path}"] = endpoint

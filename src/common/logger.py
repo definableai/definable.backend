@@ -1,10 +1,9 @@
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from loguru import Record, logger
+from loguru import logger
 
 
 class LogConfig:
@@ -21,12 +20,12 @@ class LogConfig:
     logger.remove()
 
     # Custom log format for JSON logging
-    def json_formatter(record: Record) -> str:
+    def json_formatter(record):
       log_data = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": record["time"].timestamp(),
         "level": record["level"].name,
         "message": record["message"],
-        "module": record["name"],
+        "module": record["module"],
         "function": record["function"],
         "line": record["line"],
         "extra": record["extra"],
@@ -39,13 +38,11 @@ class LogConfig:
           "value": str(exc),
           "traceback": exc.traceback,
         }
-
       return json.dumps(log_data)
 
     # Console handler
-    logger.add(
-      sys.stdout, format=json_formatter if self.json_logs else "{time} | {level} | {message}", level=self.log_level, serialize=self.json_logs
-    )
+    logger.patch(json_formatter)
+    logger.add(sys.stdout, level=self.log_level, serialize=False)
 
     # File handler if log_file is specified
     if self.log_file:
@@ -58,7 +55,7 @@ class LogConfig:
         rotation="500 MB",
         retention="10 days",
         compression="gz",
-        serialize=self.json_logs,
+        serialize=False,
       )
 
 

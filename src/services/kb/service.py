@@ -51,6 +51,7 @@ class KnowledgeBaseService:
   def __init__(self, acquire: Acquire):
     """Initialize service."""
     self.acquire = acquire
+    self.ws_manager = acquire.ws_manager
     self.utils = acquire.utils
 
   # TODO: add types for embedding models
@@ -62,6 +63,7 @@ class KnowledgeBaseService:
     user: dict = Depends(RBAC("kb", "write")),
   ) -> KnowledgeBaseResponse:
     """Create a new knowledge base."""
+    print(user)
     # Create vectorstore
     collection_id = await create_vectorstore(org_id, kb_data.name)
     # TODO : create a unique index for org_id and KB(name)
@@ -171,7 +173,8 @@ class KnowledgeBaseService:
     """Get all knowledge bases for an organization."""
     query = select(KnowledgeBaseModel).where(KnowledgeBaseModel.organization_id == org_id)
     result = await session.execute(query)
-    return list(result.scalars().all())
+    data = list(result.scalars().all())
+    return [KnowledgeBaseResponse.model_validate(item) for item in data]
 
   async def post_add_document(
     self,
