@@ -6,6 +6,8 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
+from .logger import log
+
 
 class BaseCustomError(Exception):
   """Base class for all custom errors."""
@@ -15,6 +17,7 @@ class BaseCustomError(Exception):
     self.error_code = error_code
     self.status_code = status_code
     self.details = details or {}
+    log.error(message, error_code=error_code, status_code=status_code, details=self.details)
     super().__init__(self.message)
 
 
