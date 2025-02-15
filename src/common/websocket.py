@@ -78,9 +78,9 @@ class WebSocketManager:
 
       # Clean up organization connections
       if connection.org_id in self._org_connections:
-        self._org_connections[connection.org_id].remove(channel_id)
-        if not self._org_connections[connection.org_id]:
-          del self._org_connections[connection.org_id]
+        self._org_connections[str(connection.org_id)].remove(channel_id)
+        if not self._org_connections[str(connection.org_id)]:
+          del self._org_connections[str(connection.org_id)]
 
       # Remove connection
       del self._connections[channel_id]
