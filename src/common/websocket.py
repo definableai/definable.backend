@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Optional, Set
@@ -35,7 +36,7 @@ class WebSocketManager:
 
   def __init__(self):
     self._connections: Dict[str, WebSocketConnection] = {}  # channel_id -> connection
-    self._org_connections: Dict[UUID, Set[str]] = {}  # org_id -> set of channel_ids
+    self._org_connections: Dict[str, Set[str]] = {}  # org_id -> set of channel_ids
     self._logger = log.bind(service="websocket")
 
   async def connect(self, websocket: WebSocket, org_id: UUID, user_id: UUID, permissions: list, session: AsyncSession = Depends(get_db)) -> None:
@@ -50,8 +51,8 @@ class WebSocketManager:
       self._connections[connection.channel_id] = connection
 
       if connection.org_id not in self._org_connections:
-        self._org_connections[connection.org_id] = set()
-      self._org_connections[connection.org_id].add(connection.channel_id)
+        self._org_connections[str(connection.org_id)] = set()
+      self._org_connections[str(connection.org_id)].add(connection.channel_id)
 
       # Send connection confirmation with available events
       await self._send_connection_info(connection)
@@ -86,21 +87,25 @@ class WebSocketManager:
 
       self._logger.info("Client disconnected", channel_id=channel_id)
 
-  async def broadcast(self, org_id: UUID, data: str, resource: str, required_action: str = "read", exclude_channel: Optional[str] = None) -> None:
+  # TODO: convert this to pydantic model especially for data
+  async def broadcast(self, org_id: UUID, data: dict, resource: str, required_action: str = "read", exclude_channel: Optional[str] = None) -> None:
     """Broadcast message to all eligible clients in an organization."""
-    if org_id not in self._org_connections:
+    if str(org_id) not in self._org_connections.keys():
       return
-    org_conns = list(self._org_connections[org_id])
+    org_conns = list(self._org_connections[str(org_id)])  # type : ignore
     for channel_id in org_conns:
       if channel_id == exclude_channel:
         continue
-
       connection = self._connections[channel_id]
 
       # Check if client has required permission
       if f"{resource}_{required_action}" in connection.permissions:
         try:
-          await connection.websocket.send_json({"type": WebSocketMessageType.MESSAGE.value, "event": f"{resource}_{required_action}", "data": data})
+          await connection.websocket.send_json({
+            "type": WebSocketMessageType.MESSAGE.value,
+            "event": f"{resource}_{required_action}",
+            "data": json.dumps(data),
+          })
         except Exception as e:
           self._logger.error(f"Failed to send to {channel_id}: {str(e)}")
           await self.disconnect(channel_id)

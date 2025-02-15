@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from io import BytesIO
 from typing import Annotated, List
@@ -581,6 +582,16 @@ class KnowledgeBaseService:
           import traceback
 
           traceback.print_exc()
+
+        await self.ws_manager.broadcast(
+          org_id,
+          {
+            "id": str(doc_id),
+            "status": doc_model.processing_status.value,
+          },
+          "kb",
+          "write",
+        )
 
     except Exception:
       raise
