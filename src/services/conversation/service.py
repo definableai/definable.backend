@@ -49,6 +49,7 @@ class ConversationService:
     self.acquire = acquire
     self.chunk_size = 10
     self.models = acquire.models
+    self.logger = acquire.logger
 
   async def post_create(
     self,
@@ -58,10 +59,12 @@ class ConversationService:
     user: dict = Depends(RBAC("chats", "write")),
   ) -> ConversationResponse:
     """Create a new conversation."""
+    self.logger.info("Creating new conversation", org_id=str(org_id), user_id=str(user["id"]))
     db_conversation = ConversationModel(organization_id=org_id, user_id=user["id"], **conversation_data.model_dump())
     session.add(db_conversation)
     await session.commit()
     await session.refresh(db_conversation)
+    self.logger.debug("Conversation created successfully", conversation_id=str(db_conversation.id))
     return ConversationResponse.model_validate(db_conversation)
 
   async def put_update(
@@ -72,11 +75,13 @@ class ConversationService:
     user: dict = Depends(RBAC("chats", "write")),
   ) -> ConversationResponse:
     """Update a conversation."""
+    self.logger.info("Updating conversation", conversation_id=str(conversation_id))
     query = select(ConversationModel).where(ConversationModel.id == conversation_id, ConversationModel.organization_id == user["organization_id"])
     result = await session.execute(query)
     db_conversation = result.scalar_one_or_none()
 
     if not db_conversation:
+      self.logger.error("Conversation not found", conversation_id=str(conversation_id))
       raise HTTPException(status_code=404, detail="Conversation not found")
 
     update_data = conversation_data.model_dump(exclude_unset=True)
@@ -85,6 +90,7 @@ class ConversationService:
 
     await session.commit()
     await session.refresh(db_conversation)
+    self.logger.debug("Conversation updated successfully", conversation_id=str(conversation_id))
     return ConversationResponse.model_validate(db_conversation)
 
   async def post_create_session(
@@ -95,16 +101,30 @@ class ConversationService:
     user: dict = Depends(RBAC("chats", "write")),
   ) -> ChatSessionResponse:
     """Create a new chat session."""
+    self.logger.info(
+        "Creating new chat session",
+        conversation_id=str(session_data.conversation_id),
+        user_id=str(user["id"])
+    )
     # Verify conversation exists and belongs to user's organization
     query = select(ConversationModel).where(ConversationModel.id == session_data.conversation_id, ConversationModel.organization_id == org_id)
     result = await session.execute(query)
     if not result.unique().scalar_one_or_none():
+      self.logger.error(
+            "Conversation not found",
+            conversation_id=str(session_data.conversation_id)
+        )
       raise HTTPException(status_code=404, detail="Conversation not found")
 
     db_session = ChatSessionModel(status="active", **session_data.model_dump())
     session.add(db_session)
     await session.commit()
     await session.refresh(db_session)
+    self.logger.debug(
+            "Chat session created successfully",
+            session_id=str(db_session.id),
+            conversation_id=str(session_data.conversation_id)
+        )
     return ChatSessionResponse.model_validate(db_session)
 
   async def post_stream_chat(
@@ -119,6 +139,10 @@ class ConversationService:
 
     async def generate_response() -> AsyncGenerator[str, None]:
       try:
+        self.logger.info("Starting chat stream",
+                chat_session_id=str(chat_data.chat_session_id),
+                user_id=str(user["id"])
+            )
         data = await self._get_chat_session(chat_data.chat_session_id, session)
         if not data:
           raise Exception("Chat session not found")
@@ -134,6 +158,7 @@ class ConversationService:
         await session.commit()
 
         chat_session, model_name = data
+        self.logger.debug("Using model for chat", model_name=model_name)
         full_response = ""
         buffer: list[str] = []
         # Consume the generator from LLMFactory
@@ -151,6 +176,10 @@ class ConversationService:
 
         yield f"data: {json.dumps({'message': 'DONE'})}\n\n"
         # Save AI response after streaming
+        self.logger.debug("Saving AI response",
+            chat_session_id=str(chat_session.id),
+            tokens=len(full_response.split(" "))
+        )
         ai_message = MessageModel(
           chat_session_id=chat_session.id,
           role=Message_Role.AGENT,
@@ -162,6 +191,11 @@ class ConversationService:
         await session.commit()
 
       except Exception as e:
+        self.logger.exception(
+                "Error in chat stream",
+                exc_info=e,
+                chat_session_id=str(chat_data.chat_session_id)
+            )
         import traceback
 
         traceback.print_exc()
@@ -177,6 +211,11 @@ class ConversationService:
     user: dict = Depends(RBAC("chats", "read")),
   ) -> ConversationWithSessionsResponse:
     """Get conversation with all its chat sessions."""
+    self.logger.info(
+        "Fetching conversation with sessions",
+        conversation_id=str(conversation_id),
+        org_id=str(org_id)
+    )
     # Query conversation with chat sessions and related models/agents
     query = (
       select(ConversationModel, ChatSessionModel, LLMModel.name.label("model_name"), AgentsModel.name.label("agent_name"))
@@ -190,11 +229,22 @@ class ConversationService:
     rows = result.unique().all()
 
     if not rows:
+      self.logger.error(
+            "Conversation not found",
+            conversation_id=str(conversation_id),
+            org_id=str(org_id)
+        )
       raise HTTPException(status_code=404, detail="Conversation not found")
 
     # Process results
     conversation = rows[0].ConversationModel
     chat_sessions = []
+
+    self.logger.debug(
+        "Processing conversation sessions",
+        conversation_id=str(conversation_id),
+        session_count=len(rows)
+    )
 
     for row in rows:
       if row.ChatSessionModel:
@@ -214,11 +264,17 @@ class ConversationService:
     user: dict = Depends(RBAC("chats", "read")),
   ) -> List[ConversationResponse]:
     """Get all conversations for an organization."""
+    self.logger.info("Fetching conversations list", org_id=str(org_id))
     query = select(ConversationModel).where(ConversationModel.organization_id == org_id).order_by(ConversationModel.created_at.desc())
 
     result = await session.execute(query)
     conversations = result.scalars().all()
 
+    self.logger.debug(
+        "Retrieved conversations",
+        org_id=str(org_id),
+        count=len(conversations)
+    )
     return [ConversationResponse.model_validate(conv) for conv in conversations]
 
   async def get_messages(
@@ -232,6 +288,13 @@ class ConversationService:
     user: dict = Depends(RBAC("chats", "read")),
   ) -> PaginatedMessagesResponse:
     """Get paginated messages for a conversation."""
+    self.logger.info(
+        "Fetching messages",
+        conversation_id=str(conversation_id),
+        cursor=cursor.isoformat() if cursor else None,
+        offset=offset,
+        limit=limit
+    )
     # Base query for total count
     count_query = (
       select(func.count(MessageModel.id))
@@ -299,10 +362,20 @@ class ConversationService:
   ### Private methods ###
   async def _get_chat_session(self, chat_session_id: UUID, session: AsyncSession) -> tuple[ChatSessionModel, str] | None:
     """Get chat session."""
+    self.logger.info("Fetching chat session", chat_session_id=str(chat_session_id))
+
     query = (
       select(ChatSessionModel, LLMModel.name).join(LLMModel, ChatSessionModel.model_id == LLMModel.id).where(ChatSessionModel.id == chat_session_id)
     )
 
-    result = await session.execute(query)
-    chat_session, model_name = result.one()
-    return chat_session, model_name
+    try:
+      result = await session.execute(query)
+      chat_session, model_name = result.one()
+      return chat_session, model_name
+    except Exception as e:
+      self.logger.exception(
+        "Failed to fetch chat session", 
+        exc_info=e,
+        chat_session_id=str(chat_session_id)
+      )
+      return None
