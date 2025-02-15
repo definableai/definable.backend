@@ -374,7 +374,7 @@ class ConversationService:
       return chat_session, model_name
     except Exception as e:
       self.logger.exception(
-        "Failed to fetch chat session", 
+        "Failed to fetch chat session",
         exc_info=e,
         chat_session_id=str(chat_session_id)
       )
