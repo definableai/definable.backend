@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
-from uuid import UUID
+from typing import Any, Dict
 
 from ..model import KBDocumentModel
 
