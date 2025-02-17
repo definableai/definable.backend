@@ -1,10 +1,10 @@
-import json
+import uuid
 from datetime import datetime
 from io import BytesIO
 from typing import Annotated, List
 from uuid import UUID
 
-from fastapi import BackgroundTasks, Body, Depends, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Body, Depends, HTTPException
 from langchain_openai import OpenAIEmbeddings
 from langchain_postgres import PGVector
 from sqlalchemy import select, text
@@ -17,19 +17,22 @@ from libs.vectorstore import create_vectorstore
 from services.__base.acquire import Acquire
 
 from .loaders import DocumentProcessor
-from .model import KBDocumentModel, KnowledgeBaseModel, ProcessingStatus
+from .model import DocumentStatus, KBDocumentModel, KnowledgeBaseModel, SourceTypeModel
 from .schema import (
   DocumentChunk,
   DocumentChunkDelete,
   DocumentChunkUpdate,
+  FileDocumentData,
   KBDocumentChunksResponse,
   KBDocumentResponse,
   KnowledgeBaseCreate,
   KnowledgeBaseDetailResponse,
   KnowledgeBaseResponse,
   KnowledgeBaseUpdate,
-  validate_file_extension,
+  URLDocumentData,
+  validate_file_document_data,
 )
+from .source_handlers import get_source_handler
 
 
 class KnowledgeBaseService:
@@ -41,12 +44,14 @@ class KnowledgeBaseService:
     "delete=remove",
     "get=get",
     "get=list",
-    "post=add_document",
     "delete=remove_document",
     "get=get_document_chunks",
     "put=update_document_chunk",
     "delete=delete_document_chunks",
     "post=search_chunks",
+    "post=add_url_document",
+    "post=add_file_document",
+    "get=get_document_content",
   ]
 
   def __init__(self, acquire: Acquire):
@@ -177,70 +182,100 @@ class KnowledgeBaseService:
     data = list(result.scalars().all())
     return [KnowledgeBaseResponse.model_validate(item) for item in data]
 
-  async def post_add_document(
+  async def post_add_file_document(
     self,
     org_id: UUID,
     kb_id: UUID,
-    title: Annotated[str, Form(min_length=1, max_length=200, description="Document title", examples=["My Document", "Project Report"])],
-    doc_type: Annotated[
-      int,  # Changed from DocumentType to int for form data
-      Form(description="Document type (0: FILE, 1: URL)", examples=[0, 1]),
-    ],
-    file: Annotated[UploadFile, File(description="Document file to upload")],
+    document_data: Annotated[FileDocumentData, Depends(validate_file_document_data)],
     background_tasks: BackgroundTasks,
-    description: Annotated[str, Form(description="Optional document description")] = "",
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("kb", "write")),
   ) -> KBDocumentResponse:
-    """Add a document to a knowledge base."""
-    match doc_type:
-      case 0:
-        # Validate file extension
-        if file.filename:
-          validate_file_extension(file.filename)
-        else:
-          raise HTTPException(status_code=400, detail="File name is required")
-
-        file_type = file.filename.split(".")[-1]
-        s3_key = f"kb/{kb_id}/{self.utils.generate_unique_filename(file.filename)}"
-
-      case 1:
-        # TODO: add url to the knowledge base
-        pass
-
-      # Verify knowledge base exists
-    db_kb = await self._get_kb(kb_id, org_id, session)
-    if not db_kb:
-      raise HTTPException(status_code=404, detail="Knowledge base not found")
-
-    # Upload file to S3
+    """Add file document to knowledge base."""
     try:
-      file_content = await file.read()
-      await s3_client.upload_file(BytesIO(file_content), s3_key, content_type=file.content_type)
+      # TODO: switch this logic to pre-process in handler
+      # get source type model
+      source_type_model = await session.get(SourceTypeModel, 1)
+      if not source_type_model:
+        raise HTTPException(status_code=404, detail="Source type not found")
+      # extract file metadata
+      file_metadata = document_data.get_metadata()
+      # upload file to s3
+      config_schema = source_type_model.config_schema
+      storage = config_schema.get("storage")
+      if not storage:
+        raise HTTPException(status_code=400, detail="Storage not found in source type config")
+      s3_key = f"{storage['bucket']}/{storage['path']}/{org_id}/{kb_id}/{str(uuid.uuid4())}.{file_metadata['file_type']}"
+      try:
+        file_content = await document_data.file.read()
+        await s3_client.upload_file(BytesIO(file_content), s3_key, content_type=document_data.file.content_type)
+      except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
+
+      # update file metadata with s3 key
+      file_metadata["s3_key"] = s3_key
+      print(file_metadata)
+      # Create document
+      db_doc = KBDocumentModel(
+        title=document_data.title,
+        description=document_data.description,
+        kb_id=kb_id,
+        source_type_id=1,  # File type
+        source_metadata=file_metadata,
+        extraction_status=DocumentStatus.PENDING,
+        indexing_status=DocumentStatus.PENDING,
+      )
+
+      session.add(db_doc)
+      await session.commit()
+      await session.refresh(db_doc)
+
+      # Start background processing
+      background_tasks.add_task(self._process_document_task, source_type=source_type_model, doc=db_doc, session=session, org_id=org_id)
+
+      return KBDocumentResponse.model_validate(db_doc)
+
     except Exception as e:
-      raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
+      raise HTTPException(status_code=400, detail=str(e))
 
-    # Create document
-    db_doc = KBDocumentModel(
-      kb_id=kb_id,
-      s3_key=s3_key,
-      original_filename=file.filename if doc_type == 0 else None,
-      file_size=file.size if doc_type == 0 else None,
-      processing_status=ProcessingStatus.PENDING,
-      last_processed_at=None,
-      title=title,
-      description=description,
-      doc_type=doc_type,
-      file_type=file_type if doc_type == 0 else None,
-    )
-    session.add(db_doc)
-    await session.commit()
-    await session.refresh(db_doc)
+  async def post_add_url_document(
+    self,
+    org_id: UUID,
+    kb_id: UUID,
+    document_data: URLDocumentData,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_db),
+    user: dict = Depends(RBAC("kb", "write")),
+  ) -> KBDocumentResponse:
+    """Add URL document to knowledge base."""
+    try:
+      # get source type model
+      source_type_model = await session.get(SourceTypeModel, 2)
+      if not source_type_model:
+        raise HTTPException(status_code=404, detail="Source type not found")
+      # Parse URLs and config
+      metadata = document_data.get_metadata()
+      metadata["is_parent"] = True
+      metadata["parent_id"] = None
+      # Create parent document to track crawl job
+      parent_doc = KBDocumentModel(
+        title=document_data.title,
+        description=document_data.description,
+        kb_id=kb_id,
+        source_type_id=2,
+        source_metadata=metadata,
+        extraction_status=DocumentStatus.PENDING,
+        indexing_status=DocumentStatus.PENDING,
+      )
+      session.add(parent_doc)
+      await session.commit()
+      await session.refresh(parent_doc)
 
-    # create a background task to process
-    background_tasks.add_task(self._process_document_task, db_doc.id, org_id, kb_id)
+      background_tasks.add_task(self._process_document_task, source_type=source_type_model, doc=parent_doc, session=session, org_id=org_id)
+      return KBDocumentResponse.model_validate(parent_doc)
 
-    return KBDocumentResponse.model_validate(db_doc)
+    except Exception as e:
+      raise HTTPException(status_code=400, detail=str(e))
 
   async def get_get_document_chunks(
     self,
@@ -318,9 +353,9 @@ class KnowledgeBaseService:
       raise HTTPException(status_code=404, detail="Document not found")
 
     # Delete file from S3
-    if db_doc.s3_key:
+    if db_doc.source_metadata.get("s3_key"):
       try:
-        await s3_client.delete_file(db_doc.s3_key)
+        await s3_client.delete_file(db_doc.source_metadata["s3_key"])
       except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
 
@@ -514,6 +549,18 @@ class KnowledgeBaseService:
     except Exception:
       raise
 
+  async def get_get_document_content(
+    self,
+    org_id: UUID,
+    doc_id: UUID,
+    session: AsyncSession = Depends(get_db),
+  ) -> KBDocumentResponse:
+    """Get the content of a document."""
+    doc_model = await self._get_document(doc_id, org_id, session)
+    if not doc_model:
+      raise HTTPException(status_code=404, detail="Document not found")
+    return KBDocumentResponse.model_validate(doc_model)
+
   ### PRIVATE METHODS ###
 
   async def _get_kb(
@@ -538,7 +585,7 @@ class KnowledgeBaseService:
     result = await session.execute(query)
     return result.scalar_one_or_none()
 
-  async def _process_document_task(
+  async def _indexing_document_task(
     self,
     doc_id: UUID,
     org_id: UUID,
@@ -552,7 +599,7 @@ class KnowledgeBaseService:
         if not doc_model:
           raise HTTPException(status_code=404, detail="Document not found")
         # set document to processing
-        doc_model.processing_status = ProcessingStatus.PROCESSING
+        doc_model.indexing_status = DocumentStatus.PROCESSING
         session.add(doc_model)
         await session.commit()
         try:
@@ -568,15 +615,15 @@ class KnowledgeBaseService:
           await processor.process_document(kb_id=kb_model.id, document=doc_model, collection_name=str(kb_model.organization_id) + "_" + kb_model.name)
 
           # Update status to completed
-          doc_model.processing_status = ProcessingStatus.COMPLETED
+          doc_model.indexing_status = DocumentStatus.COMPLETED
           # TODO: need to check what is right? using timezone aware datetime or not?
-          doc_model.last_processed_at = datetime.now()
+          doc_model.indexing_completed_at = datetime.now()
           session.add(doc_model)
           await session.commit()
 
         except Exception:
           # Update status to failed
-          doc_model.processing_status = ProcessingStatus.FAILED
+          doc_model.indexing_status = DocumentStatus.FAILED
           session.add(doc_model)
           await session.commit()
           import traceback
@@ -587,7 +634,7 @@ class KnowledgeBaseService:
           org_id,
           {
             "id": str(doc_id),
-            "status": doc_model.processing_status.value,
+            "indexing_status": doc_model.indexing_status.value,
           },
           "kb",
           "write",
@@ -595,3 +642,44 @@ class KnowledgeBaseService:
 
     except Exception:
       raise
+
+  async def _process_document_task(self, source_type: SourceTypeModel, doc: KBDocumentModel, session: AsyncSession, **kwargs) -> None:
+    # Get appropriate handler
+    handler = get_source_handler(source_type.name, source_type.config_schema)
+
+    try:
+      # Validate metadata
+      await handler.validate_metadata(doc.source_metadata, **kwargs)
+
+      # Preprocess
+      await handler.preprocess(doc, **kwargs)
+
+      # Extract content
+      content = await handler.extract_content(
+        doc,
+        session=session,  # incase we have children documents to create i.e. urlhandler crawl jobs
+        ws_manager=self.ws_manager,  # to send the notifications to the user via websocket for children documents
+        **kwargs,
+      )
+      # TODO: transfer this logic to the handler
+      doc.content = content
+      doc.extraction_status = DocumentStatus.COMPLETED
+      doc.extraction_completed_at = datetime.now()
+      session.add(doc)  # Mark as modified
+      await session.commit()
+
+    except Exception as e:
+      doc.extraction_status = DocumentStatus.FAILED
+      doc.error_message = str(e)
+      session.add(doc)  # Mark as modified
+      await session.commit()
+
+    finally:
+      await handler.cleanup(doc)
+      # send the notification to the user via websocket
+      await self.ws_manager.broadcast(
+        kwargs.get("org_id"),
+        {"id": str(doc.id), "extraction_status": doc.extraction_status},
+        "kb",
+        "write",
+      )

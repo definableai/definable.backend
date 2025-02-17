@@ -26,6 +26,9 @@ class Settings(BaseSettings):
   s3_access_key: str
   s3_secret_key: str
   s3_endpoint: str
+  firecrawl_api_key: str
+  celery_broker_url: str
+  celery_result_backend: str
 
   class Config:
     """Config class."""

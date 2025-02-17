@@ -1,12 +1,12 @@
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import Annotated, Dict, List, Literal, Optional
 from uuid import UUID
 
-from fastapi import HTTPException
-from pydantic import BaseModel, Field
+from fastapi import File, Form, HTTPException, UploadFile
+from pydantic import BaseModel, Field, model_validator
 
-from .model import DocumentType, ProcessingStatus
+from .model import DocumentStatus
 
 
 class AllowedFileExtension(str, Enum):
@@ -80,14 +80,107 @@ class KnowledgeBaseResponse(BaseModel):
     from_attributes = True
 
 
-class KBDocumentCreate(BaseModel):
-  """Knowledge base document create schema."""
+# Base Models
+class DocumentBase(BaseModel):
+  """Base document fields."""
 
   title: str = Field(..., min_length=1, max_length=200)
-  description: Optional[str] = None
-  doc_type: DocumentType
-  file_type: str = Field(..., max_length=20)
-  embedding_model: str = Field(..., max_length=50)
+  description: str = Field(default="")
+
+
+# File Document
+class FileDocumentData(BaseModel):
+  """Form data for file uploads."""
+
+  title: Annotated[str, Form(..., description="Title of the document")]
+  description: Annotated[str, Form(..., description="Description of the document")]
+  file: Annotated[UploadFile, File(..., description="File to upload")]
+
+  def get_metadata(self) -> Dict:
+    """Generate metadata for file document."""
+    if not self.file.filename:
+      raise ValueError("File must have a name")
+
+    return {
+      "file_type": self.file.filename.split(".")[-1].lower(),
+      "original_filename": self.file.filename,
+      "size": self.file.size,
+      "mime_type": self.file.content_type,
+    }
+
+
+async def validate_file_document_data(
+  title: Annotated[str, Form(min_length=1, max_length=200)],
+  file: Annotated[UploadFile, File(description="File to upload")],
+  description: Annotated[str, Form()] = "",
+) -> FileDocumentData:
+  """Validate file document form data."""
+  return FileDocumentData(title=title, description=description, file=file)
+
+
+class ScrapeOptions(BaseModel):
+  """Scrape options schema."""
+
+  waitFor: Optional[int] = Field(default=0, ge=0, description="Wait time in milliseconds")
+  excludeTags: Optional[List[str]] = Field(default=[""], description="Tags to exclude")
+  includeTags: Optional[List[str]] = Field(default=[""], description="Tags to include only")
+  onlyMainContent: bool = Field(description="Extract only main content")
+  formats: List[str] = Field(description="Formats to extract")  # Required field
+
+  # don't allow extra fields
+  # class Config:
+  #   extra = "forbid"
+
+
+class CrawlerOptions(BaseModel):
+  """Crawler options schema."""
+
+  maxDepth: int = Field(default=0, ge=0, description="Maximum crawl depth")
+  limit: int = Field(default=10, ge=1, le=1000, description="Maximum pages to crawl")
+  includePaths: Optional[List[str]] = Field(default=[], description="Paths to include")
+  excludePaths: Optional[List[str]] = Field(default=[], description="Paths to exclude")
+  ignoreSitemap: bool = Field(default=False, description="Ignore sitemaps")
+  allowBackwardLinks: bool = Field(default=False, description="Include all backlinks")
+  scrapeOptions: ScrapeOptions = Field(..., description="Scrape options")  # Required field
+
+  # class Config:
+  #   extra = "forbid"
+
+
+class MapOptions(BaseModel):
+  """Map options schema."""
+
+  includeSubdomains: bool = Field(default=True, description="Include subdomains")
+  ignoreSitemap: bool = Field(default=False, description="Ignore sitemaps")
+
+
+# URL Document
+class URLDocumentData(DocumentBase):
+  """JSON data for URL processing."""
+
+  url: str = Field(..., description="Single URL to scrape")
+  operation: Literal["scrape", "crawl", "map"] = Field(..., description="Operation to perform")
+  settings: ScrapeOptions | CrawlerOptions | MapOptions = Field(..., description="Settings for the operation")
+
+  @model_validator(mode="after")
+  def validate_operation_settings(self) -> "URLDocumentData":
+    """Validate and convert settings based on operation."""
+    try:
+      if self.operation == "scrape":
+        self.settings = ScrapeOptions.model_validate(self.settings)
+      elif self.operation == "crawl":
+        self.settings = CrawlerOptions.model_validate(self.settings)
+      elif self.operation == "map":
+        self.settings = MapOptions.model_validate(self.settings)
+      else:
+        raise ValueError(f"Invalid operation: {self.operation}")
+    except Exception as e:
+      raise ValueError(f"Invalid settings for operation {self.operation}: {str(e)}")
+    return self
+
+  def get_metadata(self) -> Dict:
+    """Generate metadata for URL document."""
+    return {"url": self.url, "operation": self.operation, "settings": self.settings.model_dump()}
 
 
 class KBDocumentUpdate(BaseModel):
@@ -95,7 +188,7 @@ class KBDocumentUpdate(BaseModel):
 
   title: Optional[str] = Field(None, min_length=1, max_length=200)
   description: Optional[str] = None
-  processing_status: Optional[ProcessingStatus] = None
+  processing_status: Optional[DocumentStatus] = None
 
 
 class KBDocumentResponse(BaseModel):
@@ -104,15 +197,15 @@ class KBDocumentResponse(BaseModel):
   id: UUID
   title: str
   description: Optional[str]
-  doc_type: DocumentType
-  s3_key: Optional[str]
-  download_url: Optional[str] = None
-  original_filename: Optional[str]
-  file_type: str
-  file_size: Optional[int]
   kb_id: UUID
-  last_processed_at: Optional[datetime]
-  processing_status: ProcessingStatus
+  source_type_id: int
+  source_metadata: Dict = Field(..., description="Source-specific metadata")
+  content: Optional[str]
+  extraction_status: DocumentStatus
+  indexing_status: DocumentStatus
+  error_message: Optional[str]
+  extraction_completed_at: Optional[datetime]
+  indexing_completed_at: Optional[datetime]
 
   class Config:
     from_attributes = True

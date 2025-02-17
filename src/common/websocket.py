@@ -123,6 +123,7 @@ class WebSocketManager:
   async def _handle_message(self, connection: WebSocketConnection, message: dict) -> None:
     """Handle incoming WebSocket messages."""
     try:
+      print(message)
       message_type = message.get("type")
 
       if message_type == WebSocketMessageType.ERROR.value:
