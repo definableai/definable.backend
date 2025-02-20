@@ -576,7 +576,6 @@ class KnowledgeBaseService:
     session: AsyncSession = Depends(get_db),
   ) -> KBDocumentResponse:
     """Get the content of a document."""
-    # sample comment
     doc_model = await self._get_document(doc_id, org_id, session)
     if not doc_model:
       raise HTTPException(status_code=404, detail="Document not found")
