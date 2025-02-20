@@ -8,5 +8,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
+      - run: pip install ruff
+      - run: pip install mypy
       - run: pip install pre-commit
       - run: pre-commit run --all-files
