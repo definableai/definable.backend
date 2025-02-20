@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -14,48 +15,66 @@ class LogConfig:
     self.json_logs = json_logs
     self.log_file = log_file
 
+  def add_caller_info(self, record):
+    """
+    Patch function that adds a 'caller_info' key to each record.
+    The value is formatted as: <parent-module>/<module>/<function>:<line>
+    """
+    file_path = record["file"].path  # e.g. "D:/work/zyeta.backend/src/common/logger.py"
+    # Extract the parent directory name and the module (file) name
+    parent_module = os.path.basename(os.path.dirname(file_path))
+    module_name = os.path.splitext(os.path.basename(file_path))[0]
+
+    # Build the caller info using the function name and line number from the record
+    caller_info = f"{parent_module}/{module_name}/{record['function']}:{record['line']}"
+    record["extra"]["caller_info"] = caller_info
+    return record
+
+  def file_formatter(self, record):
+    """Custom formatter for file logs that outputs JSON with escaped curly braces."""
+    log_data = {
+      "timestamp": record["time"].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+      "level": record["level"].name,
+      "caller": record["extra"].get("caller_info", ""),
+      "message": record["message"],
+      "line": record["line"],
+      "extra": record["extra"],
+    }
+    if record["exception"]:
+      exc = record["exception"]
+      log_data["exception"] = {
+        "type": exc.__class__.__name__,
+        "value": str(exc),
+        "traceback": exc.__traceback__,
+      }
+    # Dump JSON and escape curly braces so that they are not processed by Loguru's formatter.
+    raw = json.dumps(log_data)
+    escaped = raw.replace("{", "{{").replace("}", "}}")
+    return escaped + "\n"
+
   def setup_logger(self):
-    """Configure logger with the specified settings."""
+    """Configure logger with different handlers for console and file."""
     # Remove default handler
     logger.remove()
+    # Apply the patch to add caller_info to each record.
+    logger.configure(patcher=self.add_caller_info)
 
-    # Custom log format for JSON logging
-    def json_formatter(record):
-      log_data = {
-        "timestamp": record["time"].timestamp(),
-        "level": record["level"].name,
-        "message": record["message"],
-        "module": record["module"],
-        "function": record["function"],
-        "line": record["line"],
-        "extra": record["extra"],
-      }
+    # Add a console handler
+    # Console handler with custom timestamp formatting.
+    console_format = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level} | {extra[caller_info]} | {message}"
+    logger.add(sys.stdout, level=self.log_level, format=console_format)
 
-      if record["exception"]:
-        exc = record["exception"]
-        log_data["exception"] = {
-          "type": exc.__class__.__name__,
-          "value": str(exc),
-          "traceback": exc.traceback,
-        }
-      return json.dumps(log_data)
-
-    # Console handler
-    logger.patch(json_formatter)
-    logger.add(sys.stdout, level=self.log_level, serialize=False)
-
-    # File handler if log_file is specified
+    # Add a file handler that uses the JSON formatter
     if self.log_file:
       log_path = Path(self.log_file)
       log_path.parent.mkdir(parents=True, exist_ok=True)
       logger.add(
         str(log_path),
-        format=json_formatter if self.json_logs else "{time} | {level} | {message}",
         level=self.log_level,
         rotation="500 MB",
         retention="10 days",
         compression="gz",
-        serialize=False,
+        format=self.file_formatter if self.json_logs else "{time} | {level} | {extra[caller_info]} | {message}",
       )
 
 
@@ -71,9 +90,13 @@ class Logger:
     return Logger(new_context)
 
   def _log(self, level: str, message: str, **kwargs):
-    """Internal logging method."""
+    """Internal logging method.
+
+    Using logger.opt(depth=2) ensures that the module, line, and other caller information
+    reflect the place where the log method was invoked, not inside this wrapper.
+    """
     extra = {**self.context, **kwargs}
-    getattr(logger, level)(message, **extra)
+    getattr(logger.opt(depth=2), level)(message, **extra)
 
   def debug(self, message: str, **kwargs):
     """Log debug message."""
@@ -100,5 +123,5 @@ class Logger:
 log = Logger()
 
 # Setup default configuration
-default_config = LogConfig()
+default_config = LogConfig(log_file="logs/app.log")
 default_config.setup_logger()
