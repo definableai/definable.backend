@@ -13,7 +13,7 @@ class Settings(BaseSettings):
   jwt_secret: str
   master_api_key: str
   openai_api_key: str
-  environment: str = "development"
+  environment: str = "dev"  # can be dev | beta | prod
   database_url: str
   resend_api_key: str
   frontend_url: str
@@ -21,6 +21,14 @@ class Settings(BaseSettings):
   stripe_publishable_key: str
   stripe_webhook_secret: str
   jwt_expire_minutes: int
+  kb_settings_version: int
+  s3_bucket: str
+  s3_access_key: str
+  s3_secret_key: str
+  s3_endpoint: str
+  firecrawl_api_key: str
+  celery_broker_url: str
+  celery_result_backend: str
 
   class Config:
     """Config class."""

@@ -114,4 +114,3 @@ class OrganizationService:
 
     # Convert SQLAlchemy models to Pydantic models
     return [OrganizationResponse.model_validate(org) for org in orgs]
-

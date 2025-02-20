@@ -1,0 +1,20 @@
+services:
+  zyeta.backend:
+    container_name: zyeta.backend
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    env_file: .env
+    expose:
+      - "3000"
+    networks:
+      - nginx_proxy_manager_default
+      - default
+
+networks:
+  nginx_proxy_manager_default:
+    external: true
+  default:
+    driver: bridge
+    enable_ipv6: true
