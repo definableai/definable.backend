@@ -1,10 +1,9 @@
 import copy
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, cast
+from typing import Any, Dict, cast
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.websocket import WebSocketManager
