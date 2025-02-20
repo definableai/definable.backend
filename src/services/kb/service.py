@@ -5,10 +5,12 @@ from typing import Annotated, List
 from uuid import UUID
 
 from fastapi import BackgroundTasks, Body, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from langchain_openai import OpenAIEmbeddings
 from langchain_postgres import PGVector
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from database import async_engine, get_db
 from dependencies.security import RBAC
@@ -52,6 +54,7 @@ class KnowledgeBaseService:
     "post=add_url_document",
     "post=add_file_document",
     "get=get_document_content",
+    "post=index_documents",
   ]
 
   def __init__(self, acquire: Acquire):
@@ -195,6 +198,8 @@ class KnowledgeBaseService:
     try:
       # TODO: switch this logic to pre-process in handler
       # get source type model
+      print(document_data)
+      print(document_data.source_id)
       source_type_model = await session.get(SourceTypeModel, 1)
       if not source_type_model:
         raise HTTPException(status_code=404, detail="Source type not found")
@@ -221,6 +226,7 @@ class KnowledgeBaseService:
         description=document_data.description,
         kb_id=kb_id,
         source_type_id=1,  # File type
+        source_id=document_data.source_id,
         source_metadata=file_metadata,
         extraction_status=DocumentStatus.PENDING,
         indexing_status=DocumentStatus.PENDING,
@@ -263,6 +269,7 @@ class KnowledgeBaseService:
         description=document_data.description,
         kb_id=kb_id,
         source_type_id=2,
+        source_id=document_data.source_id,
         source_metadata=metadata,
         extraction_status=DocumentStatus.PENDING,
         indexing_status=DocumentStatus.PENDING,
@@ -362,6 +369,19 @@ class KnowledgeBaseService:
     await session.delete(db_doc)
     await session.commit()
     return {"message": "Document deleted successfully"}
+
+  async def post_index_documents(
+    self,
+    org_id: UUID,
+    kb_id: UUID,
+    doc_ids: Annotated[List[UUID], Body(..., description="List of document IDs to index")],
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_db),
+    user: dict = Depends(RBAC("kb", "write")),
+  ) -> JSONResponse:
+    """Index documents."""
+    background_tasks.add_task(self._indexing_documents_task, doc_ids, org_id, kb_id, session)
+    return JSONResponse(content={"message": "Documents are getting indexed"})
 
   async def put_update_document_chunk(
     self,
@@ -585,63 +605,74 @@ class KnowledgeBaseService:
     result = await session.execute(query)
     return result.scalar_one_or_none()
 
-  async def _indexing_document_task(
+  async def _get_documents(
     self,
-    doc_id: UUID,
+    doc_ids: List[UUID],
+    org_id: UUID,
+    session: AsyncSession,
+  ) -> List[KBDocumentModel]:
+    """Get documents by IDs and verify organization."""
+    query = select(KBDocumentModel).join(KnowledgeBaseModel).where(KBDocumentModel.id.in_(doc_ids), KnowledgeBaseModel.organization_id == org_id)
+    result = await session.execute(query)
+    return list(result.scalars().all())
+
+  async def _indexing_documents_task(
+    self,
+    doc_ids: List[UUID],
     org_id: UUID,
     kb_id: UUID,
+    session: AsyncSession,
   ) -> None:
     """Background task to process document."""
-    try:
-      # Create dedicated session for background task
-      async with self.acquire.db_session() as session:
-        doc_model = await self._get_document(doc_id, org_id, session)
-        if not doc_model:
-          raise HTTPException(status_code=404, detail="Document not found")
-        # set document to processing
-        doc_model.indexing_status = DocumentStatus.PROCESSING
-        session.add(doc_model)
-        await session.commit()
-        try:
-          # get kb model
-          kb_model = await self._get_kb(kb_id, org_id, session)
-          if not kb_model:
-            raise HTTPException(status_code=404, detail="Knowledge base not found")
+    doc_models = await self._get_documents(doc_ids, org_id, session)
+    if not doc_models:
+      raise HTTPException(status_code=404, detail="Documents not found")
 
-          # Initialize processor
-          processor = DocumentProcessor(embedding_model=kb_model.embedding_model)
-          # TODO : optimizations, can we not just pass the collection_name, and file in bytes becuase its just vectorizing 1 file data.
-          # Process document
-          await processor.process_document(kb_id=kb_model.id, document=doc_model, collection_name=str(kb_model.organization_id) + "_" + kb_model.name)
+    # start processing documents one by one
+    for doc_model in doc_models:
+      doc_model.indexing_status = DocumentStatus.PROCESSING
+      session.add(doc_model)
 
-          # Update status to completed
-          doc_model.indexing_status = DocumentStatus.COMPLETED
-          # TODO: need to check what is right? using timezone aware datetime or not?
-          doc_model.indexing_completed_at = datetime.now()
-          session.add(doc_model)
-          await session.commit()
+      await session.commit()
+      try:
+        # get kb model
+        kb_model = await self._get_kb(kb_id, org_id, session)
+        if not kb_model:
+          raise HTTPException(status_code=404, detail="Knowledge base not found")
 
-        except Exception:
-          # Update status to failed
-          doc_model.indexing_status = DocumentStatus.FAILED
-          session.add(doc_model)
-          await session.commit()
-          import traceback
-
-          traceback.print_exc()
-
-        await self.ws_manager.broadcast(
-          org_id,
-          {
-            "id": str(doc_id),
-            "indexing_status": doc_model.indexing_status.value,
-          },
-          "kb",
-          "write",
+        # Initialize processor
+        processor = DocumentProcessor(
+          embedding_model=kb_model.embedding_model,
+          chunk_size=kb_model.settings["max_chunk_size"],
+          chunk_overlap=kb_model.settings["chunk_overlap"],
+        )
+        # Process document
+        await processor.process_document(
+          kb_id=kb_model.id, documents=[doc_model], collection_name=str(kb_model.organization_id) + "_" + kb_model.name
         )
 
-    except Exception:
-      raise
+        # Update status to completed
+        doc_model.indexing_status = DocumentStatus.COMPLETED
+        # TODO: need to check what is right? using timezone aware datetime or not?
+        doc_model.indexing_completed_at = datetime.now()
+        session.add(doc_model)
+        await session.commit()
+
+      except Exception:
+        # Update status to failed
+        doc_model.indexing_status = DocumentStatus.FAILED
+        session.add(doc_model)
+        await session.commit()
+
+      await self.ws_manager.broadcast(
+        org_id,
+        {
+          "id": str(doc_model.id),
+          "indexing_status": doc_model.indexing_status.value,
+        },
+        "kb",
+        "write",
+      )
 
   async def _process_document_task(self, source_type: SourceTypeModel, doc: KBDocumentModel, session: AsyncSession, **kwargs) -> None:
     # Get appropriate handler
@@ -665,6 +696,10 @@ class KnowledgeBaseService:
       doc.content = content
       doc.extraction_status = DocumentStatus.COMPLETED
       doc.extraction_completed_at = datetime.now()
+      metadata = doc.source_metadata
+      metadata["source_extraction_status"] = True
+      flag_modified(doc, "source_metadata")
+      doc.source_metadata = metadata
       session.add(doc)  # Mark as modified
       await session.commit()
 
@@ -679,7 +714,7 @@ class KnowledgeBaseService:
       # send the notification to the user via websocket
       await self.ws_manager.broadcast(
         kwargs.get("org_id"),
-        {"id": str(doc.id), "extraction_status": doc.extraction_status},
+        {"id": str(doc.id), "extraction_status": doc.extraction_status, "source_extraction_status": True},
         "kb",
         "write",
       )

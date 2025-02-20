@@ -56,6 +56,7 @@ class KBDocumentModel(CRUD):
   description: Mapped[str] = mapped_column(Text, nullable=True)
   kb_id: Mapped[UUID] = mapped_column(ForeignKey("knowledge_base.id", ondelete="CASCADE"), nullable=False)
   source_type_id: Mapped[int] = mapped_column(ForeignKey("source_types.id", ondelete="CASCADE"), nullable=False)
+  source_id: Mapped[UUID] = mapped_column(PostgresUUID, nullable=True)
   source_metadata: Mapped[dict] = mapped_column(JSONB, nullable=False)
   content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
   extraction_status: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=DocumentStatus.PENDING)

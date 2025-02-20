@@ -60,6 +60,7 @@ def upgrade() -> None:
     sa.Column("description", sa.Text(), nullable=True),
     sa.Column("kb_id", postgresql.UUID(), nullable=False),
     sa.Column("source_type_id", sa.SmallInteger(), nullable=False),
+    sa.Column("source_id", postgresql.UUID(), nullable=True),
     sa.Column("source_metadata", postgresql.JSONB(), nullable=False),
     sa.Column("content", sa.Text(), nullable=True),
     sa.Column("extraction_status", sa.SmallInteger(), server_default="0", nullable=False),
@@ -155,3 +156,4 @@ def downgrade() -> None:
   op.drop_index("ix_kb_documents_indexing_status", table_name="kb_documents")
   op.drop_table("kb_documents")
   op.drop_table("knowledge_base")
+  op.drop_table("source_types")

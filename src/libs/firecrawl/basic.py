@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional
 
+import httpx
 from firecrawl import FirecrawlApp
 
 from config.settings import settings
@@ -8,6 +9,8 @@ from config.settings import settings
 class Firecrawl:
   def __init__(self):
     self.app = FirecrawlApp(api_key=settings.firecrawl_api_key)
+    self.base_url = "https://api.firecrawl.dev/v1"
+    self.token = "Bearer " + settings.firecrawl_api_key
 
   def map_url(self, url: str, settings: Optional[Dict[str, Any]] = None) -> List[str]:
     return self.app.map_url(url, settings or {})
@@ -22,7 +25,7 @@ class Firecrawl:
   async def crawl(
     self,
     url: str,
-    settings: Optional[Dict[str, Any]] = None,
+    params: Dict[str, Any],
   ):
     """
     Crawl a URL with custom event handlers.
@@ -35,8 +38,16 @@ class Firecrawl:
         settings: Crawl settings (limit, exclude_paths, etc.)
     """
     try:
-      result = self.app.async_crawl_url(url, settings or {})
-      return result
+      params["url"] = url
+      async with httpx.AsyncClient() as client:
+        response = await client.post(
+          f"{self.base_url}/crawl",
+          json=params,
+          headers={"Authorization": self.token},
+        )
+        response.raise_for_status()
+        print(response.json())
+        return response.json()
 
     except Exception as e:
       raise e

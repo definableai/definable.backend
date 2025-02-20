@@ -1,5 +1,6 @@
+import copy
 from pathlib import Path
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, List, Optional
 from uuid import UUID, uuid4
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -105,7 +106,7 @@ class DocumentProcessor:
     self.chunk_overlap = chunk_overlap
     self.text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
-  async def process_document(self, kb_id: UUID, document: KBDocumentModel, collection_name: str) -> None:
+  async def process_document(self, kb_id: UUID, documents: List[KBDocumentModel], collection_name: str) -> None:
     """Process a single document - load, chunk, and store in vector DB."""
     try:
       # Initialize vector store
@@ -117,14 +118,13 @@ class DocumentProcessor:
         create_extension=False,
       )
 
-      # Load and process document
-      loader = FileLoader(kb_id, document)
-      documents = []
-      async for doc in loader.load():
-        documents.append(doc)
+      lc_documents: List[Document] = []
+      for document in documents:
+        if document.content:
+          lc_documents.append(Document(page_content=document.content, metadata={**document.source_metadata, "doc_id": str(document.id)}))
 
       # Chunk documents
-      chunks = self.text_splitter.split_documents(documents)
+      chunks = self.text_splitter.split_documents(lc_documents)
 
       # add index to metadata
       for idx, chunk in enumerate(chunks):

@@ -1,3 +1,4 @@
+import copy
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, cast
@@ -21,40 +22,18 @@ class URLOperation(str, Enum):
   MAP = "map"
 
 
-class URLMetadata(BaseModel):
-  """URL metadata schema."""
-
-  operation: URLOperation = Field(..., description="URL operation type")
-  urls: List[str] = Field(..., description="List of URLs to process")
-  settings: Dict = Field(..., description="Operation-specific settings")
-
-
 def clean_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
   """Remove empty or zero values from settings."""
-
-  def clean_dict(d: Dict[str, Any]) -> Dict[str, Any]:
-    cleaned = {}
-    for key, value in d.items():
-      # Handle nested dictionaries
-      if isinstance(value, dict):
-        nested_cleaned = clean_dict(value)
-        if nested_cleaned:  # Only add if not empty
-          cleaned[key] = nested_cleaned
-      # Handle lists
-      elif isinstance(value, list) and not value:
-        continue
-      # Handle zero values
-      elif value == 0:
-        continue
-      # Handle empty strings
-      elif isinstance(value, str) and not value.strip():
-        continue
-      # Keep other values
-      else:
-        cleaned[key] = value
-    return cleaned
-
-  return clean_dict(settings)
+  cleaned = {}
+  for key, value in settings.items():
+    if key == "maxDepth" and value == 0:
+      continue
+    if key == "excludePaths" and value == []:
+      continue
+    if key == "includePaths" and value == []:
+      continue
+    cleaned[key] = value
+  return cleaned
 
 
 class URLSourceHandler(BaseSourceHandler):
@@ -84,28 +63,29 @@ class URLSourceHandler(BaseSourceHandler):
   async def extract_content(self, document: KBDocumentModel, **kwargs) -> str:
     """Extract content from URLs."""
     try:
-      metadata = document.source_metadata
+      metadata = copy.deepcopy(document.source_metadata)
       session = cast(AsyncSession, kwargs.get("session"))
       ws_manager = cast(WebSocketManager, kwargs.get("ws_manager"))
       operation = metadata["operation"]
-      url = metadata["url"]
-      settings = {**metadata.get("settings", {})}
-      settings = clean_settings(settings)
+      start_url = metadata["url"]
+      settings = clean_settings(metadata.get("settings", {}))
+      metadata["settings"] = settings
+
       if operation == "scrape":
         # Single URL scraping
-        content = firecrawl.scrape_url(url=url, settings=settings)
+        content = firecrawl.scrape_url(url=start_url, settings=settings)
         return content
 
       elif operation == "crawl":
         # Web crawling
         results = await firecrawl.crawl(
-          url=url,
-          settings=settings,
+          url=start_url,
+          params=settings,
         )
         if results["success"]:
           crawl_id = results["id"]
         else:
-          raise ValueError(f"Crawling failed: {document.id} url: {url}")
+          raise ValueError(f"Crawling failed: {document.id} url: {start_url}")
 
         seen_scrape_ids: set[str] = set()
         parent_content = ""
@@ -116,15 +96,17 @@ class URLSourceHandler(BaseSourceHandler):
             for scrape in scrape_results["data"]:
               if scrape["metadata"]["scrapeId"] not in seen_scrape_ids:
                 # if the scrape is the parent url, then we add the content to the parent content
-                if scrape["metadata"]["url"] == url:
+                if scrape["metadata"]["url"] == start_url:
                   parent_content = scrape["markdown"]
                   continue
-                if not scrape["markdown"]:
+                if scrape["markdown"].strip() == "":
+                  print(f"Skipping empty content: {scrape['metadata']['url']}")
                   continue
                 # prepare the metadata
                 metadata["url"] = scrape["metadata"]["url"]
                 metadata["is_parent"] = False
                 metadata["parent_id"] = str(document.id)
+                print(metadata)
 
                 child_doc = KBDocumentModel(
                   title=scrape["metadata"]["title"],
@@ -132,6 +114,7 @@ class URLSourceHandler(BaseSourceHandler):
                   kb_id=document.kb_id,
                   content=scrape["markdown"],
                   source_type_id=2,
+                  source_id=document.source_id,
                   source_metadata=metadata,
                   extraction_status=DocumentStatus.COMPLETED,
                   indexing_status=DocumentStatus.PENDING,
@@ -147,7 +130,7 @@ class URLSourceHandler(BaseSourceHandler):
                 )
                 seen_scrape_ids.add(scrape["metadata"]["scrapeId"])
           else:
-            raise ValueError(f"Crawling failed: {document.id} url: {url}")
+            raise ValueError(f"Crawling failed: {document.id} url: {start_url}")
 
           if scrape_results["status"] == "completed":
             break
@@ -157,7 +140,7 @@ class URLSourceHandler(BaseSourceHandler):
       elif operation == "map":
         # Sitemap processing
         results = await firecrawl.map_url(
-          url=url,
+          url=start_url,
           settings=settings,
         )
         return "\n\n".join(r.content for r in results)

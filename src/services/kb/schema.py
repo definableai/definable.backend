@@ -95,6 +95,7 @@ class FileDocumentData(BaseModel):
   title: Annotated[str, Form(..., description="Title of the document")]
   description: Annotated[str, Form(..., description="Description of the document")]
   file: Annotated[UploadFile, File(..., description="File to upload")]
+  source_id: Annotated[Optional[UUID], Form(..., description="Source ID")] = None
 
   def get_metadata(self) -> Dict:
     """Generate metadata for file document."""
@@ -113,15 +114,16 @@ async def validate_file_document_data(
   title: Annotated[str, Form(min_length=1, max_length=200)],
   file: Annotated[UploadFile, File(description="File to upload")],
   description: Annotated[str, Form()] = "",
+  source_id: Annotated[Optional[UUID], Form(..., description="Source ID")] = None,
 ) -> FileDocumentData:
   """Validate file document form data."""
-  return FileDocumentData(title=title, description=description, file=file)
+  return FileDocumentData(title=title, description=description, file=file, source_id=source_id)
 
 
 class ScrapeOptions(BaseModel):
   """Scrape options schema."""
 
-  waitFor: Optional[int] = Field(default=0, ge=0, description="Wait time in milliseconds")
+  # waitFor: Optional[int] = Field(default=0, ge=0, description="Wait time in milliseconds")
   excludeTags: Optional[List[str]] = Field(default=[""], description="Tags to exclude")
   includeTags: Optional[List[str]] = Field(default=[""], description="Tags to include only")
   onlyMainContent: bool = Field(description="Extract only main content")
@@ -160,6 +162,7 @@ class URLDocumentData(DocumentBase):
 
   url: str = Field(..., description="Single URL to scrape")
   operation: Literal["scrape", "crawl", "map"] = Field(..., description="Operation to perform")
+  source_id: Optional[UUID] = Field(default=None, description="Source ID")
   settings: ScrapeOptions | CrawlerOptions | MapOptions = Field(..., description="Settings for the operation")
 
   @model_validator(mode="after")
@@ -199,6 +202,7 @@ class KBDocumentResponse(BaseModel):
   description: Optional[str]
   kb_id: UUID
   source_type_id: int
+  source_id: Optional[UUID]
   source_metadata: Dict = Field(..., description="Source-specific metadata")
   content: Optional[str]
   extraction_status: DocumentStatus
