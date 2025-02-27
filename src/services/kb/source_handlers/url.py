@@ -95,7 +95,7 @@ class URLSourceHandler(BaseSourceHandler):
             for scrape in scrape_results["data"]:
               if scrape["metadata"]["scrapeId"] not in seen_scrape_ids:
                 # if the scrape is the parent url, then we add the content to the parent content
-                if scrape["metadata"]["url"] == start_url:
+                if scrape["metadata"]["url"] == start_url or scrape["metadata"]["url"][:-1] == metadata["url"]:
                   parent_content = scrape["markdown"]
                   continue
                 if scrape["markdown"].strip() == "":

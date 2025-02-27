@@ -43,6 +43,12 @@ def validate_file_extension(filename: str) -> str:
   return ext
 
 
+class DocumentChunkCreate(BaseModel):
+  """Schema for creating a new document chunk."""
+
+  content: str = Field(..., description="Content of the chunk", min_length=1)
+
+
 class KnowledgeBaseSettings(BaseModel):
   """Knowledge base settings schema."""
 
