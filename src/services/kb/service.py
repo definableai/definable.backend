@@ -341,7 +341,7 @@ class KnowledgeBaseService:
 
       chunks = []
       for row in result:
-        chunk = DocumentChunk(chunk_id=row.cmetadata.get("chunk_index"), content=row.document, metadata=row.cmetadata)
+        chunk = DocumentChunk(id=row.id, chunk_id=row.cmetadata.get("chunk_index"), content=row.document, metadata=row.cmetadata)
         chunks.append(chunk)
 
       return KBDocumentChunksResponse(document_id=doc_id, title=doc_model.title, chunks=chunks, total_chunks=len(chunks))
@@ -451,7 +451,9 @@ class KnowledgeBaseService:
         raise HTTPException(status_code=404, detail="Failed to update chunk")
       await session.commit()
 
-      return DocumentChunk(chunk_id=updated_chunk.cmetadata.get("chunk_index"), content=updated_chunk.document, metadata=updated_chunk.cmetadata)
+      return DocumentChunk(
+        id=updated_chunk.id, chunk_id=updated_chunk.cmetadata.get("chunk_index"), content=updated_chunk.document, metadata=updated_chunk.cmetadata
+      )
 
     except Exception as e:
       raise HTTPException(status_code=500, detail=f"Failed to update document chunk: {str(e)}")
@@ -638,10 +640,10 @@ class KnowledgeBaseService:
 
     # Create document and add to vector store
     doc = Document(page_content=chunk_data.content, metadata=metadata)
-    await vectorstore.aadd_documents([doc])
+    chunk_ids = await vectorstore.aadd_documents([doc])
 
     # Return the created chunk
-    return DocumentChunk(chunk_id=new_chunk_index, content=chunk_data.content, metadata=metadata)
+    return DocumentChunk(id=UUID(chunk_ids[0]), chunk_id=new_chunk_index, content=chunk_data.content, metadata=metadata)
 
   ### PRIVATE METHODS ###
 

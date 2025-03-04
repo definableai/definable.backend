@@ -233,6 +233,7 @@ class KnowledgeBaseDetailResponse(KnowledgeBaseResponse):
 class DocumentChunk(BaseModel):
   """Document chunk schema."""
 
+  id: Optional[UUID] = None
   chunk_id: int
   content: str
   metadata: dict
