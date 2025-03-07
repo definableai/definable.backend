@@ -34,6 +34,7 @@ class Settings(BaseSettings):
   anthropic_api_key: str
   public_s3_bucket: str
   python_sandbox_testing_url: str
+  stripe_public_key: str
 
   class Config:
     """Config class."""
