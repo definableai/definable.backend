@@ -29,6 +29,7 @@ class Settings(BaseSettings):
   firecrawl_api_key: str
   celery_broker_url: str
   celery_result_backend: str
+  stripe_public_key: str
 
   class Config:
     """Config class."""
