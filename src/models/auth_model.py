@@ -1,3 +1,5 @@
+from typing import Optional
+
 from sqlalchemy import Boolean, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -10,9 +12,9 @@ class UserModel(CRUD):
   __tablename__ = "users"
 
   email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
-  password: Mapped[str] = mapped_column(String(64), nullable=False)  # SHA256 hash is 64 chars
-  first_name: Mapped[str] = mapped_column(String(50), nullable=False)  # Reduced length
-  last_name: Mapped[str] = mapped_column(String(50), nullable=False)  # Reduced length
+  password: Mapped[str] = mapped_column(String(64), nullable=False)
+  first_name: Mapped[str] = mapped_column(String(50), nullable=False)
+  last_name: Mapped[str] = mapped_column(String(50), nullable=False)
   is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
 
   # Relationships
