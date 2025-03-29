@@ -7,7 +7,7 @@ load_dotenv()
 
 
 class Settings(BaseSettings):
-  """Settings class."""
+    """Settings class."""
 
   app_name: str
   jwt_secret: str
@@ -35,11 +35,11 @@ class Settings(BaseSettings):
   public_s3_bucket: str
   python_sandbox_testing_url: str
 
-  class Config:
-    """Config class."""
+    class Config:
+        """Config class."""
 
-    env_file = ".env"
-    env_file_encoding = "utf-8"
+        env_file = ".env"
+        env_file_encoding = "utf-8"
 
 
 # Singleton pattern to ensure only one instance of Settings is used
