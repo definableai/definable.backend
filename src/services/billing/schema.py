@@ -59,17 +59,6 @@ class CreditBalanceResponseExtendedSchema(BaseModel):
     from_attributes = True
 
 
-class CreditBalanceResponseExtendedSchema(BaseModel):
-  balance: int
-  balance_usd: float
-  credits_spent: int
-  last_reset_date: Optional[datetime] = None
-  low_balance: bool = False
-
-  class Config:
-    from_attributes = True
-
-
 class TransactionSchema(BaseModel):
   id: UUID4
   user_id: UUID4
