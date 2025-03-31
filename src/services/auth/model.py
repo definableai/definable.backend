@@ -2,13 +2,12 @@ from sqlalchemy import Boolean, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import CRUD
-from typing import Optional
 
 
 class UserModel(CRUD):
-    """User model."""
+  """User model."""
 
-    __tablename__ = "users"
+  __tablename__ = "users"
 
   email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
   password: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -19,19 +18,14 @@ class UserModel(CRUD):
   # Simplify the relationship reference
   transactions = relationship("TransactionModel", back_populates="user")
 
+  # Add this relationship
+  wallets = relationship("WalletModel", back_populates="user")
+
   @property
   def full_name(self) -> str:
     """Get full name."""
     return f"{self.first_name} {self.last_name}"
 
-    # Add this relationship
-    credit_balances = relationship("CreditBalanceModel", back_populates="user")
-
-    @property
-    def full_name(self) -> str:
-        """Get full name."""
-        return f"{self.first_name} {self.last_name}"
-
-    def __repr__(self) -> str:
-        """String representation."""
-        return f"<User {self.email}>"
+  def __repr__(self) -> str:
+    """String representation."""
+    return f"<User {self.email}>"
