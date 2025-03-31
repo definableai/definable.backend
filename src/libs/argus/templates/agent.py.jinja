@@ -1,0 +1,114 @@
+from textwrap import dedent
+from typing import List, Dict, Union
+from pydantic import BaseModel
+from datetime import datetime
+from agno.agent import Agent
+{% if llm.provider == "openai" -%}
+from agno.models.openai import OpenAIChat
+{% elif llm.provider == "anthropic" -%}
+from agno.models.anthropic import AnthropicChat
+{% endif -%}
+{%- for tool in tools %}
+from {{ tool.import_path }} import {{ tool.class_name }}
+{%- endfor %}
+
+{%- if config.input_model %}
+{{ config.input_model }}
+{%- endif %}
+
+{%- if config.output_model %}
+{{ config.output_model }}
+{%- endif %}
+
+# Get today's date for tools that might need it (like research-based tools)
+today = datetime.now().strftime("%Y-%m-%d")
+
+agent = Agent(
+    name="{{ config.name }}",
+    {% if llm.provider == "openai" -%}
+    model=OpenAIChat(
+        id="{{ llm.model_name }}",
+        api_key="{{ llm.api_key }}"
+        {%- if llm.additional_params %},
+        {%- for key, value in llm.additional_params.items() %}
+        {{ key }}={{ value }}{% if not loop.last %},{% endif %}
+        {%- endfor %}
+        {%- endif %}
+    ),
+    {% elif llm.provider == "anthropic" -%}
+    model=AnthropicChat(
+        id="{{ llm.model_name }}",
+        api_key="{{ llm.api_key }}"
+        {%- if llm.additional_params %},
+        {%- for key, value in llm.additional_params.items() %}
+        {{ key }}={{ value }}{% if not loop.last %},{% endif %}
+        {%- endfor %}
+        {%- endif %}
+    ),
+    {% endif -%}
+    tools=[
+        {%- for tool in tools %}
+        {{ tool.class_name }}(
+            {%- if tool.tool_type == "exa" %}
+            start_published_date=today,
+            {%- endif %}
+            {%- if tool.parameters %}
+            {%- for key, value in tool.parameters.items() %}
+            {%- set function_name = tool.function_name_mapping.get(key, key) %}
+            {{ function_name }}={% if value is string %}"{{ value }}"{% else %}{{ value }}{% endif %}{% if not loop.last %},{% endif %}
+            {%- endfor %}
+            {%- endif %}
+        ){% if not loop.last %},{% endif %}
+        {%- endfor %}
+    ],
+    description=dedent("""{{ config.description }}"""),
+    instructions=dedent("""{{ config.instructions }}"""),
+    {%- if config.expected_output %}
+    expected_output=dedent("""{{ config.expected_output }}"""),
+    {%- endif %}
+    markdown=True,
+    show_tool_calls=True,
+    add_datetime_to_instructions=True
+    {%- if config.output_model %},
+    response_model={{ config.output_model.split('\n')[0].split('class ')[1].split('(')[0] }},
+    use_json_mode=True
+    {%- endif %}
+)
+
+# Example usage
+if __name__ == "__main__":
+    # Before running:
+    # 1. Install dependencies: pip install -r requirements.txt
+    # 2. Set up your API key as an environment variable:
+    #    - OPENAI_API_KEY for OpenAI models
+    #    - ANTHROPIC_API_KEY for Anthropic models
+    #    - Or update the api_key parameter in the Agent initialization above
+    
+    # Example input
+    {%- if "youtube" in config.description.lower() %}
+    query = "Analyze this video: https://www.youtube.com/watch?v=zjkBMFhNj_g"
+    {%- elif "research" in config.description.lower() %}
+    query = "Research the latest developments in AI agents and their applications"
+    {%- elif "paper" in config.description.lower() %}
+    query = "Analyze this paper: https://arxiv.org/abs/2305.10601"
+    {%- else %}
+    query = "What can you help me with?"
+    {%- endif %}
+    
+    # Run the agent and get response
+    response = agent.run(query)
+    
+    {%- if config.output_model %}
+    # Convert response content to JSON using model_dump_json
+    try:
+        # The response.content is already a Pydantic model
+        json_output = response.content.model_dump_json(indent=2)
+        print(json_output)
+    except Exception as e:
+        print(f"Error processing response: {str(e)}")
+        print("Raw response:")
+        print(response.content)
+    {%- else %}
+    # Print response directly
+    print(response.content)
+    {%- endif %} 

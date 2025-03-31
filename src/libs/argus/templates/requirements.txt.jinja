@@ -1,0 +1,56 @@
+# Core dependencies
+agno>=0.24.0
+pydantic>=1.10.0
+
+# Tool-specific dependencies
+{%- for tool in tools %}
+{%- if tool.tool_type == "youtube" %}
+youtube_transcript_api>=0.6.1
+{%- endif %}
+{%- if tool.tool_type == "newspaper" %}
+newspaper3k>=0.2.8
+requests>=2.28.0
+{%- endif %}
+{%- if tool.tool_type == "newspaper4k" %}
+newspaper3k>=0.2.8
+requests>=2.28.0
+lxml_html_clean>=0.1.0
+{%- endif %}
+{%- if tool.tool_type == "spider" %}
+beautifulsoup4>=4.12.0
+requests>=2.28.0
+{%- endif %}
+{%- if tool.tool_type == "website" %}
+beautifulsoup4>=4.12.0
+requests>=2.28.0
+{%- endif %}
+{%- if tool.tool_type == "duckduckgo" %}
+duckduckgo-search>=3.0.0
+{%- endif %}
+{%- if tool.tool_type == "exa" %}
+exa-py>=1.0.0
+{%- endif %}
+{%- if tool.tool_type == "arxiv" %}
+arxiv>=1.4.0
+{%- endif %}
+{%- if tool.tool_type == "pubmed" %}
+pubmed>=0.0.1
+{%- endif %}
+{%- if tool.tool_type == "searxng" %}
+searx-engine>=0.1.0
+{%- endif %}
+{%- if tool.tool_type == "serpapi" %}
+google-search-results>=2.4.0
+{%- endif %}
+{%- if tool.tool_type == "wikipedia" %}
+wikipedia>=1.4.0
+{%- endif %}
+{%- endfor %}
+
+# LLM provider dependencies
+{%- if llm.provider == "openai" %}
+openai>=1.6.0
+{%- endif %}
+{%- if llm.provider == "anthropic" %}
+anthropic>=0.5.0
+{%- endif %} 
