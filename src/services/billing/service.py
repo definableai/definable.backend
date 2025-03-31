@@ -799,7 +799,6 @@ class BillingService:
       .where(TransactionModel.stripe_customer_id.isnot(None))
       .order_by(TransactionModel.created_at.desc())
     )
-    self.logger.info("Transaction result", transaction_result=transaction_result)
 
     result = transaction_result.first()
     customer_id = result[0] if result else None
@@ -814,7 +813,7 @@ class BillingService:
     # Create new customer
     if not email:
       raise HTTPException(status_code=400, detail="Email is required to create a customer")
-    self.logger.info("Creating new customer", email=email)
+
     customer = stripe.Customer.create(email=email, metadata={"user_id": str(user_id)})
     self.logger.info(f"Created new Stripe customer: {customer.id}")
     return customer
