@@ -40,17 +40,11 @@ def upgrade():
     sa.PrimaryKeyConstraint("name"),
   )
 
-  # Create credit_balances table
+  # Create wallets table
   op.create_table(
     "wallets",
     sa.Column("id", UUID(as_uuid=True), primary_key=True, default=uuid4),
-    sa.Column(
-      "user_id",
-      UUID(as_uuid=True),
-      sa.ForeignKey("users.id", ondelete="CASCADE"),
-      unique=True,
-      nullable=False,
-    ),
+    sa.Column("organization_id", UUID(as_uuid=True), sa.ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False),
     sa.Column("balance", sa.Integer(), default=0),
     sa.Column("hold", sa.Integer(), nullable=False, server_default="0"),
     sa.Column("credits_spent", sa.Integer(), server_default="0", nullable=False),
@@ -64,7 +58,7 @@ def upgrade():
     "transactions",
     sa.Column("id", UUID(as_uuid=True), primary_key=True, default=uuid4),
     sa.Column("user_id", UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=False),
-    sa.Column("org_id", sa.UUID(as_uuid=True), nullable=True),
+    sa.Column("organization_id", sa.UUID(as_uuid=True), sa.ForeignKey("organizations.id"), nullable=True),
     sa.Column("type", sa.String(), nullable=False),
     sa.Column("status", sa.String(), nullable=False),
     sa.Column("amount_usd", sa.Float(), nullable=True),
@@ -116,7 +110,7 @@ def upgrade():
         "id": uuid4(),
         "name": "Basic",
         "amount_usd": 1.00,
-        "credits": 100,
+        "credits": 1000,
         "discount_percentage": 0.0,
         "is_active": True,
         "created_at": datetime.utcnow(),
@@ -127,7 +121,7 @@ def upgrade():
         "id": uuid4(),
         "name": "Standard",
         "amount_usd": 5.00,
-        "credits": 600,
+        "credits": 6000,
         "discount_percentage": 10.0,
         "is_active": True,
         "created_at": datetime.utcnow(),
@@ -138,7 +132,7 @@ def upgrade():
         "id": uuid4(),
         "name": "Premium",
         "amount_usd": 10.00,
-        "credits": 1500,
+        "credits": 15000,
         "discount_percentage": 20.0,
         "is_active": True,
         "created_at": datetime.utcnow(),
@@ -149,7 +143,7 @@ def upgrade():
         "id": uuid4(),
         "name": "Enterprise",
         "amount_usd": 25.00,
-        "credits": 5000,
+        "credits": 50000,
         "discount_percentage": 35.0,
         "is_active": True,
         "created_at": datetime.utcnow(),
@@ -172,9 +166,11 @@ def upgrade():
   # Create indexes for better performance
   op.create_index("ix_transactions_type", "transactions", ["type"])
   op.create_index("ix_transactions_user_id_type_status", "transactions", ["user_id", "type", "status"])
+  op.create_index("ix_transactions_organization_id", "transactions", ["organization_id"])
+  op.create_index("ix_transactions_user_id_organization_id", "transactions", ["user_id", "organization_id"])
 
   # Create indexes
-  op.create_index("ix_credit_balances_user_id", "wallets", ["user_id"])
+  op.create_index("ix_wallets_organization_id", "wallets", ["organization_id"])
   op.create_index("ix_transactions_user_id", "transactions", ["user_id"])
   op.create_index(
     "ix_transactions_stripe_payment_intent_id",
@@ -183,14 +179,32 @@ def upgrade():
   )
   op.create_index("ix_billing_plans_is_active", "billing_plans", ["is_active"], unique=False)
 
+  # Create triggers for updated_at columns
+  for table in ["charges", "wallets", "transactions", "billing_plans"]:
+    op.execute(f"""
+      CREATE TRIGGER update_{table}_updated_at
+          BEFORE UPDATE ON {table}
+          FOR EACH ROW
+          EXECUTE PROCEDURE update_updated_at_column();
+    """)
+
 
 def downgrade():
-  # Drop tables in reverse order
+  # Drop triggers first
+  for table in ["charges", "wallets", "transactions", "billing_plans"]:
+    op.execute(f"""
+      DROP TRIGGER IF EXISTS update_{table}_updated_at ON {table};
+    """)
+
+  # Drop indexes
   op.drop_index("ix_billing_plans_is_active", table_name="billing_plans")
   op.drop_index("ix_transactions_stripe_payment_intent_id", table_name="transactions")
   op.drop_index("ix_transactions_user_id", table_name="transactions")
-  op.drop_index("ix_credit_balances_user_id", table_name="wallets")
+  op.drop_index("ix_transactions_organization_id", table_name="transactions")
+  op.drop_index("ix_transactions_user_id_organization_id", table_name="transactions")
+  op.drop_index("ix_wallets_organization_id", table_name="wallets")
 
+  # Drop tables in reverse order
   op.drop_table("billing_plans")
   op.drop_table("transactions")
   op.drop_table("wallets")
