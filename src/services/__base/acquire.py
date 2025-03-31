@@ -4,7 +4,7 @@ from typing import List
 
 import utils
 from common.cache import Cache, deps_cache
-from common.logger import log
+from common import logger
 from common.websocket import WebSocketManager
 from config.settings import Settings, settings
 from database import Base, async_session
@@ -19,7 +19,7 @@ class Acquire:
     self.schemas = self._register_schemas()
     self.settings: Settings = settings
     self.utils = utils
-    self.logger = log
+    self.logger = logger
     self.cache = Cache()
     self.deps_cache = deps_cache
     self.ws_manager = WebSocketManager()
