@@ -16,7 +16,6 @@ class Charge:
 
   def __init__(self, name: str, user_id: UUID, org_id: UUID, session: AsyncSession):
     self.id = uuid4()
-    self.charge_id = str(self.id)  # String version for logging
     self.name = name
     self.user_id = user_id
     self.org_id = org_id
