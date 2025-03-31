@@ -66,7 +66,7 @@ class BillingService:
   ) -> WalletResponseSchema:
     """Get user's credit balance with spent credits tracking."""
     user_id = UUID(user["id"])
-    self.logger.info("Starting wallet retrieval", user_id=str(user_id), org_id=str(org_id))
+    self.logger.debug("Starting wallet retrieval", user_id=str(user_id), org_id=str(org_id))
     self.session = session
 
     wallet = await self._get_or_create_wallet(org_id)
@@ -75,7 +75,7 @@ class BillingService:
     low_balance = False
 
     if wallet.balance <= 0:
-      self.logger.debug("Balance is 0 for user {user_id}, resetting spent credits", user_id=str(user_id))
+      self.logger.debug("Balance is 0, resetting spent credits", user_id=str(user_id))
       low_balance = True
       wallet.credits_spent = 0
       wallet.last_reset_date = datetime.utcnow()
@@ -217,7 +217,7 @@ class BillingService:
     self.logger.debug(f"Executing query: {query}")
     result = await session.execute(query)
     plans = result.scalars().all()
-    self.logger.info(f"Found {len(plans)} billing plans")
+    self.logger.debug(f"Found {len(plans)} billing plans")
 
     return [BillingPlanResponseSchema.from_orm(plan) for plan in plans]
 
@@ -276,7 +276,7 @@ class BillingService:
 
     # Get the invoice from Stripe
     invoice = stripe.Invoice.retrieve(transaction.stripe_invoice_id)
-    self.logger.info(f"Retrieved Stripe invoice: {invoice.id} for transaction {transaction_id}")
+    self.logger.debug(f"Retrieved Stripe invoice: {invoice.id} for transaction {transaction_id}")
 
     # Return the hosted invoice URL
     invoice_url = invoice.hosted_invoice_url or ""
@@ -333,7 +333,7 @@ class BillingService:
     self.logger.debug("Executing main query")
     result = await session.execute(query)
     transactions = result.scalars().all()
-    self.logger.info(f"Retrieved {len(transactions)} transactions")
+    self.logger.debug(f"Retrieved {len(transactions)} transactions")
 
     try:
       # Use a list comprehension for elegance and efficiency
@@ -574,7 +574,7 @@ class BillingService:
       if user_db:
         customer_email = user_db.email
 
-    self.logger.info(f"Calculated customer email: {customer_email}")
+    self.logger.debug(f"Customer email: {customer_email}")
 
     # Now use the email (either from input, token, or fetched from database)
     if not customer_email:
@@ -583,15 +583,10 @@ class BillingService:
         detail="Email is required to create a Stripe customer. Please provide customer_email.",
       )
 
-    self.logger.info(f"Calculated customer email: {customer_email}")
     # Get or create Stripe customer with the obtained email
     customer = await self._get_or_create_stripe_customer(user_id, customer_email, session)
 
-    self.logger.info("About to create Stripe session", customer=customer.id, credits=credit_amount, amount_usd=amount_usd)
-
-    # Convert URLs to strings for Stripe
-    success_url_str = str(success_url) if success_url else ""
-    cancel_url_str = str(cancel_url) if cancel_url else ""
+    self.logger.info("Creating Stripe session", customer=customer.id, credits=credit_amount, amount_usd=amount_usd)
 
     # Create Stripe checkout session with invoice
     stripe_session = stripe.checkout.Session.create(
@@ -604,15 +599,15 @@ class BillingService:
             "product_data": {
               "name": f"Purchase {credit_amount} Credits",
             },
-            "unit_amount": unit_amount,  # Safe integer in cents
+            "unit_amount": unit_amount,
           },
           "quantity": 1,
         }
       ],
       mode="payment",
-      success_url=success_url_str,
-      cancel_url=cancel_url_str,
-      invoice_creation={"enabled": True},  # Enable invoice creation
+      success_url=str(success_url) if success_url else "",
+      cancel_url=str(cancel_url) if cancel_url else "",
+      invoice_creation={"enabled": True},
       metadata={
         "user_id": str(user_id),
         "org_id": str(org_id),
@@ -642,16 +637,9 @@ class BillingService:
     session.add(transaction)
     await session.commit()
 
-    # Ensure URL and session ID are not None
-    checkout_url = stripe_session.url or ""
-    session_id = stripe_session.id or ""
+    self.logger.info(f"Created PENDING transaction {transaction.id} with checkout_session_id: {stripe_session.id}")
 
-    self.logger.info(
-      f"Created PENDING transaction {transaction.id} with checkout_session_id: {stripe_session.id}",
-      transaction_metadata=transaction.transaction_metadata,
-    )
-
-    return {"checkout_url": checkout_url, "session_id": session_id}
+    return {"checkout_url": stripe_session.url or "", "session_id": stripe_session.id or ""}
 
   async def post_checkout_cancel(
     self,
@@ -766,6 +754,8 @@ class BillingService:
         .params(session_id=session_id)
       )
 
+      self.logger.debug(f"Looking for transaction with checkout_session_id: {session_id}")
+
       result = await session.execute(query)
       transaction = result.scalar_one_or_none()
 
@@ -782,7 +772,7 @@ class BillingService:
         await self._add_credits(user_id, org_id, credit_amount, f"Purchase of {credit_amount} credits", session)
 
         await session.commit()
-        self.logger.info(f"Updated existing transaction {transaction.id} and added {credit_amount} credits to organization {org_id}")
+        self.logger.info(f"Updated transaction {transaction.id} and added {credit_amount} credits to org {org_id}")
       else:
         self.logger.error(f"No matching transaction found for session: {session_id}")
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -826,7 +816,8 @@ class BillingService:
     session: AsyncSession,
   ) -> stripe.Customer:
     """Get or create a Stripe customer for the user."""
-    self.logger.info("Getting or creating Stripe customer", user_id=str(user_id), email=email)
+    self.logger.debug("Getting or creating Stripe customer", user_id=str(user_id), email=email)
+
     # Check if customer exists
     transaction_result = await session.execute(
       select(TransactionModel.stripe_customer_id)
@@ -834,25 +825,29 @@ class BillingService:
       .where(TransactionModel.stripe_customer_id.isnot(None))
       .order_by(TransactionModel.created_at.desc())
     )
-    self.logger.info("Transaction result", transaction_result=transaction_result)
 
     result = transaction_result.first()
     customer_id = result[0] if result else None
-    self.logger.info("Customer ID", customer_id=customer_id)
+    self.logger.debug("Customer ID lookup result", customer_id=customer_id)
+
     if customer_id:
+      self.logger.debug(f"Found existing Stripe customer: {customer_id}")
       return stripe.Customer.retrieve(customer_id)
-    self.logger.info("Customer not found, creating new customer")
+
+    self.logger.debug("No existing customer found, creating new one")
+
     # Create new customer
     if not email:
       raise HTTPException(status_code=400, detail="Email is required to create a customer")
-    self.logger.info("Creating new customer", email=email)
+
     customer = stripe.Customer.create(email=email, metadata={"user_id": str(user_id)})
-    self.logger.info("New customer created", customer=customer)
+    self.logger.info(f"Created new Stripe customer: {customer.id}")
     return customer
 
   async def _get_or_create_wallet(self, org_id: UUID, session: Optional[AsyncSession] = None) -> WalletModel:
     """Get or create organization's wallet."""
-    self.logger.debug(f"Triggered _get_or_create_wallet for organization {org_id}")
+    self.logger.debug(f"Getting or creating wallet for organization {org_id}")
+
     # Use provided session or fall back to self.session
     db_session = session or self.session
     if not db_session:
@@ -860,19 +855,18 @@ class BillingService:
 
     # Then try to get existing wallet
     query = select(WalletModel).where(WalletModel.organization_id == org_id)
-    self.logger.debug("BillingService: Executing wallet query")
     result = await db_session.execute(query)
     wallet = result.scalar_one_or_none()
-    self.logger.debug(f"BillingService: Wallet query result: {wallet}")
 
     if wallet:
-      self.logger.debug(f"Found existing wallet for organization {org_id}: {wallet.balance}")
+      self.logger.debug(f"Found existing wallet for organization {org_id}: balance={wallet.balance}")
       return wallet
 
     self.logger.info(f"No wallet found for organization {org_id}, creating new entry")
+
     # Create new wallet entry with explicit UUID
     new_wallet = WalletModel(
-      id=uuid4(),  # Explicitly set the ID with a new UUID
+      id=uuid4(),
       organization_id=org_id,
       balance=0,
       hold=0,
@@ -882,7 +876,7 @@ class BillingService:
     db_session.add(new_wallet)
     await db_session.commit()
     await db_session.refresh(new_wallet)
-    self.logger.info(f"Successfully created new wallet for organization {org_id}")
+    self.logger.info(f"Created new wallet for organization {org_id}")
     return new_wallet
 
   async def _add_credits(
@@ -898,11 +892,11 @@ class BillingService:
 
     wallet = await self._get_or_create_wallet(org_id, db_session)
 
-    # We already have a transaction for this payment in post_checkout,
-    # so we don't need to create another one here.
-    # Just update the wallet balance
+    # Update wallet balance
+    old_balance = wallet.balance
     wallet.balance += amount
 
     await db_session.commit()
+    self.logger.info(f"Added {amount} credits to organization {org_id}, balance: {old_balance} -> {wallet.balance}")
 
     return True
