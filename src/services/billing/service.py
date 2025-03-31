@@ -1,10 +1,9 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import stripe
 from fastapi import Depends, HTTPException, Request
-from loguru import logger
 from sqlalchemy import and_, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,7 +50,10 @@ class BillingService:
     self.utils = acquire.utils
     self.credits_per_usd = 1000  # 1 USD = 1000 credits
     stripe.api_key = settings.stripe_secret_key
-    self.session: Optional[AsyncSession] = None  # Add type annotation here
+    self.session: Optional[AsyncSession] = None
+    self.request_id = str(uuid4())  # Add a unique ID per service instance
+    self.logger = acquire.logger
+    self.logger.info("BillingService initialized", request_id=self.request_id)
 
   async def get_wallet(
     self,
@@ -60,19 +62,18 @@ class BillingService:
     user: dict = Depends(RBAC("billing", "read")),
   ) -> WalletResponseSchema:
     """Get user's credit balance with spent credits tracking."""
+    user_id = UUID(user["id"])
+    self.logger.info("Starting wallet retrieval", method="get_wallet", user_id=str(user_id), org_id=str(org_id), request_id=self.request_id)
     self.session = session
+
     try:
-      user_id = UUID(user["id"])
-      logger.info(f"Fetching credit balance for user {user_id}")
       wallet = await self._get_or_create_wallet(user_id)
 
       # Calculate low balance indicator
       low_balance = False
 
-      logger.info(f"Wallet: {wallet}")
-
       if wallet.balance <= 0:
-        logger.info(f"Balance is 0 for user {user_id}, resetting spent credits")
+        self.logger.info("Balance is 0 for user {user_id}, resetting spent credits", user_id=str(user_id))
         low_balance = True
         wallet.credits_spent = 0
         wallet.last_reset_date = datetime.utcnow()
@@ -82,7 +83,7 @@ class BillingService:
         total_cycle_credits = wallet.balance + (wallet.credits_spent or 0)
         low_balance = wallet.balance / total_cycle_credits < 0.1 if total_cycle_credits > 0 else False
 
-      logger.info(f"Successfully retrieved balance for user {user_id}: {wallet.balance} credits")
+      self.logger.info("Wallet retrieved successfully", balance=wallet.balance, spent=wallet.credits_spent or 0, user_id=str(user_id))
 
       return WalletResponseSchema(
         id=UUID(str(wallet.id)),
@@ -94,10 +95,7 @@ class BillingService:
       )
 
     except Exception as e:
-      logger.error(
-        f"Error fetching credit balance for user {user['id']}: {str(e)}",
-        exc_info=True,
-      )
+      self.logger.error("Failed to retrieve wallet", error=str(e), user_id=str(user_id), request_id=self.request_id, exc_info=True)
       raise HTTPException(status_code=500, detail=f"Failed to retrieve wallet information: {str(e)}")
 
   async def get_plans(
@@ -109,21 +107,21 @@ class BillingService:
   ) -> List[BillingPlanResponseSchema]:
     """Get all available billing plans."""
     try:
-      logger.info("Starting get_billing_plans")
+      self.logger.info("Starting get_billing_plans")
       query = select(BillingPlanModel)
 
       if not include_inactive:
         query = query.where(BillingPlanModel.is_active)
 
-      logger.info(f"Executing query: {query}")
+      self.logger.info(f"Executing query: {query}")
       result = await session.execute(query)
       plans = result.scalars().all()
-      logger.info(f"Found {len(plans)} billing plans")
+      self.logger.info(f"Found {len(plans)} billing plans")
 
       return [BillingPlanResponseSchema.from_orm(plan) for plan in plans]
 
     except Exception as e:
-      logger.error(f"Error in get_plans: {str(e)}", exc_info=True)
+      self.logger.error(f"Error in get_plans: {str(e)}", exc_info=True)
       raise HTTPException(status_code=500, detail=f"Failed to retrieve billing plans: {str(e)}")
 
   async def get_calculate_credits(
@@ -159,7 +157,7 @@ class BillingService:
   ) -> Dict[str, str]:
     """Get the invoice URL for a transaction."""
     user_id = UUID(user["id"])
-    logger.info(f"Getting invoice URL for transaction: {transaction_id}, user: {user_id}")
+    self.logger.info(f"Getting invoice URL for transaction: {transaction_id}, user: {user_id}")
 
     # Get the transaction
     query = select(TransactionModel).where(
@@ -170,20 +168,20 @@ class BillingService:
     transaction = result.scalar_one_or_none()
 
     if not transaction:
-      logger.warning(f"Transaction {transaction_id} not found for user {user_id}")
+      self.logger.warning(f"Transaction {transaction_id} not found for user {user_id}")
       raise HTTPException(
         status_code=404,
         detail="Transaction not found or you don't have permission to access it",
       )
 
     if not transaction.stripe_invoice_id:
-      logger.warning(f"No invoice ID found for transaction {transaction_id}")
+      self.logger.warning(f"No invoice ID found for transaction {transaction_id}")
       raise HTTPException(status_code=404, detail="No invoice available for this transaction")
 
     try:
       # Get the invoice from Stripe
       invoice = stripe.Invoice.retrieve(transaction.stripe_invoice_id)
-      logger.info(f"Retrieved Stripe invoice: {invoice.id} for transaction {transaction_id}")
+      self.logger.info(f"Retrieved Stripe invoice: {invoice.id} for transaction {transaction_id}")
 
       # Return the hosted invoice URL
       invoice_url = invoice.hosted_invoice_url or ""
@@ -194,7 +192,7 @@ class BillingService:
       }
 
     except stripe.StripeError as e:
-      logger.error(f"Stripe invoice error for transaction {transaction_id}: {str(e)}")
+      self.logger.error(f"Stripe invoice error for transaction {transaction_id}: {str(e)}")
       raise HTTPException(status_code=400, detail=f"Failed to retrieve invoice: {str(e)}")
 
   async def get_transactions(
@@ -210,59 +208,59 @@ class BillingService:
   ) -> Dict[str, Any]:
     """Get user's transaction history with filtering options."""
     user_id = UUID(user["id"])
-    logger.info(f"Fetching transactions for user {user_id} with limit={limit}, offset={offset}")
+    self.logger.info(f"Fetching transactions for user {user_id} with limit={limit}, offset={offset}")
 
     # Start with base query
     query = select(TransactionModel).where(TransactionModel.user_id == user_id)
-    logger.debug(f"Base query: {query}")
+    self.logger.debug(f"Base query: {query}")
 
     # Apply filters
     if transaction_type:
-      logger.info(f"Filtering by transaction type: {transaction_type}")
+      self.logger.info(f"Filtering by transaction type: {transaction_type}")
       query = query.where(TransactionModel.type == transaction_type)
 
     if date_from:
-      logger.info(f"Filtering by date from: {date_from}")
+      self.logger.info(f"Filtering by date from: {date_from}")
       query = query.where(TransactionModel.created_at >= date_from)
 
     if date_to:
-      logger.info(f"Filtering by date to: {date_to}")
+      self.logger.info(f"Filtering by date to: {date_to}")
       query = query.where(TransactionModel.created_at <= date_to)
 
     # Get total count for pagination
-    logger.debug("Executing count query")
+    self.logger.debug("Executing count query")
     count_query = select(func.count()).select_from(query.subquery())
     total = await session.execute(count_query)
     total_count = total.scalar_one()
-    logger.info(f"Total matching transactions: {total_count}")
+    self.logger.info(f"Total matching transactions: {total_count}")
 
     # Apply pagination
     query = query.order_by(TransactionModel.created_at.desc()).limit(limit).offset(offset)
-    logger.debug(f"Final query with pagination: {query}")
+    self.logger.debug(f"Final query with pagination: {query}")
 
     # Execute query
-    logger.debug("Executing main query")
+    self.logger.debug("Executing main query")
     result = await session.execute(query)
     transactions = result.scalars().all()
-    logger.info(f"Retrieved {len(transactions)} transactions")
+    self.logger.info(f"Retrieved {len(transactions)} transactions")
 
     # Include invoice URL in response if available
     transactions_response = []
     for tx in transactions:
-      logger.debug(f"Processing transaction {tx.id}, type={tx.type}, status={tx.status}")
+      self.logger.debug(f"Processing transaction {tx.id}, type={tx.type}, status={tx.status}")
       try:
         tx_dict = TransactionResponseSchema.from_orm(tx).dict()
         if tx.stripe_invoice_id:
-          logger.debug(f"Transaction {tx.id} has invoice: {tx.stripe_invoice_id}")
+          self.logger.debug(f"Transaction {tx.id} has invoice: {tx.stripe_invoice_id}")
           tx_dict["has_invoice"] = True
         else:
           tx_dict["has_invoice"] = False
         transactions_response.append(tx_dict)
       except Exception as e:
-        logger.error(f"Error processing transaction {tx.id}: {str(e)}")
+        self.logger.error(f"Error processing transaction {tx.id}: {str(e)}")
         # Continue processing other transactions
 
-    logger.info(f"Returning {len(transactions_response)} transactions")
+    self.logger.info(f"Returning {len(transactions_response)} transactions")
     return {
       "transactions": transactions_response,
       "pagination": {"total": total_count, "limit": limit, "offset": offset},
@@ -423,7 +421,7 @@ class BillingService:
       }
     except Exception as e:
       # Log the error and return a helpful message
-      logger.error(f"Error in get_usage_history: {str(e)}", exc_info=True)
+      self.logger.error(f"Error in get_usage_history: {str(e)}", exc_info=True)
       raise HTTPException(status_code=500, detail=f"Failed to retrieve usage history: {str(e)}")
 
   async def post_checkout(
@@ -434,8 +432,9 @@ class BillingService:
     user: dict = Depends(RBAC("billing", "write")),
   ) -> Dict[str, str]:
     """Create a Stripe checkout session for purchasing credits from plan or custom amount."""
+    self.logger.info(f"Raw checkout data received: {checkout_data}")
     user_id = UUID(user["id"])
-    logger.info(f"Creating checkout session for user {user_id}")
+    self.logger.info(f"Creating checkout session for user {user_id}")
 
     # Handle nested checkout_data structure
     if isinstance(checkout_data, dict) and "checkout_data" in checkout_data:
@@ -444,47 +443,46 @@ class BillingService:
     # Handle both existing schema and dict input
     amount_usd = None
     plan_id = None
-    success_url = None
-    cancel_url = None
     customer_email = None
+    success_url = settings.stripe_success_url
+    cancel_url = settings.stripe_cancel_url
 
     if isinstance(checkout_data, CheckoutSessionCreateSchema):
       plan_id = getattr(checkout_data, "plan_id", None)
       amount_usd = checkout_data.amount_usd
-      success_url = checkout_data.success_url
-      cancel_url = checkout_data.cancel_url
       customer_email = checkout_data.customer_email
     else:
       amount_usd = checkout_data.get("amount_usd")
       plan_id = checkout_data.get("plan_id")
-      success_url = checkout_data.get("success_url")
-      cancel_url = checkout_data.get("cancel_url")
       customer_email = checkout_data.get("customer_email")
+
+    if amount_usd is not None:
+      amount_usd = float(str(amount_usd))
 
     # Handle plan-based purchase
     credit_amount = None
     if plan_id:
-      logger.info(f"Plan-based purchase requested with plan_id: {plan_id}")
+      self.logger.info(f"Plan-based purchase requested with plan_id: {plan_id}")
       plan_query = select(BillingPlanModel).where(BillingPlanModel.id == plan_id)
       plan_result = await session.execute(plan_query)
       plan = plan_result.scalar_one_or_none()
 
       if not plan:
-        logger.warning(f"Plan not found: {plan_id}")
+        self.logger.warning(f"Plan not found: {plan_id}")
         raise HTTPException(status_code=404, detail="Billing plan not found or inactive")
 
       amount_usd = float(plan.amount_usd)
       credit_amount = int(plan.credits)
-      logger.info(f"Using plan: {plan.name}, amount: ${amount_usd}, credits: {credit_amount}")
+      self.logger.info(f"Using plan: {plan.name}, amount: ${amount_usd}, credits: {credit_amount}")
     elif amount_usd:
-      logger.info(f"Custom amount purchase requested: ${amount_usd}")
+      self.logger.info(f"Custom amount purchase requested: ${amount_usd}")
       # Calculate credits for custom amount
       calculation = await self.get_calculate_credits(org_id=org_id, amount_usd=amount_usd, session=session, user=user)
 
       credit_amount = int(calculation.credits)
-      logger.info(f"Calculated credits for ${amount_usd}: {credit_amount} credits")
+      self.logger.info(f"Calculated credits for ${amount_usd}: {credit_amount} credits")
     else:
-      logger.error("Neither amount_usd nor plan_id provided in checkout request")
+      self.logger.error("Neither amount_usd nor plan_id provided in checkout request")
       raise HTTPException(
         status_code=400,
         detail="Either amount_usd or plan_id must be provided for checkout",
@@ -518,10 +516,7 @@ class BillingService:
       customer = await self._get_or_create_stripe_customer(user_id, customer_email, session)
       # Get or create Stripe customer
 
-      logger.debug(
-        "About to create Stripe session with params: %s",
-        {"customer": customer.id, "credits": credit_amount, "amount_usd": amount_usd},
-      )
+      self.logger.debug("About to create Stripe session", customer=customer.id, credits=credit_amount, amount_usd=amount_usd)
 
       # Convert URLs to strings for Stripe
       success_url_str = str(success_url) if success_url else ""
@@ -581,7 +576,7 @@ class BillingService:
       return {"checkout_url": checkout_url, "session_id": session_id}
 
     except Exception as e:
-      logger.error(f"Error creating Stripe session: {str(e)}")
+      self.logger.error(f"Error creating Stripe session: {str(e)}")
       await session.rollback()
       # Handle Stripe errors with 400 status code, other errors with 500
       if "stripe" in str(e).lower():
@@ -614,7 +609,7 @@ class BillingService:
     """
     self.session = session
     user_id = UUID(user["id"])
-    logger.info(f"Processing user-cancelled checkout session: {session_id} for user {user_id}")
+    self.logger.info(f"Processing user-cancelled checkout session: {session_id} for user {user_id}")
 
     try:
       # Find the pending transaction with matching session ID
@@ -634,7 +629,7 @@ class BillingService:
       transaction = result.scalar_one_or_none()
 
       if not transaction:
-        logger.warning(f"No matching transaction found for cancelled session: {session_id}")
+        self.logger.warning(f"No matching transaction found for cancelled session: {session_id}")
         raise HTTPException(status_code=404, detail="Transaction not found or already processed")
 
       # Update the transaction status to CANCELLED
@@ -656,26 +651,27 @@ class BillingService:
         if stripe_session.status == "open":
           # Only try to expire if it's still open
           stripe.checkout.Session.expire(session_id)
-          logger.info(f"Expired Stripe checkout session: {session_id}")
+          self.logger.info(f"Expired Stripe checkout session: {session_id}")
       except stripe.StripeError as e:
         # Log but don't fail if we can't expire the session
-        logger.warning(f"Could not expire Stripe session {session_id}: {str(e)}")
+        self.logger.warning(f"Could not expire Stripe session {session_id}: {str(e)}")
 
       await session.commit()
-      logger.info(f"Marked transaction {transaction.id} as CANCELLED due to user cancellation")
+      self.logger.info(f"Marked transaction {transaction.id} as CANCELLED due to user cancellation")
 
       return {"status": "success", "message": "Checkout cancelled successfully", "transaction_id": str(transaction.id)}
 
     except HTTPException:
       raise
     except Exception as e:
-      logger.error(f"Error handling checkout cancellation: {str(e)}", exc_info=True)
+      self.logger.error(f"Error handling checkout cancellation: {str(e)}", exc_info=True)
       await session.rollback()
       raise HTTPException(status_code=500, detail=f"Failed to process cancellation: {str(e)}")
 
   async def post_stripe_webhook(self, request: Request, session: AsyncSession = Depends(get_db)) -> None:
     """Handle Stripe webhook events."""
     self.session = session
+    log_context = {"method": "post_stripe_webhook", "request_id": self.request_id}
 
     # Get the webhook payload and signature header
     payload = await request.body()
@@ -684,14 +680,15 @@ class BillingService:
     try:
       # Verify webhook signature
       event = stripe.Webhook.construct_event(payload, sig_header, settings.stripe_webhook_secret)
+      log_context["event_id"] = event.id
+      log_context["event_type"] = event.type
 
-      logger.info(f"Received Stripe webhook event: {event}")
-      logger.info(f"Received Stripe webhook event: {event.type}")
+      self.logger.info("Processing Stripe webhook event", extra=log_context)
 
       # Handle checkout.session.completed event
       if event.type == "checkout.session.completed":
         session_obj = event.data.object
-        logger.info(f"Processing completed checkout session: {session_obj.id}")
+        self.logger.info(f"Processing completed checkout session: {session_obj.id}")
 
         # Get metadata from the session
         metadata = session_obj.metadata
@@ -699,7 +696,7 @@ class BillingService:
         credit_amount = metadata.get("credits")
 
         if not user_id or not credit_amount:
-          logger.error("Missing user_id or credits in session metadata")
+          self.logger.error("Missing user_id or credits in session metadata")
 
         # Convert to proper types
         user_id = UUID(user_id)
@@ -715,7 +712,7 @@ class BillingService:
         result = await session.execute(query)
         transaction = result.scalar_one_or_none()
 
-        logger.info(f"Found transaction: {session_obj}")
+        self.logger.info(f"Found transaction: {session_obj}")
 
         if transaction:
           # Update transaction status
@@ -727,14 +724,14 @@ class BillingService:
           await self._add_credits(user_id, credit_amount, f"Purchase of {credit_amount} credits", session)
 
           await session.commit()
-          logger.info(f"Added {credit_amount} credits to user {user_id}")
+          self.logger.info(f"Added {credit_amount} credits to user {user_id}")
         else:
-          logger.error(f"No matching transaction found for session: {session_obj.id}")
+          self.logger.error(f"No matching transaction found for session: {session_obj.id}")
 
       # Handle checkout.session.expired event
       elif event.type == "checkout.session.expired":
         session_obj = event.data.object
-        logger.info(f"Processing expired checkout session: {session_obj.id}")
+        self.logger.info(f"Processing expired checkout session: {session_obj.id}")
 
         # Find the pending transaction with matching session ID
         query = (
@@ -756,16 +753,19 @@ class BillingService:
           transaction.transaction_metadata.update({"expired_at": datetime.utcnow().isoformat(), "expiration_reason": "Checkout session expired"})
 
           await session.commit()
-          logger.info(f"Marked transaction {transaction.id} as CANCELLED due to expired checkout session")
+          self.logger.info(f"Marked transaction {transaction.id} as CANCELLED due to expired checkout session")
 
         else:
-          logger.warning(f"No matching transaction found for expired session: {session_obj.id}")
+          self.logger.warning(f"No matching transaction found for expired session: {session_obj.id}")
 
       # Handle other webhook events as needed
       # ...
 
+    except stripe.SignatureVerificationError:
+      self.logger.error("Invalid webhook signature", exc_info=True, extra=log_context)
+      raise HTTPException(status_code=400, detail="Invalid signature")
     except Exception as e:
-      logger.error(f"Error handling webhook: {str(e)}")
+      self.logger.error(f"Webhook handler error: {str(e)}", exc_info=True, extra=log_context)
       raise HTTPException(status_code=500, detail=str(e))
 
   async def _get_or_create_stripe_customer(
@@ -776,16 +776,19 @@ class BillingService:
   ) -> stripe.Customer:
     """Get or create a Stripe customer for the user."""
     # Check if customer exists
-
-    # Use a more specific query that doesn't load all columns
     transaction_result = await session.execute(
       select(TransactionModel.stripe_customer_id)
       .where(TransactionModel.user_id == user_id)
       .where(TransactionModel.stripe_customer_id.isnot(None))
       .order_by(TransactionModel.created_at.desc())
     )
-    # Get the first customer_id
-    customer_id = transaction_result.scalar_one_or_none()
+
+    # Change this line:
+    # customer_id = transaction_result.scalar_one_or_none()
+
+    # To this:
+    result = transaction_result.first()
+    customer_id = result[0] if result else None
 
     if customer_id:
       return stripe.Customer.retrieve(customer_id)
@@ -800,7 +803,7 @@ class BillingService:
   async def _get_or_create_wallet(self, user_id: UUID, session: Optional[AsyncSession] = None) -> WalletModel:
     """Get or create user's wallet."""
     try:
-      logger.info(f"Triggered _get_or_create_wallet for user {user_id}")
+      self.logger.info(f"Triggered _get_or_create_wallet for user {user_id}")
       # Use provided session or fall back to self.session
       db_session = session or self.session
       if not db_session:
@@ -812,37 +815,37 @@ class BillingService:
       user = user_result.scalar_one_or_none()
 
       if not user:
-        logger.error(f"User {user_id} not found in database")
+        self.logger.error(f"User {user_id} not found in database")
         raise HTTPException(status_code=404, detail="User not found")
 
       # Then try to get existing wallet
       query = select(WalletModel).where(WalletModel.user_id == user_id)
-      logger.info("BillingService: Executing wallet query")
+      self.logger.info("BillingService: Executing wallet query")
       result = await db_session.execute(query)
-      logger.info("BillingService: Query executed")
+      self.logger.info("BillingService: Query executed")
       wallet = result.scalar_one_or_none()
-      logger.info(f"BillingService: Wallet query result: {wallet}")
+      self.logger.info(f"BillingService: Wallet query result: {wallet}")
 
       if wallet:
-        logger.info(f"Found existing wallet for user {user_id}: {wallet.balance}")
+        self.logger.info(f"Found existing wallet for user {user_id}: {wallet.balance}")
         return wallet
 
-      logger.info(f"No wallet found for user {user_id}, creating new entry")
+      self.logger.info(f"No wallet found for user {user_id}, creating new entry")
       # Create new wallet entry
       new_wallet = WalletModel(user_id=user_id, balance=0, hold=0, credits_spent=0)
 
-      logger.info(f"Creating new wallet {new_wallet}")
+      self.logger.info(f"Creating new wallet {new_wallet}")
 
       db_session.add(new_wallet)
-      logger.info(f"Adding new wallet {new_wallet}")
+      self.logger.info(f"Adding new wallet {new_wallet}")
       await db_session.commit()
-      logger.info(f"Committing new wallet {new_wallet}")
+      self.logger.info(f"Committing new wallet {new_wallet}")
       await db_session.refresh(new_wallet)
-      logger.info(f"Successfully created new wallet for user {user_id}")
+      self.logger.info(f"Successfully created new wallet for user {user_id}")
       return new_wallet
 
     except Exception as e:
-      logger.error(f"Error in _get_or_create_wallet: {str(e)}")
+      self.logger.error(f"Error in _get_or_create_wallet: {str(e)}")
       if db_session:
         await db_session.rollback()
       raise HTTPException(status_code=500, detail="Error managing wallet")

@@ -54,6 +54,7 @@ class Charge:
 
     # Store the parameters for later validation during create()
     self.id = uuid4()
+    self.charge_id = str(self.id)  # String version for logging
     self.name = name
     self.user_id = user_id
     self.org_id = org_id
@@ -62,41 +63,56 @@ class Charge:
     self.metadata: Dict[str, Any] = {}
     self.balance_checked = False  # Flag to track if balance has been verified
 
+    logger.debug(f"Charge object initialized [charge_id={self.charge_id}, name={name}, user_id={user_id}]")
+
   @classmethod
   async def create_with_balance_check(cls, name: str, user_id: UUID, org_id: UUID, session: AsyncSession, qty: int = 1):
     """Factory method to create Charge after validating balance."""
-    logger.info(f"Creating charge with balance check: {name}, {user_id}, {org_id}, {qty}")
+    log_context = {"method": "create_with_balance_check", "charge_name": name, "user_id": str(user_id), "qty": qty}
+    logger.info("Creating charge with balance check", extra=log_context)
 
-    # Get charge from database directly
-    query = select(ChargeModel).where(ChargeModel.name == name)
-    result = await session.execute(query)
-    charge_details = result.scalar_one_or_none()
+    try:
+      # Get charge from database directly
+      query = select(ChargeModel).where(ChargeModel.name == name)
+      result = await session.execute(query)
+      charge_details = result.scalar_one_or_none()
 
-    if not charge_details:
-      raise ChargeNotFoundError(f"Charge not found: {name}")
+      if not charge_details:
+        logger.warning("Charge not found", extra=log_context)
+        raise ChargeNotFoundError(f"Charge not found: {name}")
 
-    # Calculate total amount
-    amount = charge_details.amount * qty
+      # Calculate total amount
+      amount = charge_details.amount * qty
+      log_context["amount"] = amount
 
-    # Check wallet balance
-    wallet_query = select(WalletModel).where(WalletModel.user_id == user_id)
-    wallet_result = await session.execute(wallet_query)
-    wallet = wallet_result.scalar_one_or_none()
+      # Check wallet balance
+      wallet_query = select(WalletModel).where(WalletModel.user_id == user_id)
+      wallet_result = await session.execute(wallet_query)
+      wallet = wallet_result.scalar_one_or_none()
 
-    if not wallet:
-      # Create wallet if not exists
-      wallet = WalletModel(user_id=user_id, balance=0, hold=0, credits_spent=0)
-      session.add(wallet)
-      await session.flush()
-      await session.refresh(wallet)
+      if not wallet:
+        logger.info("Creating new wallet for user", extra=log_context)
+        # Create wallet if not exists
+        wallet = WalletModel(user_id=user_id, balance=0, hold=0, credits_spent=0)
+        session.add(wallet)
+        await session.flush()
+        await session.refresh(wallet)
 
-    if wallet.balance < amount:
-      raise InsufficientCreditsError("Insufficient credits")
+      if wallet.balance < amount:
+        logger.warning(f"Insufficient credits: required={amount}, available={wallet.balance}", extra=log_context)
+        raise InsufficientCreditsError("Insufficient credits")
 
-    # Create charge instance if balance is sufficient
-    charge = cls(name, user_id, org_id, session)
-    charge.balance_checked = True
-    return charge
+      # Create charge instance if balance is sufficient
+      charge = cls(name, user_id, org_id, session)
+      charge.balance_checked = True
+      logger.info("Charge created successfully with validated balance", extra={**log_context, "charge_id": str(charge.id)})
+      return charge
+
+    except (ChargeNotFoundError, InsufficientCreditsError):
+      raise
+    except Exception as e:
+      logger.error(f"Unexpected error creating charge: {str(e)}", exc_info=True, extra=log_context)
+      raise ChargeError(f"Failed to create charge: {str(e)}") from e
 
   def _convert_uuids_to_str(self, data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Convert UUID objects to strings in a dict."""
@@ -207,8 +223,14 @@ class Charge:
         InvalidTransactionError: If hold transaction is invalid
         ChargeError: For other charge-related errors
     """
+    log_context = {"method": "update", "charge_id": self.charge_id, "name": self.name, "user_id": str(self.user_id)}
+
     if not self.transaction_id:
+      logger.error("Cannot update a charge that hasn't been created", extra=log_context)
       raise ValueError("Cannot update a charge that hasn't been created")
+
+    log_context["transaction_id"] = str(self.transaction_id)
+    logger.info("Updating charge", extra=log_context)
 
     async with self._get_session(session) as use_session:
       try:
@@ -238,13 +260,14 @@ class Charge:
         wallet.hold -= transaction.credits
         await use_session.flush()
 
-        logger.info(f"Updated charge: {self.name}, transaction_id: {self.transaction_id}")
+        logger.info("Charge updated successfully: hold converted to debit", extra=log_context)
         return self
 
-      except InvalidTransactionError:
+      except InvalidTransactionError as e:
+        logger.error(f"Invalid transaction: {str(e)}", extra=log_context)
         raise
       except Exception as e:
-        logger.error(f"Failed to update charge: {str(e)}")
+        logger.error(f"Failed to update charge: {str(e)}", exc_info=True, extra=log_context)
         raise ChargeError(f"Failed to update charge: {str(e)}") from e
 
   async def delete(self, reason: Optional[str] = None, session: Optional[AsyncSession] = None) -> "Charge":
