@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from pydantic import UUID4, BaseModel, HttpUrl
+from pydantic import UUID4, BaseModel
 
 
 class TransactionType(str, Enum):
@@ -63,8 +63,6 @@ class TransactionSchema(BaseModel):
 class CheckoutSessionCreateSchema(BaseModel):
   plan_id: Optional[UUID4] = None
   amount_usd: Optional[float] = None
-  success_url: HttpUrl
-  cancel_url: HttpUrl
   customer_email: Optional[str] = None
 
   def validate_payment_source(cls, v, values):
