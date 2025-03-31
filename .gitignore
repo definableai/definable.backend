@@ -175,3 +175,6 @@ junk/
 # For pgAdmin
 *pgadmin*
 servers.json
+
+# Files
+filepath
