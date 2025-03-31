@@ -20,9 +20,6 @@ class UserModel(CRUD):
   # Relationships
   sent_invitations = relationship("InvitationModel", foreign_keys="InvitationModel.invited_by", back_populates="inviter")
 
-  # Add this relationship
-  wallets = relationship("WalletModel", back_populates="user")
-
   @property
   def full_name(self) -> str:
     """Get full name."""
