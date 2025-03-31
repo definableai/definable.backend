@@ -45,7 +45,6 @@ class RoleService:
     """Delete a permission and its associations."""
     # Delete from role_permissions and default_role_permissions first
     await session.execute(delete(RolePermissionModel).where(RolePermissionModel.permission_id == permission_id))
-    await session.execute(delete(RolePermissionModel).where(RolePermissionModel.permission_id == permission_id))
 
     # Delete the permission
     await session.execute(delete(PermissionModel).where(PermissionModel.id == permission_id))
