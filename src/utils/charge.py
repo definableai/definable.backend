@@ -26,6 +26,8 @@ class Charge:
 
     self.logger.debug(f"Charge object initialized [charge_id={self.charge_id}, name={name}, user_id={user_id}]")
 
+    logger.debug(f"Charge object initialized [charge_id={self.charge_id}, name={name}, user_id={user_id}]")
+
   @classmethod
   async def verify_balance(cls, name: str, org_id: UUID, qty: int = 1, session: Optional[AsyncSession] = None):
     """Check if organization has sufficient balance for charge."""
