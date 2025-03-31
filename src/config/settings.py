@@ -7,7 +7,7 @@ load_dotenv()
 
 
 class Settings(BaseSettings):
-    """Settings class."""
+  """Settings class."""
 
   app_name: str
   jwt_secret: str
@@ -37,10 +37,10 @@ class Settings(BaseSettings):
   stripe_public_key: str
 
   class Config:
-      """Config class."""
+    """Config class."""
 
-      env_file = ".env"
-      env_file_encoding = "utf-8"
+    env_file = ".env"
+    env_file_encoding = "utf-8"
 
 
 # Singleton pattern to ensure only one instance of Settings is used
