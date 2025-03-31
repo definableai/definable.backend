@@ -1,8 +1,10 @@
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import UUID4, BaseModel
+
+from models import TransactionModel
 
 
 class TransactionType(str, Enum):
@@ -36,7 +38,6 @@ class BillingPlanSchema(BaseModel):
 
 class WalletResponseSchema(BaseModel):
   id: UUID4
-  user_id: UUID4
   balance: int
   hold: int
   credits_spent: int
@@ -49,6 +50,8 @@ class WalletResponseSchema(BaseModel):
 
 class TransactionSchema(BaseModel):
   id: UUID4
+  user_id: UUID4
+  organization_id: UUID4
   type: TransactionType
   status: TransactionStatus
   amount_usd: float
@@ -74,6 +77,8 @@ class CheckoutSessionCreateSchema(BaseModel):
 # Response schemas
 class TransactionResponseSchema(BaseModel):
   id: UUID4
+  user_id: UUID4
+  organization_id: UUID4
   type: str
   status: str
   amount_usd: float
@@ -85,9 +90,24 @@ class TransactionResponseSchema(BaseModel):
     from_attributes = True
 
 
+class TransactionWithInvoiceSchema(TransactionResponseSchema):
+  has_invoice: bool = False
+
+  class Config:
+    orm_mode = True
+
+  @classmethod
+  def from_transaction(cls, tx: TransactionModel):
+    # First create the base object using parent's from_orm method
+    base = cls.from_orm(tx)
+    # Set the has_invoice field based on stripe_invoice_id presence
+    base.has_invoice = tx.stripe_invoice_id is not None
+    return base
+
+
 class CreditBalanceResponseSchema(BaseModel):
   id: UUID4
-  user_id: UUID4
+  organization_id: UUID4
   balance: int
   credits_spent: int
   last_reset_date: Optional[datetime] = None
@@ -109,8 +129,6 @@ class BillingPlanCreateSchema(BaseModel):
 
 class BillingPlanResponseSchema(BillingPlanCreateSchema):
   id: UUID4
-  created_at: datetime
-  updated_at: datetime
 
   class Config:
     from_attributes = True
@@ -134,7 +152,7 @@ class CreditCalculationRequestSchema(BaseModel):
 
 
 class CreditCalculationResponseSchema(BaseModel):
-  amount_usd: float  # Changed from amount to amount_usd to match service
+  amount_usd: float
   credits: int
 
   class Config:
@@ -155,6 +173,43 @@ class ServiceResponseSchema(BaseModel):
   org_id: Optional[UUID4] = None
   created_at: datetime
   updated_at: datetime
+
+  class Config:
+    from_attributes = True
+
+
+class TransactionUserSchema(BaseModel):
+  id: UUID4
+  email: str
+  name: str
+
+  class Config:
+    from_attributes = True
+
+
+class UsageHistoryItemSchema(BaseModel):
+  id: UUID4
+  timestamp: datetime
+  description: str
+  charge_name: str
+  service: str
+  credits_used: int
+  cost_usd: float
+  transaction_type: str
+  status: str
+  user: TransactionUserSchema
+  action: str
+  qty: Optional[int] = None
+
+  class Config:
+    from_attributes = True
+
+
+class UsageHistoryResponseSchema(BaseModel):
+  usage_history: List[UsageHistoryItemSchema]
+  total_credits_used: int
+  total_cost_usd: float
+  pagination: Dict[str, Any]
 
   class Config:
     from_attributes = True
