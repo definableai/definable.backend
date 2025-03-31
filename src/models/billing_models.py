@@ -62,27 +62,22 @@ class ChargeModel(CRUD):
 class WalletModel(CRUD):
   __tablename__ = "wallets"
 
-  user_id: Mapped[UUID] = mapped_column(
-    UUID(as_uuid=True),
-    ForeignKey("users.id", ondelete="CASCADE"),
-    unique=True,
-    nullable=False,
-  )
+  organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
   balance: Mapped[int] = mapped_column(Integer, default=0)
   hold: Mapped[int] = mapped_column(Integer, default=0)
   credits_spent: Mapped[int] = mapped_column(Integer, default=0)
   last_reset_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
   # Add relationship
-  user = relationship("UserModel", back_populates="wallets")
-  transactions = relationship("TransactionModel", primaryjoin="WalletModel.user_id==foreign(TransactionModel.user_id)")
+  organization = relationship("OrganizationModel", back_populates="wallets")
+  transactions = relationship("TransactionModel", primaryjoin="WalletModel.organization_id==foreign(TransactionModel.organization_id)")
 
 
 class TransactionModel(CRUD):
   __tablename__ = "transactions"
 
-  user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-  org_id: Mapped[Optional[UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+  user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+  organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
   type: Mapped[str] = mapped_column(String, nullable=False)
   status: Mapped[str] = mapped_column(String, nullable=False)
   credits: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -94,5 +89,6 @@ class TransactionModel(CRUD):
   stripe_invoice_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
   # Relationships
+  organization = relationship("OrganizationModel", back_populates="transactions")
+  wallet = relationship("WalletModel", primaryjoin="foreign(WalletModel.organization_id)==TransactionModel.organization_id", uselist=False)
   user = relationship("UserModel", back_populates="transactions")
-  wallet = relationship("WalletModel", primaryjoin="foreign(WalletModel.user_id)==TransactionModel.user_id", uselist=False)

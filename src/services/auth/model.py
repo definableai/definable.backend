@@ -18,9 +18,6 @@ class UserModel(CRUD):
   # Simplify the relationship reference
   transactions = relationship("TransactionModel", back_populates="user")
 
-  # Add this relationship
-  wallets = relationship("WalletModel", back_populates="user")
-
   @property
   def full_name(self) -> str:
     """Get full name."""

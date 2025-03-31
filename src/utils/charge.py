@@ -1,380 +1,279 @@
-import contextlib
 from typing import Any, Dict, Optional
 from uuid import UUID, uuid4
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import text
 
-from common.error import ChargeNotFoundError, InsufficientCreditsError, InvalidTransactionError
-from common.logger import logger
-from models import ChargeModel, TransactionModel, WalletModel
-
-
-# Import enums directly if they're simple enums
-class TransactionType:
-  CREDIT = "CREDIT"
-  DEBIT = "DEBIT"
-  HOLD = "HOLD"
-  RELEASE = "RELEASE"
-
-
-class TransactionStatus:
-  PENDING = "PENDING"
-  COMPLETED = "COMPLETED"
-  FAILED = "FAILED"
-  CANCELLED = "CANCELLED"
-
-
-class ChargeError(Exception):
-  """Base exception for charge-related errors."""
-
-  pass
+from common.error import ChargeNotFoundError, InvalidTransactionError
+from common.logger import log
+from models import ChargeModel, TransactionModel, TransactionStatus, TransactionType, WalletModel
 
 
 class Charge:
-  """
-  Utility class for managing billing charges throughout the application.
-  """
+  """Simplified charge utility for credit management."""
 
   def __init__(self, name: str, user_id: UUID, org_id: UUID, session: AsyncSession):
-    """
-    Initialize a charge object.
-
-    Args:
-        name: Name of the charge from charges table
-        user_id: User ID to charge
-        org_id: Organization ID
-        session: Database session (required)
-
-    Raises:
-        ValueError: If session is None
-    """
-    if session is None:
-      raise ValueError("Database session is required")
-
-    # Store the parameters for later validation during create()
     self.id = uuid4()
-    self.charge_id = str(self.id)  # String version for logging
     self.name = name
     self.user_id = user_id
     self.org_id = org_id
     self.session = session
-    self.transaction_id: Optional[UUID] = None
-    self.metadata: Dict[str, Any] = {}
-    self.balance_checked = False  # Flag to track if balance has been verified
-
-    logger.debug(f"Charge object initialized [charge_id={self.charge_id}, name={name}, user_id={user_id}]")
+    self.transaction_id = None
+    self.logger = log
 
   @classmethod
-  async def create_with_balance_check(cls, name: str, user_id: UUID, org_id: UUID, session: AsyncSession, qty: int = 1):
-    """Factory method to create Charge after validating balance."""
-    log_context = {"method": "create_with_balance_check", "charge_name": name, "user_id": str(user_id), "qty": qty}
-    logger.info("Creating charge with balance check", extra=log_context)
+  async def verify_balance(cls, name: str, org_id: UUID, qty: int = 1, session: Optional[AsyncSession] = None):
+    """Check if organization has sufficient balance for charge."""
+    # Get charge amount
+    if session is None:
+      raise ValueError("Database session is required")
 
-    try:
-      # Get charge from database directly
-      query = select(ChargeModel).where(ChargeModel.name == name)
-      result = await session.execute(query)
-      charge_details = result.scalar_one_or_none()
+    charge = await cls._get_charge_details(name, session)
+    amount = charge.amount * qty
 
-      if not charge_details:
-        logger.warning("Charge not found", extra=log_context)
-        raise ChargeNotFoundError(f"Charge not found: {name}")
+    # Get and lock wallet
+    wallet = await cls._get_wallet(org_id, session, for_update=True)
 
-      # Calculate total amount
-      amount = charge_details.amount * qty
-      log_context["amount"] = amount
+    # Check balance
+    if wallet.balance < amount:
+      return False, amount, wallet.balance
+    return True, amount, wallet.balance
 
-      # Check wallet balance
-      wallet_query = select(WalletModel).where(WalletModel.user_id == user_id)
-      wallet_result = await session.execute(wallet_query)
-      wallet = wallet_result.scalar_one_or_none()
+  async def create(self, qty: int = 1, metadata: Optional[Dict[str, Any]] = None):
+    """Create charge hold."""
+    charge = await self._get_charge_details(self.name, self.session)
+    amount = charge.amount * qty
 
-      if not wallet:
-        logger.info("Creating new wallet for user", extra=log_context)
-        # Create wallet if not exists
-        wallet = WalletModel(user_id=user_id, balance=0, hold=0, credits_spent=0)
-        session.add(wallet)
-        await session.flush()
-        await session.refresh(wallet)
+    self.logger.info(f"Creating charge {self.name} for {amount} credits")
 
-      if wallet.balance < amount:
-        logger.warning(f"Insufficient credits: required={amount}, available={wallet.balance}", extra=log_context)
-        raise InsufficientCreditsError("Insufficient credits")
+    # Verify wallet has enough funds
+    wallet = await self._get_wallet(self.org_id, self.session, for_update=True)
 
-      # Create charge instance if balance is sufficient
-      charge = cls(name, user_id, org_id, session)
-      charge.balance_checked = True
-      logger.info("Charge created successfully with validated balance", extra={**log_context, "charge_id": str(charge.id)})
-      return charge
+    # Only log balance details at debug level for development
+    self.logger.debug(f"Wallet balance: {wallet.balance}, required: {amount}")
 
-    except (ChargeNotFoundError, InsufficientCreditsError):
-      raise
-    except Exception as e:
-      logger.error(f"Unexpected error creating charge: {str(e)}", exc_info=True, extra=log_context)
-      raise ChargeError(f"Failed to create charge: {str(e)}") from e
+    if wallet.balance < amount:
+      self.logger.warning(f"Insufficient credits for charge {self.name}. Required: {amount}, Available: {wallet.balance}")
+      raise HTTPException(status_code=402, detail="Insufficient credits")  # Payment Required
 
-  def _convert_uuids_to_str(self, data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Convert UUID objects to strings in a dict."""
-    if not data:
-      return {}
+    # Create transaction
+    self.logger.debug("Creating transaction")
+    transaction = await self._create_transaction(TransactionType.HOLD, TransactionStatus.PENDING, amount, f"Hold for {self.name}", metadata, qty)
 
-    result = {}
-    for key, value in data.items():
-      if isinstance(value, UUID):
-        result[key] = str(value)
+    # Log transaction ID at info level for production tracking
+    self.logger.info(f"Created transaction {transaction.id} for charge {self.name}")
+
+    # Update wallet
+    wallet.hold = (wallet.hold or 0) + amount  # Ensure hold is not None
+
+    # Explicitly flush and commit changes to ensure wallet update is persisted
+    await self.session.flush()
+    await self.session.commit()
+
+    self.logger.info(f"Updated wallet: balance={wallet.balance}, hold={wallet.hold}")
+    self.transaction_id = transaction.id
+    return self
+
+  async def update(self, additional_metadata: Optional[Dict[str, Any]] = None, qty_increment: int = 0):
+    """
+    Complete charge by converting hold to debit or increment the quantity.
+
+    If qty_increment is provided, the transaction will be updated with the new quantity
+    and additional credits will be reserved, provided the wallet has sufficient balance.
+    """
+    # Directly attempt to get the transaction - will raise appropriate errors
+    transaction = await self._get_transaction(for_update=True)
+
+    # Continue with validation and updates
+    if not transaction or transaction.type != TransactionType.HOLD or transaction.status != TransactionStatus.PENDING:
+      self.logger.warning(f"Invalid transaction update attempt for transaction_id: {self.transaction_id}")
+      raise InvalidTransactionError("Invalid or already processed transaction")
+
+    # Get the wallet for updating
+    wallet = await self._get_wallet(self.org_id, self.session, for_update=True)
+    self.logger.info(f"Current wallet state: balance={wallet.balance}, hold={wallet.hold or 0}")
+
+    # If qty_increment is provided, update the transaction quantity and credits
+    if qty_increment > 0:
+      self.logger.info(f"Incrementing quantity for transaction {transaction.id} by {qty_increment}")
+
+      # Get charge details to calculate additional amount
+      charge = await self._get_charge_details(self.name, self.session)
+      additional_amount = charge.amount * qty_increment
+
+      # Calculate available balance (total balance minus current hold)
+      wallet_hold = wallet.hold or 0  # Handle None explicitly
+      available_balance = wallet.balance - wallet_hold
+
+      if available_balance < additional_amount:
+        self.logger.warning(
+          f"Insufficient available balance for qty increment. Required: {additional_amount}, "
+          f"Available: {available_balance} (Balance: {wallet.balance}, Hold: {wallet_hold})"
+        )
+        raise HTTPException(
+          status_code=402, detail=f"Insufficient available credits for additional quantity. Need {additional_amount}, have {available_balance}"
+        )
+
+      # Update transaction metadata
+      current_metadata = transaction.transaction_metadata or {}
+      current_qty = int(current_metadata.get("qty", 1))
+      new_qty = current_qty + qty_increment
+      current_metadata["qty"] = new_qty
+
+      # Update transaction amount
+      original_amount = transaction.credits
+      transaction.credits = original_amount + additional_amount
+
+      # Update wallet hold - ensure not None and force update
+      wallet.hold = (wallet.hold or 0) + additional_amount
+
+      self.logger.info(f"Updated transaction {transaction.id} from qty={current_qty} to qty={new_qty}")
+      self.logger.info(
+        f"Credits increased from {original_amount} to {transaction.credits}. Updated wallet: balance={wallet.balance}, hold={wallet.hold}"
+      )
+
+      # Update transaction metadata with provided additional metadata
+      if additional_metadata:
+        transaction.transaction_metadata = {**current_metadata, **additional_metadata}
       else:
-        result[key] = value
-    return result
+        transaction.transaction_metadata = current_metadata
 
-  @contextlib.asynccontextmanager
-  async def _get_session(self, session: Optional[AsyncSession] = None):
-    """Context manager for database session handling."""
-    use_session = session or self.session
-    try:
-      yield use_session
-    except Exception as e:
-      await use_session.rollback()
-      raise ChargeError(f"Database operation failed: {str(e)}") from e
+      # Ensure changes are committed to the database
+      await self.session.flush()
+      await self.session.commit()
+      return self
 
-  async def create(self, qty: int = 1, metadata: Optional[Dict[str, Any]] = None, session: Optional[AsyncSession] = None) -> "Charge":
-    """
-    Create a new charge by placing a hold on the user's credits.
+    # If no qty_increment, proceed with converting HOLD to DEBIT
+    self.logger.info(f"Converting HOLD to DEBIT for transaction {transaction.id}")
+    transaction.type = TransactionType.DEBIT
+    transaction.status = TransactionStatus.COMPLETED
 
-    Args:
-        qty: Quantity of units to charge
-        metadata: Additional context information
-        session: Database session (optional)
+    if additional_metadata:
+      transaction.transaction_metadata = {**(transaction.transaction_metadata or {}), **additional_metadata}
 
-    Returns:
-        self for method chaining
+    # Update wallet - reduce hold and balance, increment credits_spent
+    # Handle potential None values in wallet properties
+    wallet.hold = (wallet.hold or 0) - transaction.credits
+    if wallet.hold < 0:  # Defensive check
+      self.logger.warning(f"Negative hold detected: {wallet.hold}, resetting to 0")
+      wallet.hold = 0
 
-    Raises:
-        ChargeNotFoundError: If the charge name doesn't exist
-        InsufficientCreditsError: If user has insufficient credits
-        ChargeError: For other charge-related errors
-    """
-    async with self._get_session(session) as use_session:
-      try:
-        # Get charge details
-        charge = await use_session.get(ChargeModel, self.name)
-        if not charge:
-          raise ChargeNotFoundError(f"Charge not found: {self.name}")
+    wallet.balance -= transaction.credits
+    wallet.credits_spent = (wallet.credits_spent or 0) + transaction.credits
 
-        # Calculate total amount
-        amount = charge.amount * qty
+    # Ensure changes are committed
+    await self.session.flush()
+    await self.session.commit()
 
-        # Check wallet balance (only if not already checked)
-        if not self.balance_checked:
-          wallet = await use_session.get(WalletModel, self.user_id)
-          if wallet.balance < amount:
-            raise InsufficientCreditsError(f"Required: {amount}, Available: {wallet.balance}")
+    self.logger.info(f"Transaction completed - Updated wallet: balance={wallet.balance}, hold={wallet.hold}, credits_spent={wallet.credits_spent}")
+    return self
 
-        # Create charge metadata
-        charge_metadata = {
-          "charge_id": str(charge.id),
-          "service": charge.service,
-          "action": charge.action,
-          "qty": qty,
-          "unit_amount": charge.amount,
-          "total_amount": amount,
-          "charge_name": self.name,
-        }
+  async def delete(self, reason: Optional[str] = None):
+    """Cancel charge by releasing hold."""
+    # Directly attempt to get the transaction - will raise appropriate errors
+    transaction = await self._get_transaction(for_update=True)
 
-        # Merge with additional metadata
-        metadata_str = self._convert_uuids_to_str(metadata)
-        combined_metadata = {**metadata_str, **charge_metadata}
+    # Continue with validation and updates
+    if not transaction or transaction.type != TransactionType.HOLD or transaction.status != TransactionStatus.PENDING:
+      self.logger.warning(f"Invalid transaction deletion attempt for transaction_id: {self.transaction_id}")
+      raise InvalidTransactionError("Invalid or already processed transaction")
 
-        # Create transaction
-        transaction = await self.create_transaction(
-          self.user_id, self.org_id, TransactionType.HOLD, TransactionStatus.PENDING, amount, f"Hold for {self.name}", combined_metadata, session
-        )
+    # Update transaction - change to RELEASE instead of creating a new transaction
+    self.logger.info(f"Converting HOLD to RELEASE for transaction {transaction.id}")
+    transaction.type = TransactionType.RELEASE
+    transaction.status = TransactionStatus.COMPLETED
 
-        # Update wallet
-        wallet.hold += amount
-        await use_session.flush()
+    if transaction.transaction_metadata:
+      if reason:
+        transaction.transaction_metadata["release_reason"] = reason
+      transaction.transaction_metadata["original_status"] = "CANCELLED"
 
-        # Update instance
-        self.transaction_id = UUID(str(transaction.id))
-        self.metadata = combined_metadata
+    # Update wallet - handle None values and ensure proper update
+    wallet = await self._get_wallet(self.org_id, self.session, for_update=True)
+    wallet.hold = (wallet.hold or 0) - transaction.credits
+    if wallet.hold < 0:  # Defensive check
+      self.logger.warning(f"Negative hold detected: {wallet.hold}, resetting to 0")
+      wallet.hold = 0
 
-        logger.info(f"Created charge: {self.name}, transaction_id: {self.transaction_id}")
-        return self
+    # Ensure changes are committed
+    await self.session.flush()
+    await self.session.commit()
 
-      except (ChargeNotFoundError, InsufficientCreditsError):
-        raise
-      except Exception as e:
-        logger.error(f"Failed to create charge: {str(e)}")
-        raise ChargeError(f"Failed to create charge: {str(e)}") from e
+    self.logger.info(f"Hold released - Updated wallet: balance={wallet.balance}, hold={wallet.hold}")
+    return self
 
-  async def update(self, additional_metadata: Optional[Dict[str, Any]] = None, session: Optional[AsyncSession] = None) -> "Charge":
-    """
-    Complete the charge by converting the hold to a debit.
+  # Helper methods
+  @staticmethod
+  async def _get_charge_details(name: str, session: AsyncSession):
+    query = select(ChargeModel).where(ChargeModel.name == name)
+    result = await session.execute(query)
+    charge = result.scalar_one_or_none()
+    if not charge:
+      raise ChargeNotFoundError(f"Charge not found: {name}")
+    return charge
 
-    Args:
-        additional_metadata: Additional metadata to add
-        session: Database session (optional)
+  @staticmethod
+  async def _get_wallet(org_id: UUID, session: AsyncSession, for_update: bool = False):
+    if for_update:
+      lock_query = text("SELECT * FROM wallets WHERE organization_id = :organization_id FOR UPDATE")
+      await session.execute(lock_query, {"organization_id": str(org_id)})
 
-    Returns:
-        self for method chaining
-
-    Raises:
-        ValueError: If charge hasn't been created
-        InvalidTransactionError: If hold transaction is invalid
-        ChargeError: For other charge-related errors
-    """
-    log_context = {"method": "update", "charge_id": self.charge_id, "name": self.name, "user_id": str(self.user_id)}
-
-    if not self.transaction_id:
-      logger.error("Cannot update a charge that hasn't been created", extra=log_context)
-      raise ValueError("Cannot update a charge that hasn't been created")
-
-    log_context["transaction_id"] = str(self.transaction_id)
-    logger.info("Updating charge", extra=log_context)
-
-    async with self._get_session(session) as use_session:
-      try:
-        # Get the hold transaction
-        transaction = await use_session.get(TransactionModel, self.transaction_id)
-        if not transaction or transaction.type != TransactionType.HOLD:
-          raise InvalidTransactionError("Invalid hold transaction")
-
-        # Update the existing transaction metadata
-        if additional_metadata:
-          if transaction.transaction_metadata is None:
-            transaction.transaction_metadata = {}
-          transaction.transaction_metadata.update(additional_metadata)
-
-        # Update the transaction type and status
-        transaction.type = TransactionType.DEBIT
-        transaction.status = TransactionStatus.COMPLETED
-
-        # Update the description
-        transaction.description = f"Charge for {self.name}"
-
-        # Save changes
-        await use_session.commit()
-
-        # Update wallet
-        wallet = await use_session.get(WalletModel, self.user_id)
-        wallet.hold -= transaction.credits
-        await use_session.flush()
-
-        logger.info("Charge updated successfully: hold converted to debit", extra=log_context)
-        return self
-
-      except InvalidTransactionError as e:
-        logger.error(f"Invalid transaction: {str(e)}", extra=log_context)
-        raise
-      except Exception as e:
-        logger.error(f"Failed to update charge: {str(e)}", exc_info=True, extra=log_context)
-        raise ChargeError(f"Failed to update charge: {str(e)}") from e
-
-  async def delete(self, reason: Optional[str] = None, session: Optional[AsyncSession] = None) -> "Charge":
-    """
-    Delete the charge by releasing the hold.
-
-    Args:
-        reason: Optional reason for deletion
-        session: Database session (optional)
-
-    Returns:
-        self for method chaining
-
-    Raises:
-        ValueError: If charge hasn't been created
-        InvalidTransactionError: If hold transaction is invalid
-        ChargeError: For other charge-related errors
-    """
-    if not self.transaction_id:
-      raise ValueError("Cannot delete a charge that hasn't been created")
-
-    async with self._get_session(session) as use_session:
-      try:
-        # Get the hold transaction
-        transaction = await use_session.get(TransactionModel, self.transaction_id)
-        if not transaction or transaction.type != TransactionType.HOLD:
-          raise InvalidTransactionError("Invalid hold transaction")
-
-        # Create metadata with reason
-        metadata = {**(transaction.transaction_metadata or {})}
-        if reason:
-          metadata["deletion_reason"] = reason
-
-        # Create RELEASE transaction
-        release_transaction = await self.create_transaction(
-          self.user_id,
-          self.org_id,
-          TransactionType.RELEASE,
-          TransactionStatus.COMPLETED,
-          transaction.credits,
-          f"Release hold for {self.name}",
-          metadata,
-          session,
-        )
-        use_session.add(release_transaction)
-        await use_session.flush()
-        await use_session.refresh(release_transaction)
-
-        # Update hold transaction status
-        transaction.status = TransactionStatus.FAILED
-        if reason and transaction.transaction_metadata:
-          transaction.transaction_metadata["deletion_reason"] = reason
-        await use_session.commit()
-
-        # Update wallet
-        wallet = await use_session.get(WalletModel, self.user_id)
-        wallet.hold -= transaction.credits
-        await use_session.flush()
-
-        logger.info(f"Deleted charge: {self.name}, transaction_id: {self.transaction_id}")
-        return self
-
-      except InvalidTransactionError:
-        raise
-      except Exception as e:
-        logger.error(f"Failed to delete charge: {str(e)}")
-        raise ChargeError(f"Failed to delete charge: {str(e)}") from e
-
-  async def create_transaction(
-    self,
-    user_id: UUID,
-    org_id: UUID,
-    transaction_type: str,
-    status: str,
-    credit_amount: int,
-    description: Optional[str] = None,
-    metadata: Optional[dict] = None,
-    session: Optional[AsyncSession] = None,
-  ) -> TransactionModel:
-    """Create a transaction record."""
-    use_session = session or self.session
-
-    transaction = TransactionModel(
-      user_id=user_id,
-      org_id=org_id,
-      type=transaction_type,
-      status=status,
-      credits=credit_amount,
-      description=description,
-      transaction_metadata=metadata,
-    )
-
-    use_session.add(transaction)
-    await use_session.flush()
-    await use_session.refresh(transaction)
-    return transaction
-
-  async def update_wallet_for_hold(self, user_id: UUID, amount: int, session: AsyncSession) -> WalletModel:
-    """Update wallet for hold operation."""
-    wallet_query = select(WalletModel).where(WalletModel.user_id == user_id)
-    wallet_result = await session.execute(wallet_query)
-    wallet = wallet_result.scalar_one_or_none()
+    query = select(WalletModel).where(WalletModel.organization_id == org_id)
+    result = await session.execute(query)
+    wallet = result.scalar_one_or_none()
 
     if not wallet:
-      wallet = WalletModel(user_id=user_id, balance=0, hold=0, credits_spent=0)
+      wallet = WalletModel(organization_id=org_id, balance=0, hold=0, credits_spent=0)
       session.add(wallet)
+      await session.flush()
+      await session.refresh(wallet)
 
-    wallet.hold += amount
-    await session.flush()
     return wallet
+
+  async def _get_transaction(self, for_update: bool = False):
+    if for_update:
+      lock_query = text("SELECT * FROM transactions WHERE id = :tx_id FOR UPDATE")
+      await self.session.execute(lock_query, {"tx_id": str(self.transaction_id)})
+
+    query = select(TransactionModel).where(TransactionModel.id == self.transaction_id)
+    result = await self.session.execute(query)
+    return result.scalar_one_or_none()
+
+  async def _create_transaction(self, tx_type, status, amount, description=None, metadata=None, qty=1):
+    # First, get the charge details to include in metadata
+    charge_details = await self._get_charge_details(self.name, self.session)
+
+    # Prepare base metadata with charge details
+    charge_metadata = {
+      "charge_name": charge_details.name,
+      "charge_amount": charge_details.amount,
+      "charge_unit": charge_details.unit,
+      "charge_measure": charge_details.measure,
+      "service": charge_details.service,
+      "action": charge_details.action,
+      "charge_description": charge_details.description,
+      # Add quantity information - use qty from metadata or default to 1
+      "qty": qty,
+    }
+
+    # Merge with any additional metadata
+    combined_metadata = {**(metadata or {}), **charge_metadata}
+
+    # Create the transaction
+    transaction = TransactionModel(
+      id=uuid4(),
+      user_id=self.user_id,
+      organization_id=self.org_id,
+      type=tx_type,
+      status=status,
+      credits=amount,
+      description=description or f"{tx_type} for {self.name}",
+      transaction_metadata=combined_metadata,
+    )
+
+    self.session.add(transaction)
+    await self.session.flush()
+    await self.session.refresh(transaction)
+    return transaction
