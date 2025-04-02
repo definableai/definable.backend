@@ -156,9 +156,9 @@ class AuthService:
     await session.flush()
 
     self.logger.info(
-          "Default organization setup complete",
-          user_id=str(user.id),
-          org_id=str(org.id)
-      )
+      "Default organization setup complete",
+      user_id=str(user.id),
+      org_id=str(org.id),
+    )
 
     return org

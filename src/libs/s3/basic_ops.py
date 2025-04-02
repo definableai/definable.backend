@@ -11,10 +11,10 @@ from config.settings import settings
 class S3Client:
   """S3 client for basic operations."""
 
-  def __init__(self):
+  def __init__(self, bucket: str = ""):
     """Initialize S3 client."""
     self.session = aioboto3.Session()
-    self.bucket = settings.s3_bucket
+    self.bucket = bucket or settings.s3_bucket
     self.endpoint_url = settings.s3_endpoint
     self.aws_access_key_id = settings.s3_access_key
     self.aws_secret_access_key = settings.s3_secret_key

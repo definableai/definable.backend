@@ -45,7 +45,6 @@ class LogConfig:
       log_data["exception"] = {
         "type": exc.__class__.__name__,
         "value": str(exc),
-        "traceback": exc.__traceback__,
       }
     # Dump JSON and escape curly braces so that they are not processed by Loguru's formatter.
     raw = json.dumps(log_data)
