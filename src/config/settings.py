@@ -31,6 +31,9 @@ class Settings(BaseSettings):
   firecrawl_api_key: str
   celery_broker_url: str
   celery_result_backend: str
+  anthropic_api_key: str
+  public_s3_bucket: str
+  python_sandbox_testing_url: str
 
   class Config:
     """Config class."""
