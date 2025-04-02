@@ -7,17 +7,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from libs.chats.streaming import LLMFactory
 from services.__base.manager import Manager
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
   # Startup
-  app.state.llm = LLMFactory()
   yield
   # Shutdown
-  app.state.llm.pool.close()
 
 
 app = FastAPI(lifespan=lifespan)

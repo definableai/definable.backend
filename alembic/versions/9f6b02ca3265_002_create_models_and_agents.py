@@ -45,11 +45,16 @@ def upgrade():
     sa.Column("description", sa.Text(), nullable=False),
     sa.Column("model_id", postgresql.UUID(), nullable=False),
     sa.Column("is_active", sa.Boolean(), server_default="true", nullable=False),
+    sa.Column("version", sa.String(50), nullable=False),
+    sa.Column("organization_id", postgresql.UUID(), nullable=False),
+    sa.Column("user_id", postgresql.UUID(), nullable=False),
     sa.Column("settings", postgresql.JSONB(), nullable=False),
     sa.Column("created_at", sa.TIMESTAMP(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
     sa.Column("updated_at", sa.TIMESTAMP(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
     sa.PrimaryKeyConstraint("id"),
     sa.ForeignKeyConstraint(["model_id"], ["models.id"], ondelete="CASCADE"),
+    sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
+    sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
     sa.UniqueConstraint("name"),
   )
   op.create_index("ix_agents_name", "agents", ["name"], unique=True)

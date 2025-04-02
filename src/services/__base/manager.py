@@ -46,6 +46,7 @@ class Manager:
       service_path = os.path.join(self.services_dir, service_name)
       if os.path.isdir(service_path):
         service_module_path = f"services.{service_name}.service"
+        router = None
         try:
           service_module = importlib.import_module(service_module_path)
           service_class = next((cls for name, cls in inspect.getmembers(service_module, inspect.isclass) if name.endswith("Service")), None)
@@ -74,8 +75,8 @@ class Manager:
                 if hasattr(service_instance, endpoint_name):
                   endpoint = getattr(service_instance, endpoint_name)
                   router.add_api_route(path=f"/{sub_path}", endpoint=endpoint, methods=[http_method.upper()])
-
-          self.app.include_router(router)
+          if router:
+            self.app.include_router(router)
         except ModuleNotFoundError:
           pass
 
