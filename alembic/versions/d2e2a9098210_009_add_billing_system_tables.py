@@ -1,8 +1,8 @@
-"""008 Add billing system tables
+"""009_add_billing_system_tables
 
-Revision ID: 4dd488053d15
-Revises: fb7256243eb1
-Create Date: 2025-03-11 01:07:12.125677
+Revision ID: d2e2a9098210
+Revises: e375ec5b6bdb
+Create Date: 2025-04-03 01:02:46.564111
 
 """
 
@@ -16,8 +16,8 @@ from sqlalchemy.dialects.postgresql import JSON, UUID
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "4dd488053d15"
-down_revision: Union[str, None] = "fb7256243eb1"
+revision: str = "d2e2a9098210"
+down_revision: Union[str, None] = "ba6775663b8a"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
