@@ -1,8 +1,8 @@
-"""009_add_get_usage_history_view
+"""011_add_get_usage_history_view
 
-Revision ID: bc44d043fa25
-Revises: 4dd488053d15
-Create Date: 2025-03-31 18:32:38.134285
+Revision ID: aa9d2cf45c4d
+Revises: e375ec5b6bdb
+Create Date: 2025-04-03 01:05:10.878194
 
 """
 
@@ -11,8 +11,8 @@ from typing import Sequence, Union
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "bc44d043fa25"
-down_revision: Union[str, None] = "4dd488053d15"
+revision: str = "aa9d2cf45c4d"
+down_revision: Union[str, None] = "e375ec5b6bdb"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
