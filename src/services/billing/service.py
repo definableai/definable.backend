@@ -38,7 +38,7 @@ class BillingService:
 
   http_exposed = [
     "get=wallet",
-    # "get=wallet_test",
+    "get=wallet_test",
     "get=plans",
     "get=calculate_credits",
     "get=invoice",
