@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config.settings import settings
 from database import get_db
 from dependencies.security import RBAC
+
+# from dependencies.usage import Usage  # Import the Usage dependency at the top of the file
 from models import (
   BillingPlanModel,
   TransactionModel,
@@ -36,7 +38,7 @@ class BillingService:
 
   http_exposed = [
     "get=wallet",
-    # "get=wallet_test",
+    "get=wallet_test",
     "get=plans",
     "get=calculate_credits",
     "get=invoice",
@@ -101,23 +103,21 @@ class BillingService:
   #   background_tasks: BackgroundTasks,
   #   qty: int = 1,
   #   session: AsyncSession = Depends(get_db),
-  #   user: dict = Depends(RBAC("billing", "read")),
+  #   # Set background=True to let us handle the charge
+  #   usage: dict = Depends(Usage("pdf_extraction", background=True, metadata={"operation": "wallet_test"})),
   # ) -> dict:
   #   """
   #   Test charge creation and incremental update functionality.
-
-  #   Creates a charge with initial quantity, then increments it in background steps.
   #   """
-  #   user_id = UUID(user["id"])
+  #   user_id = UUID(usage["id"])
   #   self.logger.info(f"Starting wallet test: user_id={user_id}, org_id={org_id}, initial_qty={qty}")
   #   self.session = session
 
   #   try:
-  #     # Simply create a charge
-  #     charge = Charge(name="pdf_extraction", user_id=user_id, org_id=org_id, session=session)
-  #     charge = await charge.create(qty=qty, metadata={"operation": "wallet_test"})
+  #     # Get the charge from usage dependency
+  #     charge = usage["charge"]
 
-  #     # Add background task to handle incremental updates
+  #     # Add our custom background task to handle the charge
   #     background_tasks.add_task(self._test_increment_charge, charge=charge, qty_per_step=1)
 
   #     return {
@@ -128,22 +128,23 @@ class BillingService:
 
   #   except Exception as e:
   #     self.logger.error(f"Error in wallet test: {str(e)}")
+  #     # If there's an error, release the hold manually
+  #     try:
+  #       charge = usage["charge"]
+  #       await charge.delete(reason=f"Error in wallet test: {str(e)}")
+  #     except Exception as release_error:
+  #       self.logger.error(f"Failed to release charge: {str(release_error)}")
   #     return {"status": "error", "message": str(e)}
 
   # async def _test_increment_charge(self, charge: Charge, steps: int = 3, qty_per_step: int = 1):
   #   """
   #   Test the quantity increment feature by incrementing in a loop.
-
-  #   Args:
-  #     charge: The Charge object to increment
-  #     steps: Number of increment steps to perform
-  #     qty_per_step: Quantity to add in each step
   #   """
   #   self.logger.info(f"Starting incremental test for transaction {charge.transaction_id} with {steps} steps")
 
   #   try:
   #     # Loop through incremental steps
-  #     for step in range(1, 5):
+  #     for step in range(1, 5):  # Use steps parameter correctly
   #       await asyncio.sleep(2)  # Wait between increments
 
   #       try:
@@ -172,33 +173,6 @@ class BillingService:
   #       self.logger.info(f"Released hold for transaction {charge.transaction_id}")
   #     except Exception as cleanup_error:
   #       self.logger.error(f"Failed to clean up: {str(cleanup_error)}")
-
-  # Modified background task function to properly handle the updated charge flow
-  # async def _mock_process_wallet_charge(self, transaction_id: UUID, is_success: bool, charge: Charge):
-  #   """Mock background task to demonstrate charge processing."""
-  #   self.logger.info(f"Starting background processing for transaction {transaction_id}")
-
-  #   # Wait a bit to simulate processing time
-  #   await asyncio.sleep(5)
-
-  #   try:
-  #     if is_success:
-  #       # Success path: convert HOLD to DEBIT
-  #       self.logger.info(f"Operation successful, debiting credits for {transaction_id}")
-  #       await charge.update(additional_metadata={"completed_by": "background_task"})
-  #       self.logger.info(f"Successfully updated transaction {transaction_id} to DEBIT")
-  #     else:
-  #       # Failure path: release the hold
-  #       self.logger.info(f"Operation failed, releasing credits for {transaction_id}")
-  #       await charge.delete(reason="Mock failure")
-  #       self.logger.info(f"Successfully released hold for transaction {transaction_id}")
-  #   except Exception as e:
-  #     self.logger.error(f"Error in background task for transaction {transaction_id}: {str(e)}")
-  #     # Try to clean up if possible
-  #     try:
-  #       await charge.delete(reason=f"Error during processing: {str(e)}")
-  #     except Exception as cleanup_error:
-  #       self.logger.error(f"Failed to clean up transaction {transaction_id}: {str(cleanup_error)}")
 
   async def get_plans(
     self,
