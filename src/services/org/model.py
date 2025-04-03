@@ -1,6 +1,6 @@
 from sqlalchemy import Boolean, Enum, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from database import CRUD
 
@@ -14,9 +14,6 @@ class OrganizationModel(CRUD):
   slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
   settings: Mapped[dict] = mapped_column(JSONB, nullable=True, server_default="{}")
   is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
-
-  wallets = relationship("WalletModel", back_populates="organization")
-  transactions = relationship("TransactionModel", back_populates="organization")
 
 
 class OrganizationMemberModel(CRUD):
