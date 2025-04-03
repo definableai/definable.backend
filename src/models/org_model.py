@@ -1,6 +1,6 @@
 from sqlalchemy import Boolean, Enum, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from database import CRUD
 

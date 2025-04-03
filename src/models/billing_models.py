@@ -13,7 +13,7 @@ from sqlalchemy import (
   String,
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from database import CRUD
 
@@ -68,10 +68,6 @@ class WalletModel(CRUD):
   credits_spent: Mapped[int] = mapped_column(Integer, default=0)
   last_reset_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-  # Add relationship
-  organization = relationship("OrganizationModel", back_populates="wallets")
-  transactions = relationship("TransactionModel", primaryjoin="WalletModel.organization_id==foreign(TransactionModel.organization_id)")
-
 
 class TransactionModel(CRUD):
   __tablename__ = "transactions"
@@ -87,8 +83,3 @@ class TransactionModel(CRUD):
   description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
   transaction_metadata: Mapped[Optional[Dict]] = mapped_column(JSON, nullable=True)
   stripe_invoice_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-
-  # Relationships
-  organization = relationship("OrganizationModel", back_populates="transactions")
-  wallet = relationship("WalletModel", primaryjoin="foreign(WalletModel.organization_id)==TransactionModel.organization_id", uselist=False)
-  user = relationship("UserModel", back_populates="transactions")

@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from database import CRUD
 
