@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from database import CRUD
 
@@ -17,10 +17,6 @@ class RoleModel(CRUD):
   description: Mapped[str] = mapped_column(Text, nullable=True)
   is_system_role: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
   hierarchy_level: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-
-  # Relationships
-  permissions = relationship("PermissionModel", secondary="role_permissions", lazy="joined")
-  organization = relationship("OrganizationModel", lazy="select")
 
 
 class PermissionModel(CRUD):
