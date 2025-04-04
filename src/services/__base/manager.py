@@ -70,7 +70,7 @@ class Manager:
                 # register ws routes
                 self.register_ws_routes(router, service_instance, service_name)
                 http_method, sub_path = route.split("=")
-                endpoint_name = f"{http_method}_{sub_path}"
+                endpoint_name = f"{http_method}_{sub_path.replace('/', '_')}"
                 if hasattr(service_instance, endpoint_name):
                   endpoint = getattr(service_instance, endpoint_name)
                   router.add_api_route(path=f"/{sub_path}", endpoint=endpoint, methods=[http_method.upper()])
