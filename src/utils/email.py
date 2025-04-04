@@ -12,20 +12,41 @@ class EmailUtil:
   def __init__(self):
     resend.api_key = settings.resend_api_key
 
-  async def send_invitation_email(self, email: str, username: str, password: str, team_name: str) -> None:
+  async def send_invitation_email(
+    self, 
+    email: str, 
+    organization_name: str, 
+    invite_token: str, 
+    accept_url: str,
+    reject_url: str,
+  ) -> None:
     """Send invitation email to new team member."""
     try:
       params: resend.Emails.SendParams = {
         "from": "Team Invites <invites@dolbo.ai>",
         "to": email,
-        "subject": f"You've been invited to join {team_name}",
+        "subject": f"You've been invited to join {organization_name}",
         "html": f"""
-                    <h1>Welcome to {team_name}!</h1>
-                    <p>You've been invited to join the team. Here are your login credentials:</p>
-                    <p><strong>Username:</strong> {username}</p>
-                    <p><strong>Password:</strong> {password}</p>
-                    <p>Please login and change your password immediately.</p>
-                    <p><a href="{settings.frontend_url}/login">Click here to login</a></p>
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                        <h1 style="color: #2ecc71;">Welcome to {organization_name}!</h1>
+                        <p>You've been invited to join our team. Please choose to accept or decline the invitation:</p>
+                        
+                        <div style="margin: 30px 0;">
+                            <a href="{accept_url}" 
+                               style="display: inline-block; padding: 12px 24px; background-color: #2ecc71; color: white; text-decoration: none; border-radius: 4px; margin-right: 10px;">
+                                Accept Invitation
+                            </a>
+                            <a href="{reject_url}" 
+                               style="display: inline-block; padding: 12px 24px; background-color: #e74c3c; color: white; text-decoration: none; border-radius: 4px;">
+                                Decline Invitation
+                            </a>
+                        </div>
+                        
+                        <p style="color: #666; font-size: 14px;">
+                            This invitation link will expire in 48 hours.<br>
+                            If you didn't request this invitation, you can safely ignore this email.
+                        </p>
+                    </div>
                 """,
       }
       resend.Emails.send(params)
