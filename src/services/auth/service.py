@@ -23,7 +23,7 @@ from sqlalchemy import and_
 class AuthService:
   """Authentication service."""
 
-  http_exposed = ["post=signup", "post=login", "get=me", "post=signup/invite", "get=signup/invite"]
+  http_exposed = ["post=signup", "post=login", "get=me", "post=signup_invite", "get=signup_invite"]
 
   def __init__(self, acquire: Acquire):
     """Initialize service."""
