@@ -31,3 +31,22 @@ class EmailUtil:
       resend.Emails.send(params)
     except Exception as e:
       raise HTTPException(status_code=500, detail=f"Failed to send invitation email: {str(e)}")
+
+  async def send_password_reset_email(self, email: str, reset_token: str) -> None:
+    """Send password reset email."""
+    try:
+      params: resend.Emails.SendParams = {
+        "from": "Password Reset <noreply@dolbo.ai>",
+        "to": email,
+        "subject": "Password Reset Request",
+        "html": f"""
+                    <h1>Password Reset Request</h1>
+                    <p>You have requested to reset your password. Click the link below to proceed:</p>
+                    <p><a href="{settings.frontend_url}/reset-password?token={reset_token}">Reset Password</a></p>
+                    <p>If you did not request this, please ignore this email.</p>
+                    <p>This link will expire in 1 hour.</p>
+                """,
+      }
+      resend.Emails.send(params)
+    except Exception as e:
+      raise HTTPException(status_code=500, detail=f"Failed to send password reset email: {str(e)}")
