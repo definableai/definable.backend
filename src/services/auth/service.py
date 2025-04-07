@@ -4,20 +4,22 @@ from uuid import uuid4
 from fastapi import Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+import jwt
 
 from database import get_db
 from services.__base.acquire import Acquire
 from services.org.model import OrganizationMemberModel, OrganizationModel
+from utils.email import EmailUtil
 
 # from .dependencies import get_current_active_user
 from .model import UserModel
-from .schema import TokenResponse, UserLogin, UserResponse, UserSignup
+from .schema import TokenResponse, UserLogin, UserResponse, UserSignup, PasswordResetRequest, PasswordResetToken
 
 
 class AuthService:
   """Authentication service."""
 
-  http_exposed = ["post=signup", "post=login", "get=me"]
+  http_exposed = ["post=signup", "post=login", "get=me", "post=request_password_reset", "post=reset_password"]
 
   def __init__(self, acquire: Acquire):
     """Initialize service."""
@@ -26,6 +28,7 @@ class AuthService:
     self.settings = acquire.settings
     self.models = acquire.models
     self.logger = acquire.logger
+    self.email_util = EmailUtil()  
 
   async def post_signup(self, user_data: UserSignup, session: AsyncSession = Depends(get_db)) -> UserResponse:
     """Sign up a new user."""
@@ -101,6 +104,107 @@ class AuthService:
   ) -> UserResponse:
     """Get current user."""
     return UserResponse.model_validate(current_user)
+
+  async def post_request_password_reset(self, reset_request: PasswordResetRequest, session: AsyncSession = Depends(get_db)) -> dict:
+    """Request password reset."""
+    try:
+      self.logger.info(f"Password reset request for email: {reset_request.email}")
+
+      # Check if user exists
+      query = select(UserModel).where(UserModel.email == reset_request.email)
+      result = await session.execute(query)
+      user = result.scalar_one_or_none()
+
+      if not user:
+        # Don't reveal if email exists or not
+        self.logger.info(f"Password reset request for non-existent email: {reset_request.email}")
+        return {"message": "user is not registered"}
+
+      # Create reset token
+      reset_token = self.utils.create_access_token(
+        data={"id": str(user.id), "type": "password_reset"},
+        expires_delta=timedelta(hours=1)
+      )
+
+      # Send reset email
+      await self.email_util.send_password_reset_email(user.email, reset_token)
+      self.logger.info(f"Password reset email sent to: {reset_request.email}")
+
+      return {"message": "If your email is registered, you will receive a password reset link"}
+    except Exception as e:
+      self.logger.error(f"Error in password reset request: {str(e)}")
+      raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Failed to process password reset request"
+      )
+
+  async def post_reset_password(self, reset_data: PasswordResetToken, session: AsyncSession = Depends(get_db)) -> dict:
+    """Reset password using token."""
+    try:
+      # Verify token
+      payload = jwt.decode(reset_data.token, self.settings.jwt_secret, algorithms=["HS256"])
+      
+      # Check if token is for password reset
+      if payload.get("type") != "password_reset":
+        self.logger.warning("Invalid reset token type")
+        raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail="Invalid reset token"
+        )
+
+      # Get user
+      user_id = payload.get("id")
+      if not user_id:
+        self.logger.warning("Missing user ID in reset token")
+        raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail="Invalid reset token"
+        )
+
+      query = select(UserModel).where(UserModel.id == user_id)
+      result = await session.execute(query)
+      user = result.scalar_one_or_none()
+
+      if not user:
+        self.logger.warning(f"User not found for reset token: {user_id}")
+        raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail="Invalid reset token"
+        )
+
+      # Verify passwords match
+      if reset_data.new_password != reset_data.confirm_password:
+        self.logger.warning("Passwords do not match in reset request")
+        raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail="Passwords do not match"
+        )
+
+      # Update password
+      user.password = self.utils.get_password_hash(reset_data.new_password)
+      await session.commit()
+      self.logger.info(f"Password reset successful for user: {user.email}")
+
+      return {"message": "Password has been reset successfully"}
+
+    except jwt.ExpiredSignatureError:
+      self.logger.warning("Expired reset token")
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Reset token has expired"
+      )
+    except jwt.InvalidTokenError:
+      self.logger.warning("Invalid reset token")
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid reset token"
+      )
+    except Exception as e:
+      self.logger.error(f"Error in password reset: {str(e)}")
+      raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Failed to reset password"
+      )
 
   ### PRIVATE METHODS ###
 
