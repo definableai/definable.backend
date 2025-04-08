@@ -35,7 +35,7 @@ class LLMFactory:
 
     # Configure storage for conversation persistence
     db_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
-    self.storage = PostgresStorage(table_name="agent_sessions", db_url=db_url, schema="public")
+    self.storage = PostgresStorage(table_name="chat_sessions", db_url=db_url, schema="public")
     self.storage.create()
 
   async def chat(self, provider: str, llm: str, chat_session_id: str, message: str, memory_size: int = 100) -> AsyncGenerator[RunResponse, None]:

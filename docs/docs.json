@@ -1,0 +1,65 @@
+{
+  "name": "Zyeta.io",
+  "theme": "mint",
+  "logo": {
+    "light": "/logo/dark.svg",
+    "dark": "/logo/light.svg",
+    "href": "https://zyeta.io"
+  },
+  "favicon": "/logo/favicon.svg",
+  "colors": {
+    "primary": "#C084FC",
+    "light": "#C084FC",
+    "dark": "#C084FC"
+  },
+  "topbarLinks": [
+    {
+      "name": "Documentation",
+      "url": "https://zyeta.io/docs"
+    }
+  ],
+  "topbarCtaButton": {
+    "name": "Dashboard",
+    "url": "https://app.zyeta.io"
+  },
+  "anchors": [
+    {
+      "name": "API Reference",
+      "icon": "rectangle-terminal",
+      "url": "api-reference"
+    },
+    {
+      "name": "GitHub",
+      "icon": "github",
+      "url": "https://github.com/zyeta-io"
+    }
+  ],
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "pages": [
+          "pages/introduction",
+          "pages/quickstart"
+        ]
+      },
+      {
+        "group": "Core Concepts",
+        "pages": [
+          "pages/architecture",
+          "pages/authentication"
+        ]
+      },
+      {
+        "group": "API Reference",
+        "pages": [
+          "pages/api-reference/overview"
+        ]
+      }
+    ]
+  },
+  "footerSocials": {
+    "github": "https://github.com/zyeta-io",
+    "linkedin": "https://www.linkedin.com/company/zyeta-io"
+  }
+}

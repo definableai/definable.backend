@@ -34,6 +34,7 @@ class ToolGenerator:
 
   # TODO: change this incorporate ToolAPI response!
   def generate_toolkit(self, tool_json: Dict[str, Any]) -> ToolGeneratorResponse:
+    print(tool_json)
     """Generate a toolkit Python file from the JSON definition."""
     info = tool_json["info"]
     function_info = tool_json["function_info"]
@@ -48,12 +49,21 @@ class ToolGenerator:
     function_code = function_info["code"]
     imports = []
     function_lines = []
-
+    in_function = False
     for line in function_code.split("\n"):
-      if line.strip().startswith(("import ", "from ")):
+      stripped_line = line.strip()
+      # Check if the line starts a function definition
+      if stripped_line.startswith(("def ", "async def ")):
+        in_function = True
+      # Only capture imports that are not inside a function
+      if not in_function and stripped_line.startswith(("import ", "from ")):
         imports.append(line)
-      else:
+      # Add the line to function_lines if it's not an import or if it's inside a function
+      if in_function or not stripped_line.startswith(("import ", "from ")):
         function_lines.append(line)
+      # Check if the line ends a function block
+      if stripped_line == "" and in_function:
+        in_function = False
 
     # Format initialization parameters
     config_params = tool_json.get("configuration", [])
