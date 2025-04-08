@@ -34,28 +34,30 @@
       "url": "https://github.com/zyeta-io"
     }
   ],
-  "navigation": [
-    {
-      "group": "Getting Started",
-      "pages": [
-        "pages/introduction",
-        "pages/quickstart"
-      ]
-    },
-    {
-      "group": "Core Concepts",
-      "pages": [
-        "pages/architecture",
-        "pages/authentication"
-      ]
-    },
-    {
-      "group": "API Reference",
-      "pages": [
-        "pages/api-reference/overview"
-      ]
-    }
-  ],
+  "navigation": {
+    "sections": [
+      {
+        "group": "Getting Started",
+        "pages": [
+          "pages/introduction",
+          "pages/quickstart"
+        ]
+      },
+      {
+        "group": "Core Concepts",
+        "pages": [
+          "pages/architecture",
+          "pages/authentication"
+        ]
+      },
+      {
+        "group": "API Reference",
+        "pages": [
+          "pages/api-reference/overview"
+        ]
+      }
+    ]
+  },
   "footerSocials": {
     "github": "https://github.com/zyeta-io",
     "linkedin": "https://www.linkedin.com/company/zyeta-io"
