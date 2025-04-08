@@ -10,17 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies.security import RBAC
+from models import InvitationModel, OrganizationMemberModel, OrganizationModel, RoleModel
 from services.__base.acquire import Acquire
 
-from models import OrganizationMemberModel, OrganizationModel, InvitationModel, RoleModel
 from .schema import (
+  InvitationActionRequest,
   InvitationCreate,
-  InvitationResponse,
-  InvitationResendRequest,
   InvitationListParams,
   InvitationListResponse,
+  InvitationResendRequest,
+  InvitationResponse,
   InvitationStatus,
-  InvitationActionRequest,
 )
 
 
@@ -344,10 +344,10 @@ class InvitationService:
     invitation = result.unique().scalar_one_or_none()
 
     if not invitation:  # Add this null check first
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid invitation",
-        )
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid invitation",
+      )
 
     # Get organization name for the response
     org_name = "the organization"

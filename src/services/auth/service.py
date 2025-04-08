@@ -1,6 +1,6 @@
 from datetime import timedelta
-from uuid import uuid4
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import Depends, HTTPException, status
 from fastapi.responses import HTMLResponse
@@ -36,51 +36,50 @@ class AuthService:
   async def post_signup(self, user_data: UserSignup, session: AsyncSession = Depends(get_db)) -> UserResponse:
     """Sign up a new user."""
     try:
-        self.logger.info(f"Starting user signup process for email: {user_data.email}")
+      self.logger.info(f"Starting user signup process for email: {user_data.email}")
 
-        # Check if user exists
-        query = select(UserModel).where(UserModel.email == user_data.email)
-        result = await session.execute(query)
-        if result.unique().scalar_one_or_none():
-            self.logger.error(f"Email already registered: {user_data.email}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered",
-            )
+      # Check if user exists
+      query = select(UserModel).where(UserModel.email == user_data.email)
+      result = await session.execute(query)
+      if result.unique().scalar_one_or_none():
+        self.logger.error(f"Email already registered: {user_data.email}")
+        raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail="Email already registered",
+        )
 
-        # Create user
-        self.logger.debug("Creating new user", email=user_data.email)
-        user_dict = user_data.model_dump(exclude={"confirm_password"})
-        user_dict["password"] = self.utils.get_password_hash(user_dict["password"])
-        db_user = UserModel(**user_dict)
-        session.add(db_user)
-        await session.flush()
+      # Create user
+      self.logger.debug("Creating new user", email=user_data.email)
+      user_dict = user_data.model_dump(exclude={"confirm_password"})
+      user_dict["password"] = self.utils.get_password_hash(user_dict["password"])
+      db_user = UserModel(**user_dict)
+      session.add(db_user)
+      await session.flush()
 
-        # Set up default organization with owner role
-        await self._setup_default_organization(db_user, session)
-        await session.commit()
-        await session.refresh(db_user)
+      # Set up default organization with owner role
+      await self._setup_default_organization(db_user, session)
+      await session.commit()
+      await session.refresh(db_user)
 
-        self.logger.info("User signup completed successfully", user_id=str(db_user.id))
-        return UserResponse(id=db_user.id, email=db_user.email, message="User created successfully")
+      self.logger.info("User signup completed successfully", user_id=str(db_user.id))
+      return UserResponse(id=db_user.id, email=db_user.email, message="User created successfully")
 
     except HTTPException:
-        # Re-raise known exceptions
-        raise
+      # Re-raise known exceptions
+      raise
     except Exception as e:
-        await session.rollback()
-        self.logger.error(f"Signup failed: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create user account",
-        )
+      await session.rollback()
+      self.logger.error(f"Signup failed: {str(e)}", exc_info=True)
+      raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Failed to create user account",
+      )
 
   async def post_signup_invite(
     self,
     user_data: InviteSignup,
     session: AsyncSession = Depends(get_db),
   ) -> UserResponse:
-
     # Validate invitation
     query = select(InvitationModel).where(
       InvitationModel.invite_token == user_data.invite_token,
@@ -202,7 +201,7 @@ class AuthService:
   ) -> HTMLResponse:
     """Display the signup form for an invitation."""
     self.logger.info(f"Displaying invite signup page for email: {email}")
-    
+
     # Get invitation
     query = select(InvitationModel).where(
       and_(
@@ -212,14 +211,14 @@ class AuthService:
     )
     result = await session.execute(query)
     invitation = result.unique().scalar_one_or_none()
-    
+
     # Get organization name
     if not invitation:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid invitation",
-        )
-    
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid invitation",
+      )
+
     # Get organization name
     org = await OrganizationModel.read(invitation.organization_id)
     org_name = org.name if org else "Our Organization"

@@ -7,6 +7,7 @@ from config.settings import settings
 
 resend.api_key = settings.resend_api_key
 
+
 async def send_invitation_email(
   email: str,
   organization_name: str,
@@ -25,11 +26,11 @@ async def send_invitation_email(
                       <p>You've been invited to join our team. Please choose to accept or decline the invitation:</p>
 
                       <div style="margin: 30px 0;">
-                          <a href="{accept_url}" 
+                          <a href="{accept_url}"
                               style="display: inline-block; padding: 12px 24px; background-color: #2ecc71; color: white; text-decoration: none; border-radius: 4px; margin-right: 10px;">
                               Accept Invitation
                           </a>
-                          <a href="{reject_url}" 
+                          <a href="{reject_url}"
                               style="display: inline-block; padding: 12px 24px; background-color: #e74c3c; color: white; text-decoration: none; border-radius: 4px;">
                               Decline Invitation
                           </a>
