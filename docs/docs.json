@@ -2,8 +2,8 @@
   "name": "Zyeta.io",
   "theme": "mint",
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg",
+    "light": "/logo/dark.svg",
+    "dark": "/logo/light.svg",
     "href": "https://zyeta.io"
   },
   "favicon": "/logo/favicon.svg",
@@ -35,7 +35,7 @@
     }
   ],
   "navigation": {
-    "sections": [
+    "groups": [
       {
         "group": "Getting Started",
         "pages": [
