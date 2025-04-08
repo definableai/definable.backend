@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, model_validator
 
-from .model import DocumentStatus
+from models import DocumentStatus
 
 
 class AllowedFileExtension(str, Enum):

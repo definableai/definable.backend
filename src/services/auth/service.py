@@ -6,11 +6,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from models import OrganizationMemberModel, OrganizationModel, RoleModel, UserModel
 from services.__base.acquire import Acquire
-from services.org.model import OrganizationMemberModel, OrganizationModel
 
-# from .dependencies import get_current_active_user
-from .model import UserModel
 from .schema import TokenResponse, UserLogin, UserResponse, UserSignup
 
 
@@ -24,7 +22,6 @@ class AuthService:
     self.acquire = acquire
     self.utils = acquire.utils
     self.settings = acquire.settings
-    self.models = acquire.models
     self.logger = acquire.logger
 
   async def post_signup(self, user_data: UserSignup, session: AsyncSession = Depends(get_db)) -> UserResponse:
@@ -131,7 +128,7 @@ class AuthService:
     await session.flush()
     # assign a default role to the user
     # Get OWNER role from default roles
-    query = select(self.models["RoleModel"]).where(self.models["RoleModel"].name == "owner")
+    query = select(RoleModel).where(RoleModel.name == "owner")
     result = await session.execute(query)
     owner_role = result.unique().scalar_one_or_none()
 

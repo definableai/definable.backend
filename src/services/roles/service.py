@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies.security import RBAC, JWTBearer
+from models import OrganizationMemberModel, PermissionModel, RoleModel, RolePermissionModel
 from services.__base.acquire import Acquire
 
-from .model import PermissionModel, RoleModel, RolePermissionModel
 from .schema import PermissionCreate, PermissionResponse, RoleCreate, RoleResponse, RoleUpdate
 
 
@@ -135,8 +135,8 @@ class RoleService:
     """
     # Get role with member count
     query = (
-      select(RoleModel, func.count(self.models["OrganizationMemberModel"].id).label("member_count"))
-      .outerjoin(self.models["OrganizationMemberModel"], RoleModel.id == self.models["OrganizationMemberModel"].role_id)
+      select(RoleModel, func.count(OrganizationMemberModel.id).label("member_count"))
+      .outerjoin(OrganizationMemberModel, RoleModel.id == OrganizationMemberModel.role_id)
       .where(and_(RoleModel.id == role_id, RoleModel.organization_id == org_id))
       .group_by(RoleModel.id)
     )

@@ -12,12 +12,10 @@ from database import get_db
 
 # from dependencies import get_llm
 from dependencies.security import RBAC
-from libs.chats.streaming import LLMFactory
+from libs.chats.v1.streaming import LLMFactory
+from models import AgentModel, ChatSessionModel, ConversationModel, LLMModel, Message_Role, MessageModel
 from services.__base.acquire import Acquire
-from services.agents.model import AgentModel
-from services.llm.model import LLMModel
 
-from .model import ChatSessionModel, ConversationModel, Message_Role, MessageModel
 from .schema import (
   ChatMessageCreate,
   ChatSessionCreate,

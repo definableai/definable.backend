@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict
 
-from ..model import KBDocumentModel
+from models import KBDocumentModel
 
 
 class BaseSourceHandler(ABC):

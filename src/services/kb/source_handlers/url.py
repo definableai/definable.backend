@@ -7,9 +7,9 @@ from urllib.parse import urlparse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.websocket import WebSocketManager
-from libs.firecrawl import firecrawl
+from libs.firecrawl.v1 import firecrawl
+from models import DocumentStatus, KBDocumentModel
 
-from ..model import DocumentStatus, KBDocumentModel
 from .base import BaseSourceHandler
 
 

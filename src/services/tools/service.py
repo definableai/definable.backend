@@ -9,10 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies.security import RBAC, JWTBearer
-from libs.tools_factory import ToolGenerator, generate_boilerplate
+from libs.tools_factory.v1 import ToolGenerator, generate_boilerplate
+from models import ToolCategoryModel, ToolModel
 from services.__base.acquire import Acquire
 
-from .model import ToolCategoryModel, ToolModel
 from .schema import (
   PaginatedToolResponse,
   ToolCategoryCreate,
@@ -58,6 +58,13 @@ class ToolService:
     result = await session.execute(query)
     if result.scalar_one_or_none():
       raise HTTPException(status_code=400, detail="Tool with this name and version already exists")
+
+    # check if category exists
+    query = select(ToolCategoryModel).where(ToolCategoryModel.id == tool_data.category_id)
+    result = await session.execute(query)
+    if not result.scalar_one_or_none():
+      raise HTTPException(status_code=400, detail="Category not found")
+
     dump = tool_data.model_dump()
     raw_json = {
       "info": {
@@ -70,7 +77,7 @@ class ToolService:
     }
     # Generate tool
     try:
-      response = self.generator.generate_toolkit(raw_json)
+      response = await self.generator.generate_toolkit_from_json(raw_json)
     except Exception as e:
       raise HTTPException(status_code=400, detail=f"Error generating tool: {e}")
 
@@ -90,7 +97,7 @@ class ToolService:
       outputs=dump["outputs"],
       configuration=dump["configuration"],
       settings=dump["settings"],
-      generated_code=response.toolkit_code,
+      generated_code=response,
     )
     session.add(db_tool)
     await session.commit()
@@ -140,18 +147,22 @@ class ToolService:
 
     # TODO: what is the benefit of using pydantic here if I have to dump it? check it later!
     raw_json = tool_test_request.model_dump()
-    class_name = "".join(word.capitalize() for word in db_tool.name.split())
-    if not class_name.endswith(("Tool", "Tools", "Toolkit")):
-      class_name += "Toolkit"
+    class_name = "".join(word.capitalize() for word in db_tool.name.split()) + "Toolkit"
     # generate the boilerplate
     boilerplate = generate_boilerplate(
       class_name=class_name,
       input_prompt=raw_json["input_prompt"],
       model_name=raw_json["model_name"],
+      provider=raw_json["provider"],
       api_key=raw_json["api_key"],
       config_items=raw_json["config_items"],
+      instructions=raw_json["instructions"],
     )
+    print(boilerplate)
     test_response = None
+    requirements = db_tool.settings.get("requirements", [])
+    # TODO: it must be done based on the agent framework, and the model name
+    requirements += ["agno", "openai", "anthropic"]
     # send the boilerplate to the python sandbox testing url
     async with aiohttp.ClientSession() as http_session:
       async with http_session.post(
@@ -159,7 +170,7 @@ class ToolService:
         json={
           "agent_code": boilerplate,
           "tool_code": db_tool.generated_code,
-          "requirements": db_tool.settings.get("requirements", []),
+          "requirements": requirements,
           "version": db_tool.version,
           "tool_name": class_name,
         },
