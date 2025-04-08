@@ -1,11 +1,12 @@
 {
   "name": "Zyeta.io",
+  "theme": "mint",
   "logo": {
-    "light": "docs/logo/light.svg",
-    "dark": "docs/logo/dark.svg",
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg",
     "href": "https://zyeta.io"
   },
-  "favicon": "docs/logo/favicon.svg",
+  "favicon": "/logo/favicon.svg",
   "colors": {
     "primary": "#2AB673",
     "light": "#55D799",
