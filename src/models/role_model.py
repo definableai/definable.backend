@@ -21,6 +21,7 @@ class RoleModel(CRUD):
   # Relationships
   permissions = relationship("PermissionModel", secondary="role_permissions", lazy="joined")
   organization = relationship("OrganizationModel", lazy="select")
+  invitations = relationship("InvitationModel", back_populates="role", cascade="all, delete-orphan")
 
 
 class PermissionModel(CRUD):

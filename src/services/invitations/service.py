@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from dependencies.security import RBAC
 from services.__base.acquire import Acquire
-from utils.email import EmailUtil
 
 from models import OrganizationMemberModel, OrganizationModel, InvitationModel, RoleModel
 from .schema import (
@@ -44,7 +43,6 @@ class InvitationService:
     self.utils = acquire.utils
     self.settings = acquire.settings
     self.logger = acquire.logger
-    self.email_util = EmailUtil()  # Create an instance of EmailUtil
 
   async def post_send(
     self,
@@ -482,7 +480,7 @@ class InvitationService:
       accept_url = f"{self.settings.frontend_url}/api/auth/signup/invite?token={invitation.invite_token}&email={invitation.invitee_email}"
       reject_url = f"{self.settings.frontend_url}/api/invitations/reject?token={invitation.invite_token}&email={invitation.invitee_email}"
 
-      await self.email_util.send_invitation_email(
+      await self.utils.send_invitation_email(
         email=invitation.invitee_email,
         organization_name=org.name,
         invite_token=invitation.invite_token,
