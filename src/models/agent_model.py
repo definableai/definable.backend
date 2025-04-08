@@ -13,6 +13,8 @@ class AgentToolModel(Base):
   __tablename__ = "agent_tools"
   __table_args__ = (UniqueConstraint("agent_id", "tool_id", name="uq_agent_tool"),)
 
+  # extend existing = True
+
   agent_id: Mapped[UUID] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True)
   tool_id: Mapped[UUID] = mapped_column(ForeignKey("tools.id", ondelete="CASCADE"), primary_key=True)
   is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)

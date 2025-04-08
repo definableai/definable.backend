@@ -50,7 +50,6 @@ class ConversationService:
   def __init__(self, acquire: Acquire):
     self.acquire = acquire
     self.chunk_size = 10
-    self.models = acquire.models
     self.logger = acquire.logger
 
   async def post_create(

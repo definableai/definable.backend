@@ -21,7 +21,6 @@ class RoleService:
   def __init__(self, acquire: Acquire):
     """Initialize service."""
     self.acquire = acquire
-    self.models = acquire.models
 
   async def post_permission(
     self,

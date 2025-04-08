@@ -20,7 +20,6 @@ class AgentService:
   def __init__(self, acquire: Acquire):
     """Initialize service."""
     self.acquire = acquire
-    self.models = acquire.models
 
   async def get_list(
     self,

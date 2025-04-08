@@ -9,8 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import settings
 from database import get_db
-from services.org.model import OrganizationMemberModel
-from services.roles.model import PermissionModel, RoleModel, RolePermissionModel
+from models import OrganizationMemberModel, PermissionModel, RoleModel, RolePermissionModel
 
 
 class JWTBearer(HTTPBearer):

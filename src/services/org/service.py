@@ -23,7 +23,6 @@ class OrganizationService:
   def __init__(self, acquire: Acquire):
     """Initialize service."""
     self.acquire = acquire
-    self.models = acquire.models
 
   async def post_create_org(
     self,
