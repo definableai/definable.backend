@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="800" height="400" viewBox="0 0 800 400" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect x="0" y="0" width="800" height="400" fill="#ffffff" />
+  
+  <!-- Client Layer -->
+  <rect x="50" y="50" width="700" height="70" rx="10" ry="10" fill="#f0f4f8" stroke="#d0d7de" stroke-width="2" />
+  <text x="400" y="85" font-family="Arial" font-size="18" text-anchor="middle" fill="#24292e">Client Applications</text>
+  <rect x="100" y="75" width="100" height="30" rx="5" ry="5" fill="#dbeafe" stroke="#93c5fd" stroke-width="2" />
+  <text x="150" y="95" font-family="Arial" font-size="12" text-anchor="middle" fill="#1e40af">Web App</text>
+  <rect x="240" y="75" width="100" height="30" rx="5" ry="5" fill="#dbeafe" stroke="#93c5fd" stroke-width="2" />
+  <text x="290" y="95" font-family="Arial" font-size="12" text-anchor="middle" fill="#1e40af">Mobile App</text>
+  <rect x="380" y="75" width="100" height="30" rx="5" ry="5" fill="#dbeafe" stroke="#93c5fd" stroke-width="2" />
+  <text x="430" y="95" font-family="Arial" font-size="12" text-anchor="middle" fill="#1e40af">Third-party</text>
+  <rect x="520" y="75" width="100" height="30" rx="5" ry="5" fill="#dbeafe" stroke="#93c5fd" stroke-width="2" />
+  <text x="570" y="95" font-family="Arial" font-size="12" text-anchor="middle" fill="#1e40af">CLI Tool</text>
+  
+  <!-- API Layer -->
+  <rect x="50" y="150" width="700" height="70" rx="10" ry="10" fill="#f0f4f8" stroke="#d0d7de" stroke-width="2" />
+  <text x="400" y="185" font-family="Arial" font-size="18" text-anchor="middle" fill="#24292e">FastAPI Application</text>
+  <rect x="100" y="175" width="130" height="30" rx="5" ry="5" fill="#ddf4e4" stroke="#a7e9c5" stroke-width="2" />
+  <text x="165" y="195" font-family="Arial" font-size="12" text-anchor="middle" fill="#166534">Middleware</text>
+  <rect x="260" y="175" width="130" height="30" rx="5" ry="5" fill="#ddf4e4" stroke="#a7e9c5" stroke-width="2" />
+  <text x="325" y="195" font-family="Arial" font-size="12" text-anchor="middle" fill="#166534">Route Handlers</text>
+  <rect x="420" y="175" width="130" height="30" rx="5" ry="5" fill="#ddf4e4" stroke="#a7e9c5" stroke-width="2" />
+  <text x="485" y="195" font-family="Arial" font-size="12" text-anchor="middle" fill="#166534">Dependencies</text>
+  <rect x="580" y="175" width="130" height="30" rx="5" ry="5" fill="#ddf4e4" stroke="#a7e9c5" stroke-width="2" />
+  <text x="645" y="195" font-family="Arial" font-size="12" text-anchor="middle" fill="#166534">Pydantic Models</text>
+  
+  <!-- Service Layer -->
+  <rect x="50" y="250" width="700" height="70" rx="10" ry="10" fill="#f0f4f8" stroke="#d0d7de" stroke-width="2" />
+  <text x="400" y="285" font-family="Arial" font-size="18" text-anchor="middle" fill="#24292e">Service Layer</text>
+  <rect x="140" y="275" width="130" height="30" rx="5" ry="5" fill="#fef4e4" stroke="#fde68a" stroke-width="2" />
+  <text x="205" y="295" font-family="Arial" font-size="12" text-anchor="middle" fill="#854d0e">Business Logic</text>
+  <rect x="330" y="275" width="130" height="30" rx="5" ry="5" fill="#fef4e4" stroke="#fde68a" stroke-width="2" />
+  <text x="395" y="295" font-family="Arial" font-size="12" text-anchor="middle" fill="#854d0e">Service Classes</text>
+  <rect x="520" y="275" width="130" height="30" rx="5" ry="5" fill="#fef4e4" stroke="#fde68a" stroke-width="2" />
+  <text x="585" y="295" font-family="Arial" font-size="12" text-anchor="middle" fill="#854d0e">Utilities</text>
+  
+  <!-- Data Layer -->
+  <rect x="50" y="350" width="700" height="70" rx="10" ry="10" fill="#f0f4f8" stroke="#d0d7de" stroke-width="2" />
+  <text x="400" y="385" font-family="Arial" font-size="18" text-anchor="middle" fill="#24292e">Data Layer</text>
+  <rect x="100" y="375" width="130" height="30" rx="5" ry="5" fill="#f4e4ef" stroke="#e9d5ff" stroke-width="2" />
+  <text x="165" y="395" font-family="Arial" font-size="12" text-anchor="middle" fill="#6b21a8">SQLAlchemy ORM</text>
+  <rect x="260" y="375" width="130" height="30" rx="5" ry="5" fill="#f4e4ef" stroke="#e9d5ff" stroke-width="2" />
+  <text x="325" y="395" font-family="Arial" font-size="12" text-anchor="middle" fill="#6b21a8">Database Session</text>
+  <rect x="420" y="375" width="130" height="30" rx="5" ry="5" fill="#f4e4ef" stroke="#e9d5ff" stroke-width="2" />
+  <text x="485" y="395" font-family="Arial" font-size="12" text-anchor="middle" fill="#6b21a8">Alembic</text>
+  <rect x="580" y="375" width="130" height="30" rx="5" ry="5" fill="#f4e4ef" stroke="#e9d5ff" stroke-width="2" />
+  <text x="645" y="395" font-family="Arial" font-size="12" text-anchor="middle" fill="#6b21a8">PostgreSQL</text>
+  
+  <!-- Connectors -->
+  <line x1="400" y1="120" x2="400" y2="150" stroke="#d0d7de" stroke-width="2" stroke-dasharray="5,5" />
+  <line x1="400" y1="220" x2="400" y2="250" stroke="#d0d7de" stroke-width="2" stroke-dasharray="5,5" />
+  <line x1="400" y1="320" x2="400" y2="350" stroke="#d0d7de" stroke-width="2" stroke-dasharray="5,5" />
+</svg> 
