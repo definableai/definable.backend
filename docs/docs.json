@@ -1,0 +1,14 @@
+{
+  "name": "Zyeta.io",
+  "logo": {
+    "light": "docs/logo/light.svg",
+    "dark": "docs/logo/dark.svg",
+    "href": "https://zyeta.io"
+  },
+  "favicon": "docs/logo/favicon.svg",
+  "colors": {
+    "primary": "#2AB673",
+    "light": "#55D799",
+    "dark": "#117866"
+  }
+}
