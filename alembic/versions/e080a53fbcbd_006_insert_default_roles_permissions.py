@@ -55,18 +55,23 @@ def upgrade() -> None:
     ("kb_read", "View knowledge bases", "kb", "read"),
     ("kb_write", "Create/modify knowledge bases", "kb", "write"),
     ("kb_delete", "Delete knowledge bases", "kb", "delete"),
+    # Tools permissions
+    ("tools_read", "View tools", "tools", "read"),
+    ("tools_write", "Create/modify tools", "tools", "write"),
+    ("tools_delete", "Delete tools", "tools", "delete"),
     # all access
     ("*_*", "Access to all resources", "*", "*"),
   ]
 
   llm_models = [
-    ("gpt-4o", "OpenAI", "gpt-4o", True),
-    ("gpt-4o-mini", "OpenAI", "gpt-4o-mini", True),
-    ("gpt-3.5-turbo", "OpenAI", "gpt-3.5-turbo", True),
-    ("o1-preview", "OpenAI", "o1-preview", True),
-    ("o1", "OpenAI", "o1", True),
-    ("claude-3.5-sonnet", "Anthropic", "claude-3-5-sonnet", True),
-    ("claude-3.5-haiku", "Anthropic", "claude-3-5-haiku", True),
+    ("gpt-4o", "openai", "gpt-4o", True),
+    ("gpt-4o-mini", "openai", "gpt-4o-mini", True),
+    ("gpt-3.5-turbo", "openai", "gpt-3.5-turbo", True),
+    ("o1-preview", "openai", "o1-preview", True),
+    ("o1", "openai", "o1", True),
+    ("claude-3.7-sonnet", "anthropic", "claude-3-7-sonnet-latest", True),
+    ("claude-3.5-sonnet", "anthropic", "claude-3-5-sonnet-latest", True),
+    ("claude-3.5-haiku", "anthropic", "claude-3-5-haiku-latest", True),
   ]
 
   for name, provider, version, is_active in llm_models:

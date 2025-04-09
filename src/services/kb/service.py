@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import BackgroundTasks, Body, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_postgres import PGVector
 from sqlalchemy import select, text
@@ -14,14 +15,15 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from database import async_engine, get_db
 from dependencies.security import RBAC
-from libs.s3 import s3_client
-from libs.vectorstore import create_vectorstore
+from libs.s3.v1 import s3_client
+from libs.vectorstore.v1 import create_vectorstore
+from models import DocumentStatus, KBDocumentModel, KnowledgeBaseModel, SourceTypeModel
 from services.__base.acquire import Acquire
 
 from .loaders import DocumentProcessor
-from .model import DocumentStatus, KBDocumentModel, KnowledgeBaseModel, SourceTypeModel
 from .schema import (
   DocumentChunk,
+  DocumentChunkCreate,
   DocumentChunkDelete,
   DocumentChunkUpdate,
   FileDocumentData,
@@ -55,11 +57,13 @@ class KnowledgeBaseService:
     "post=add_file_document",
     "get=get_document_content",
     "post=index_documents",
+    "post=add_document_chunk",
   ]
 
   def __init__(self, acquire: Acquire):
     """Initialize service."""
     self.acquire = acquire
+    self.settings = acquire.settings
     self.ws_manager = acquire.ws_manager
     self.utils = acquire.utils
 
@@ -338,7 +342,7 @@ class KnowledgeBaseService:
 
       chunks = []
       for row in result:
-        chunk = DocumentChunk(chunk_id=row.cmetadata.get("chunk_index"), content=row.document, metadata=row.cmetadata)
+        chunk = DocumentChunk(id=row.id, chunk_id=row.cmetadata.get("chunk_index"), content=row.document, metadata=row.cmetadata)
         chunks.append(chunk)
 
       return KBDocumentChunksResponse(document_id=doc_id, title=doc_model.title, chunks=chunks, total_chunks=len(chunks))
@@ -429,7 +433,6 @@ class KnowledgeBaseService:
       # Generate new embedding
       embeddings = OpenAIEmbeddings(model=kb_model.embedding_model)
       new_embedding = await embeddings.aembed_query(doc_chunk_data.content)
-      print(new_embedding)
 
       # Update chunk in database
       update_query = text(f"""
@@ -441,20 +444,19 @@ class KnowledgeBaseService:
         AND collection_id = '{kb_model.collection_id}'
         RETURNING id, document, embedding, cmetadata
       """)
-      print(update_query)
 
       result = await session.execute(update_query)
 
       updated_chunk = result.first()
       if not updated_chunk:
         raise HTTPException(status_code=404, detail="Failed to update chunk")
-
       await session.commit()
 
-      return DocumentChunk(chunk_id=updated_chunk.id, content=updated_chunk.document, metadata=updated_chunk.cmetadata)
+      return DocumentChunk(
+        id=updated_chunk.id, chunk_id=updated_chunk.cmetadata.get("chunk_index"), content=updated_chunk.document, metadata=updated_chunk.cmetadata
+      )
 
     except Exception as e:
-      print(e)
       raise HTTPException(status_code=500, detail=f"Failed to update document chunk: {str(e)}")
 
   async def delete_delete_document_chunks(
@@ -580,6 +582,69 @@ class KnowledgeBaseService:
     if not doc_model:
       raise HTTPException(status_code=404, detail="Document not found")
     return KBDocumentResponse.model_validate(doc_model)
+
+  async def post_add_document_chunk(
+    self,
+    org_id: UUID,
+    kb_id: UUID,
+    doc_id: UUID,
+    chunk_data: Annotated[DocumentChunkCreate, Body(...)],
+    session: AsyncSession = Depends(get_db),
+    user: dict = Depends(RBAC("kb", "write")),
+  ) -> DocumentChunk:
+    """
+    Add a new chunk to a document and index it in the vector store.
+
+    Args:
+        org_id: Organization ID
+        kb_id: Knowledge Base ID
+        doc_id: Document ID
+        chunk_data: New chunk data
+        session: Database session
+        user: User information
+
+    Returns:
+        Created DocumentChunk with its metadata
+    """
+    # Get document and verify access
+    doc_model = await self._get_document(doc_id, org_id, session)
+    if not doc_model:
+      raise HTTPException(status_code=404, detail="Document not found")
+
+    # Get knowledge base for embedding model
+    kb_model = await self._get_kb(kb_id, org_id, session)
+    if not kb_model:
+      raise HTTPException(status_code=404, detail="Knowledge base not found")
+
+    # Get current max chunk index
+    query = text("""
+          SELECT COUNT(*) as max_index
+          FROM langchain_pg_embedding
+          WHERE collection_id = :collection_id
+          AND cmetadata->>'doc_id' = :doc_id
+      """)
+    result = await session.execute(query, {"collection_id": kb_model.collection_id, "doc_id": str(doc_id)})
+    max_index = result.scalar() or -1
+    new_chunk_index = max_index
+
+    # Create metadata for the new chunk
+    metadata = {**doc_model.source_metadata, "doc_id": str(doc_id), "chunk_index": new_chunk_index}
+
+    # Initialize vector store
+    vectorstore = PGVector(
+      collection_name=str(kb_model.organization_id) + "_" + kb_model.name,
+      connection=async_engine,
+      embeddings=OpenAIEmbeddings(model=kb_model.embedding_model),
+      use_jsonb=True,
+      create_extension=False,
+    )
+
+    # Create document and add to vector store
+    doc = Document(page_content=chunk_data.content, metadata=metadata)
+    chunk_ids = await vectorstore.aadd_documents([doc])
+
+    # Return the created chunk
+    return DocumentChunk(id=UUID(chunk_ids[0]), chunk_id=new_chunk_index, content=chunk_data.content, metadata=metadata)
 
   ### PRIVATE METHODS ###
 

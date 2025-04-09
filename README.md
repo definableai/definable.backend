@@ -1,145 +1,214 @@
-# dolbo.backend
+# 🚀 Zyeta: The AI Agent & Tool Ecosystem
 
-## Quick Start guide
+Zyeta is a powerful platform that empowers developers to create, deploy and monetize AI agents and tools. Our ecosystem connects:
 
-### Env Setup:
-- Create a python virtual environment
-```cmd
-python -m venv venv
-```
+- 🛠️ **Creators**: Build sophisticated AI agents and tools using our developer-friendly framework
+- 💼 **Developers**: Monetize your AI creations through our marketplace
+- 🔍 **Clients**: Discover and utilize high-quality AI solutions for your specific needs
 
-- For env setup, rename the `.env.local` file to `env`.
+With Zyeta, we're building the bridge between AI innovation and practical application, creating opportunities for developers while delivering powerful solutions to businesses and individuals.
 
-```
-APP_NAME=dolbo-backend
-DATABASE_URL=<DATABASE URL>
-ENVIRONMENT=development
-FRONTEND_URL=<FRONTEND URL>
-JWT_SECRET=<JWT SECRET>
-MASTER_API_KEY=<MASTER API KEY>
-OPENAI_API_KEY=<OPENAI API KEY>
-RESEND_API_KEY=<RESEND API KEY>
-```
+## 🌟Key Features
 
-### Database Setup:
-Prefer using Postgres:16.
+- Intuitive agent & tool creation framework
+- Secure deployment and testing environment
+- Integrated marketplace with revenue opportunities
+- Quality-assured AI solutions for diverse needs
 
-**via Local**
-- Refer to [postgres installation guide](https://www.postgresql.org/download/)
-- After installation, replace the DATABASE_URL in the `.env` file with this: `postgresql+asyncpg://<user>:<password>@<host>:5432/<db-name>`
+Join Zyeta today and become part of the future of AI agent development and utilization!
 
-> **Note:** 
-> - You may experience database connectivity issues while running the application when using special characters like '@' in the database passoword. In such case rememeer to use the encoded character.\
-> `For e.g. for '@' use '%40'. If your database password is 'Test@123' then use 'Test%40123'`
-> - Ensure that the PostgreSQL server is running and accessible before starting the application.
+## 🔧 Initial Setup
 
-**via Docker**
-- Refer to the [docker installation guide](https://docs.docker.com/get-started/get-docker/)
-- After installation, head over to the root directory of the project.
-- Run the command:
+1. 💻 Use **Cursor** for development or any AI editor you like
+2. 🧹 Install two extensions:
+   - **Ruff** for linting
+   - **Mypy** for type checking
+3. 🐍 Create a virtual environment:
 
-```
-docker compose up
-```
- > **Note:** Ensure `docker-compose.yml` is present in the root directory. If not, then create one. Copy the following:
-```yaml
-services:
-postgres:
-    image: postgres:16.2
-    container_name: postgres-container
-    environment:
-    POSTGRES_USER: <database-user>
-    POSTGRES_PASSWORD: <database-password>
-    POSTGRES_DB: <database-name>
-    ports:
-    - "5432:5432"
-    volumes:
-    - postgres_data:/var/lib/postgresql/data
-    networks:
-    - db_network
+   ```bash
+   python3.10 -m venv venv
+   ```
 
-pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: pgadmin-container
-    environment:
-    PGADMIN_DEFAULT_EMAIL: <your-pgadmin-user-email>
-    PGADMIN_DEFAULT_PASSWORD: <your-pgadmin-user-password>
-    ports:
-    - "8080:80"
-    depends_on:
-    - postgres
-    volumes:
-    - ./pgadmin-data:/var/lib/pgadmin
-    - ./servers.json:/pgadmin4/servers.json
-    networks:
-    - db_network
+   > 💡 Your Python version should be ≥ 3.10
 
-volumes:
-postgres_data:
-    driver: local
+4. ⚡ Activate the virtual environment:
 
-networks:
-db_network:
-    driver: bridge
-```
+   ```bash
+   source venv/bin/activate
+   ```
 
- > - Also, to access the database for testing purpose use default pgAdmin. For that, create a `servers.json` file in the root.
- > - Copy / paste the following configuration:
- ```json
- {
-  "Servers": {
-    "1": {
-      "Name": "<your-preferred-name>",
-      "Group": "Servers",
-      "Host": "<docker-container-name-mentioned-in-docker-compose-file>",
-      "Port": 5432,
-      "MaintenanceDB": "<database-name>",
-      "Username": "<database-username>",
-      "Password": "<database-password>",
-      "SSLMode": "prefer",
-      "Connected": true
-    }
-  }
-}
-```
+   > ℹ️ Different for Windows - please check online
 
+5. 📦 Install dependencies:
 
-### **Application Setup**
+   ```bash
+   pip install poetry
+   poetry install
+   ```
 
-- It is recommended to set up the application in a virtual environment to avoid conflicts with other external dependencies.
+## 🔍 Code Quality Setup
 
-- The dependency manager used is `poetry`.
+1. 🔄 Install pre-commits:
 
-- **To install dependencies:**
-  ```bash
-  pip install poetry
-  poetry install
-  ```
+   ```bash
+   pre-commit install
+   ```
 
-- Setting up the migration tool:
-    - Rename the `alembic.copy.ini` file to `alembic.ini`.
-    - Set the `sqlalchemy.url`  to match the database URL in the `.env` file.
-    - Run the following command to apply migrations:
+2. ✅ This project enforces rules via `.pre-commit-config.yaml`
+3. ⚠️ Pre-commit **must run** on every commit or PRs will be rejected
+4. 📝 Check configuration in:
+   - `ruff.toml` for linting
+   - `mypy.ini` for typing
+
+## 🗃️ Database Setup
+
+1. 🐳 Setup local database with Docker -> [link](https://docs.docker.com/engine/install/):
+
+    ```bash
+    docker run --name zyeta -e POSTGRES_PASSWORD=mysecretpassword -d postgres
+    ```
+
+2. 📄 Create configuration files:
+
+    ```bash
+    cp .env.local .env
+    cp .alembic.copy.ini alembic.ini
+    ```
+
+3. ⚙️ Configure your `.env` and `alembic.ini` files
+4. 🔗 Your `DATABASE_URL` should be:
+
+    ```bash
+    postgresql+asyncpg://postgres:mysecretpassword@localhost:5432/postgres
+    ```
+
+5. 🚀 Run database migrations:
+
     ```bash
     alembic upgrade head
     ```
 
-- Starting the application:
-    - **Using uvicorn:**
-    ```bash
-    uvicorn src/app:app --reload
-    ```
+6. 🎉 Start the server:
 
-    - **Using fastapi:**
     ```bash
     fastapi dev src/app.py
     ```
 
-- Access application API's via this [link](http://localhost:8000/docs).
+## 🏝️ Sandbox Servers Setup
 
-> **NOTE:**
-> This quick start guide covers only the steps for setting up the application in the development phase.\
-> For `SECRET_KEYS`, you can create your own custom key for `.env` file except for `RESEND_API_KEY` contact IT team.
+Sandbox servers let you test and run dynamically generated code for agents and tools. Find them in `src/servers`.
 
-> ⚠️ **WARNING:**
-> NOT FOR PRODUCTION.
+1. 📥 Install NVM:
+
+   ```bash
+   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | bash
+   ```
+
+2. 🟢 Install and use Node.js:
+
+   ```bash
+   nvm install 20.17
+   nvm use 20.17
+   ```
+
+3. 📂 Navigate to the Python tool tester:
+
+   ```bash
+   cd src/servers/python_tool_tester
+   ```
+
+4. 📦 Install Node.js dependencies:
+
+   ```bash
+   npm install
+   npm install -g tsx
+   ```
+
+5. 🚀 Start the sandbox server:
+
+   ```bash
+   tsx index.ts
+   ```
+
+   > ✨ Your server will start at <http://localhost:3000>
+
+## 🚀 Basic Application Configuration
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `APP_NAME` | Name of the application | `zyeta.backend` |
+| `ENVIRONMENT` | Current environment (dev/beta/prod) | `dev` |
+| `JWT_SECRET` | Secret key for JWT authentication | *(secret value)* |
+| `JWT_EXPIRE_MINUTES` | JWT token expiration time in minutes | `1400` |
+| `MASTER_API_KEY` | Master key for API access | *(secret value)* |
+
+## 🔑 API Keys
+
+### 🤖 LLM Services
+
+| Variable | Purpose |
+|----------|---------|
+| `OPENAI_API_KEY` | Authentication for OpenAI API services |
+| `ANTHROPIC_API_KEY` | Authentication for Anthropic AI services |
+
+### 📧 Communication
+
+| Variable | Purpose |
+|----------|---------|
+| `RESEND_API_KEY` | For email delivery services |
+| `FRONTEND_URL` | URL for frontend application |
+
+## 🗄️ Database Configuration
+
+```bash
+DATABASE_URL=postgresql+asyncpg://postgres:mysecretpassword@localhost:5432/postgres
+```
+
+This connection string follows the format:
+`postgresql+asyncpg://[username]:[password]@[host]:[port]/[database_name]`
+
+## 💳 Payment Processing (Stripe)
+
+| Variable | Purpose |
+|----------|---------|
+| `STRIPE_SECRET_KEY` | Server-side Stripe API authentication |
+| `STRIPE_PUBLISHABLE_KEY` | Client-side Stripe API authentication |
+| `STRIPE_WEBHOOK_SECRET` | Verifies Stripe webhook events |
+
+## 📚 Storage Configuration
+
+### 🪣 S3 Storage
+
+| Variable | Description |
+|----------|-------------|
+| `S3_BUCKET` | Main storage bucket name (`zyeta-dev`) |
+| `S3_ACCESS_KEY` | S3 access credentials |
+| `S3_SECRET_KEY` | S3 secret credentials |
+| `S3_ENDPOINT` | S3 service endpoint |
+| `PUBLIC_S3_BUCKET` | Public assets bucket |
+
+## 🔄 Task Processing
+
+### 🥬 Celery Configuration
+
+| Variable | Purpose |
+|----------|---------|
+| `CELERY_BROKER_URL` | Message broker URL for Celery tasks |
+| `CELERY_RESULT_BACKEND` | Backend storage for Celery results |
+
+## 🏖️ Testing Environment
+
+| Variable | Purpose |
+|----------|---------|
+| `PYTHON_SANDBOX_TESTING_URL` | URL for Python sandbox testing service |
+| `KB_SETTINGS_VERSION` | Knowledge base settings version |
+| `FIRECRAWL_API_KEY` | Authentication for Firecrawl service |
+
+## 🛠️ Setting Up Your Environment
+
+1. Copy `.env.local` to create your own `.env` file
+2. Fill in all the required values
+3. Make sure your database connection string matches your setup
+4. Keep your API keys secure and never commit them to version control!
+
+> 💡 **Pro Tip**: Make sure your local PostgreSQL instance is running before starting the application!

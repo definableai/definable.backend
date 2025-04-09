@@ -1,5 +1,5 @@
 from sqlalchemy import Boolean, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import CRUD
 
@@ -14,6 +14,9 @@ class UserModel(CRUD):
   first_name: Mapped[str] = mapped_column(String(50), nullable=False)  # Reduced length
   last_name: Mapped[str] = mapped_column(String(50), nullable=False)  # Reduced length
   is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+
+  # Relationships
+  sent_invitations = relationship("InvitationModel", foreign_keys="InvitationModel.invited_by", back_populates="inviter")
 
   @property
   def full_name(self) -> str:

@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies.security import RBAC, JWTBearer
+from models import OrganizationMemberModel, PermissionModel, RoleModel, RolePermissionModel
 from services.__base.acquire import Acquire
 
-from .model import PermissionModel, RoleModel, RolePermissionModel
 from .schema import PermissionCreate, PermissionResponse, RoleCreate, RoleResponse, RoleUpdate
 
 
@@ -21,7 +21,6 @@ class RoleService:
   def __init__(self, acquire: Acquire):
     """Initialize service."""
     self.acquire = acquire
-    self.models = acquire.models
 
   async def post_permission(
     self,
@@ -81,7 +80,7 @@ class RoleService:
 
   async def put_update(
     self,
-    organization_id: UUID,
+    org_id: UUID,
     role_id: UUID,
     role_data: RoleUpdate,
     session: AsyncSession = Depends(get_db),
@@ -89,7 +88,7 @@ class RoleService:
   ) -> RoleResponse:
     """Update a user-defined role."""
     # Get existing role
-    db_role = await self._get_role(role_id, organization_id, session)
+    db_role = await self._get_role(role_id, org_id, session)
     if not db_role:
       raise HTTPException(status_code=404, detail="Role not found")
     if db_role.is_system_role:
@@ -98,7 +97,7 @@ class RoleService:
     # Update fields
     update_data = role_data.model_dump(exclude_unset=True)
     if "hierarchy_level" in update_data:
-      await self._validate_hierarchy_level(organization_id, update_data["hierarchy_level"], session)
+      await self._validate_hierarchy_level(org_id, update_data["hierarchy_level"], session)
 
     # Update permissions if provided
     if "permission_ids" in update_data:
@@ -135,8 +134,8 @@ class RoleService:
     """
     # Get role with member count
     query = (
-      select(RoleModel, func.count(self.models["OrganizationMemberModel"].id).label("member_count"))
-      .outerjoin(self.models["OrganizationMemberModel"], RoleModel.id == self.models["OrganizationMemberModel"].role_id)
+      select(RoleModel, func.count(OrganizationMemberModel.id).label("member_count"))
+      .outerjoin(OrganizationMemberModel, RoleModel.id == OrganizationMemberModel.role_id)
       .where(and_(RoleModel.id == role_id, RoleModel.organization_id == org_id))
       .group_by(RoleModel.id)
     )
@@ -166,11 +165,11 @@ class RoleService:
 
   async def get_list_roles(
     self,
-    organization_id: UUID,
+    org_id: UUID,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("roles", "read")),
   ) -> List[RoleResponse]:
-    query = select(RoleModel).where(RoleModel.organization_id == organization_id)
+    query = select(RoleModel).where(RoleModel.organization_id == org_id)
     result = await session.execute(query)
     return list(result.unique().scalars().all())
 

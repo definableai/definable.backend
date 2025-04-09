@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, model_validator
 
-from .model import DocumentStatus
+from models import DocumentStatus
 
 
 class AllowedFileExtension(str, Enum):
@@ -41,6 +41,12 @@ def validate_file_extension(filename: str) -> str:
     raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}. Allowed file types are: {allowed_extensions}")
 
   return ext
+
+
+class DocumentChunkCreate(BaseModel):
+  """Schema for creating a new document chunk."""
+
+  content: str = Field(..., description="Content of the chunk", min_length=1)
 
 
 class KnowledgeBaseSettings(BaseModel):
@@ -227,6 +233,7 @@ class KnowledgeBaseDetailResponse(KnowledgeBaseResponse):
 class DocumentChunk(BaseModel):
   """Document chunk schema."""
 
+  id: Optional[UUID] = None
   chunk_id: int
   content: str
   metadata: dict
