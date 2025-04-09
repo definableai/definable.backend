@@ -18,7 +18,27 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade():
-  # Create view for transaction usage history
+  # First create a transaction types table if it doesn't exist
+  op.execute("""
+    CREATE TABLE IF NOT EXISTS transaction_types (
+      type_name VARCHAR(50) PRIMARY KEY,
+      is_tracked BOOLEAN NOT NULL DEFAULT TRUE,
+      description TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  """)
+
+  # Insert the current transaction types (if they don't exist)
+  op.execute("""
+    INSERT INTO transaction_types (type_name, is_tracked, description)
+    VALUES
+      ('DEBIT', TRUE, 'Standard debit transaction'),
+      ('HOLD', TRUE, 'Hold on credits'),
+      ('RELEASE', TRUE, 'Release held credits')
+    ON CONFLICT (type_name) DO NOTHING;
+  """)
+
+  # Create view for transaction usage history using the types table
   op.execute("""
     CREATE OR REPLACE VIEW transaction_usage_stats AS
     SELECT
@@ -52,8 +72,10 @@ def upgrade():
     users u ON t.user_id = u.id
     LEFT JOIN
     organizations o ON t.organization_id = o.id
+    LEFT JOIN
+    transaction_types tt ON t.type = tt.type_name
     WHERE
-    t.type IN ('DEBIT', 'HOLD', 'RELEASE')
+    tt.is_tracked = TRUE
     AND t.stripe_payment_intent_id IS NULL;
   """)
 
@@ -61,3 +83,6 @@ def upgrade():
 def downgrade():
   # Drop view first
   op.execute("DROP VIEW IF EXISTS transaction_usage_stats;")
+
+  # We don't drop the transaction_types table as it might be used elsewhere
+  # If needed in the future, add: op.execute("DROP TABLE IF EXISTS transaction_types;")
