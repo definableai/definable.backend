@@ -2,6 +2,7 @@ import asyncio
 from typing import AsyncGenerator
 
 from agno.agent import Agent, RunResponse
+from agno.media import File
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.storage.postgres import PostgresStorage
@@ -38,7 +39,9 @@ class LLMFactory:
     self.storage = PostgresStorage(table_name="chat_sessions", db_url=db_url, schema="public")
     self.storage.create()
 
-  async def chat(self, provider: str, llm: str, chat_session_id: str, message: str, memory_size: int = 100) -> AsyncGenerator[RunResponse, None]:
+  async def chat(
+    self, provider: str, llm: str, chat_session_id: str, message: str, memory_size: int = 100, files: list[File] = []
+  ) -> AsyncGenerator[RunResponse, None]:
     """Stream chat responses using Agno agent.
 
     Args:
@@ -59,7 +62,7 @@ class LLMFactory:
       session_id=chat_session_id,
       num_history_responses=memory_size,
     )
-    async for token in await agent.arun(message):
+    async for token in await agent.arun(message, files=files):
       yield token
 
 
