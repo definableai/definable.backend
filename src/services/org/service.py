@@ -41,7 +41,6 @@ class OrganizationService:
     # Ensure unique slug
     while True:
       query = select(OrganizationModel).where(OrganizationModel.slug == slug)
-      logger.info(f"Checking if slug {slug} is unique")
       result = await session.execute(query)
       if not result.scalar_one_or_none():
         logger.info(f"Slug {slug} is unique")
@@ -54,7 +53,6 @@ class OrganizationService:
       slug=slug,
       settings={},
     )
-    logger.info(f"Adding organization {org} to session")
     session.add(org)
     await session.flush()
 
@@ -72,15 +70,8 @@ class OrganizationService:
       role_id=owner_role.id,
       status="active",
     )
-    logger.info(f"Adding member {member} to session")
     session.add(member)
-    logger.info("Committing session")
-    try:
-      await session.commit()
-      logger.info("Committed session")
-    except Exception as e:
-      logger.error(f"Error committing session: {e}")
-      raise HTTPException(status_code=500, detail=f"Failed to create organization: {str(e)}")
+    await session.commit()
     return org
 
   async def post_add_member(
@@ -117,10 +108,7 @@ class OrganizationService:
     """Get all organizations that user belongs to."""
     query = (
       select(OrganizationModel)
-      .outerjoin(
-        OrganizationMemberModel,
-        OrganizationModel.id == OrganizationMemberModel.organization_id,
-      )
+      .outerjoin(OrganizationMemberModel, OrganizationModel.id == OrganizationMemberModel.organization_id)
       .where(OrganizationMemberModel.user_id == user.get("id"))
     )
     result = await session.execute(query)
