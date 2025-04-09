@@ -177,3 +177,8 @@ junk/
 # For pgAdmin
 *pgadmin*
 servers.json
+
+# For agno-sample-agent
+input.json
+agno-sample-agent/
+src/servers/my_agent/
