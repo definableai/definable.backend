@@ -13,17 +13,10 @@ from database import get_db
 from dependencies.security import RBAC
 
 # from dependencies.usage import Usage  # Import the Usage dependency at the top of the file
-from models import (
-  BillingPlanModel,
-  TransactionModel,
-  TransactionStatus,
-  TransactionType,
-  WalletModel,
-)
+from models import BillingPlanModel, TransactionModel, TransactionStatus, TransactionType, UserModel, WalletModel
 from services.__base.acquire import Acquire
 
 # from utils.charge import Charge
-from ..auth.model import UserModel
 from .schema import (
   BillingPlanResponseSchema,
   CheckoutSessionCreateSchema,
