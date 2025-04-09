@@ -3,7 +3,6 @@ from uuid import UUID, uuid4
 
 from fastapi import Depends, HTTPException
 from fastapi.responses import JSONResponse
-from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,7 +32,6 @@ class OrganizationService:
   ) -> OrganizationResponse:
     """Create default organization for new user."""
     # Create organization
-    logger.info(f"Creating organization for user {user.get('id')}")
     slug = f"{name}-{str(uuid4())[:8]}"
     base_slug = slug
     counter = 1
@@ -43,7 +41,6 @@ class OrganizationService:
       query = select(OrganizationModel).where(OrganizationModel.slug == slug)
       result = await session.execute(query)
       if not result.scalar_one_or_none():
-        logger.info(f"Slug {slug} is unique")
         break
       slug = f"{base_slug}-{counter}"
       counter += 1
