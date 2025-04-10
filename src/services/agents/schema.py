@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -15,10 +15,28 @@ class AgentBase(BaseModel):
   settings: dict = Field(default_factory=dict)
 
 
-class AgentCreate(AgentBase):
-  """Create agent schema."""
+class ToolConfig(BaseModel):
+  tool_id: UUID
+  api_key: Optional[str] = None
+  api_secret: Optional[str] = None
+  config: Dict[str, Any] = Field(default_factory=dict)
 
-  pass
+
+class AgentCreate(AgentBase):
+  """Schema for creating an agent."""
+
+  name: str
+  description: str
+  model_id: UUID
+  provider: str
+  system_prompt: str
+  instructions: str
+  expected_output: Dict[str, Any]
+  memory_config: Optional[Dict[str, Any]] = None
+  knowledge_base: Optional[Dict[str, Any]] = None
+  is_active: bool = True
+  version: str = "v1"
+  tool_configs: List[ToolConfig] = Field(default_factory=list)
 
 
 class AgentUpdate(BaseModel):
