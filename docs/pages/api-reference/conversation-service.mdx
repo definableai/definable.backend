@@ -1,0 +1,581 @@
+---
+title: 'Conversation Service API'
+description: 'API reference for managing conversations and chat sessions'
+---
+
+The Conversation Service provides endpoints for creating and managing conversations, chat sessions, and handling message interactions with language models.
+
+## Authentication
+
+All endpoints require a valid Bearer token in the Authorization header.
+
+## Base URL
+
+```
+/api/conversation
+```
+
+## Endpoints
+
+### Create Conversation
+
+Create a new conversation.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/conversation/create?org_id=your-org-id \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Project Discussion",
+    "is_archived": false
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/conversation/create"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+params = {
+    "org_id": "your-org-id"
+}
+data = {
+    "title": "Project Discussion",
+    "is_archived": False
+}
+
+response = requests.post(url, headers=headers, params=params, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/conversation/create";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const params = {
+    org_id: "your-org-id"
+};
+const data = {
+    title: "Project Discussion",
+    is_archived: false
+};
+
+axios.post(url, data, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m",
+  "title": "Project Discussion",
+  "is_archived": false,
+  "created_at": "2023-07-25T10:30:00Z",
+  "updated_at": "2023-07-25T10:30:00Z"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/conversation/create`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `title` | string | Yes | Conversation title |
+| `is_archived` | boolean | No | Whether the conversation is archived (default: false) |
+
+**Response:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string (UUID) | Conversation ID |
+| `title` | string | Conversation title |
+| `is_archived` | boolean | Archived status |
+| `created_at` | string (datetime) | Creation timestamp |
+| `updated_at` | string (datetime) | Last update timestamp |
+
+### Create Chat Session
+
+Create a new chat session for a conversation with a specific language model.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/conversation/create_session?org_id=your-org-id \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "conversation_id": "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m",
+    "model_id": "457d4f38-e3c0-43eb-b519-a867f9f5325a"
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/conversation/create_session"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+params = {
+    "org_id": "your-org-id"
+}
+data = {
+    "conversation_id": "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m",
+    "model_id": "457d4f38-e3c0-43eb-b519-a867f9f5325a"
+}
+
+response = requests.post(url, headers=headers, params=params, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/conversation/create_session";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const params = {
+    org_id: "your-org-id"
+};
+const data = {
+    conversation_id: "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m",
+    model_id: "457d4f38-e3c0-43eb-b519-a867f9f5325a"
+};
+
+axios.post(url, data, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "9b8c7d6e-5f4e-3d2c-1b0a-9z8y7x6w5v4u",
+  "conversation_id": "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m",
+  "model_id": "457d4f38-e3c0-43eb-b519-a867f9f5325a",
+  "status": "active",
+  "created_at": "2023-07-25T10:35:00Z",
+  "updated_at": "2023-07-25T10:35:00Z"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/conversation/create_session`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `conversation_id` | string (UUID) | Yes | ID of the conversation |
+| `model_id` | string (UUID) | Yes | ID of the language model to use |
+
+**Response:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string (UUID) | Chat session ID |
+| `conversation_id` | string (UUID) | Conversation ID |
+| `model_id` | string (UUID) | Model ID |
+| `status` | string | Session status ("active", "completed", etc.) |
+| `created_at` | string (datetime) | Creation timestamp |
+| `updated_at` | string (datetime) | Last update timestamp |
+
+### Stream Chat
+
+Send a message and receive a streaming response from the language model.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/conversation/stream_chat?org_id=your-org-id \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "chat_session_id": "9b8c7d6e-5f4e-3d2c-1b0a-9z8y7x6w5v4u",
+    "message": "Can you explain how vector databases work?"
+  }'
+```
+
+```python Python
+import requests
+import sseclient  # pip install sseclient-py
+
+url = "{{baseUrl}}/api/conversation/stream_chat"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json",
+    "Accept": "text/event-stream"
+}
+params = {
+    "org_id": "your-org-id"
+}
+data = {
+    "chat_session_id": "9b8c7d6e-5f4e-3d2c-1b0a-9z8y7x6w5v4u",
+    "message": "Can you explain how vector databases work?"
+}
+
+response = requests.post(url, headers=headers, params=params, json=data, stream=True)
+client = sseclient.SSEClient(response)
+
+for event in client.events():
+    print(event.data)
+```
+
+```javascript JavaScript
+const axios = require('axios');
+const EventSource = require('eventsource');  // For Node.js
+
+// For browser environments, use the built-in EventSource
+// For Node.js, you'll need the eventsource package
+function streamChat() {
+    const params = new URLSearchParams({
+        org_id: "your-org-id"
+    }).toString();
+    
+    const data = {
+        chat_session_id: "9b8c7d6e-5f4e-3d2c-1b0a-9z8y7x6w5v4u",
+        message: "Can you explain how vector databases work?"
+    };
+    
+    // First, create the stream request
+    axios.post(`{{baseUrl}}/api/conversation/stream_chat?${params}`, data, {
+        headers: {
+            Authorization: "Bearer YOUR_TOKEN",
+            "Content-Type": "application/json"
+        }
+    })
+    .then(() => {
+        // Then establish SSE connection to stream the response
+        const eventSource = new EventSource(
+            `{{baseUrl}}/api/conversation/stream_chat?${params}`,
+            {
+                headers: {
+                    Authorization: "Bearer YOUR_TOKEN"
+                }
+            }
+        );
+        
+        eventSource.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === "start") {
+                console.log("Stream started, message ID:", data.message_id);
+            } else if (data.type === "content") {
+                console.log("Content:", data.content);
+            } else if (data.type === "end") {
+                console.log("Stream ended");
+                eventSource.close();
+            }
+        };
+        
+        eventSource.onerror = (error) => {
+            console.error("Stream error:", error);
+            eventSource.close();
+        };
+    })
+    .catch(error => console.error(error));
+}
+
+streamChat();
+```
+
+```text Response
+data: {"type":"start","message_id":"msg_abc123"}
+data: {"type":"content","content":"Vector databases are specialized database systems designed to store and search high-dimensional vectors, which are mathematical representations of data."}
+data: {"type":"content","content":" These vectors are often generated by machine learning models, especially embedding models that convert text, images, or other data into numerical representations."}
+data: {"type":"content","content":" The key features of vector databases include:"}
+...
+data: {"type":"end"}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/conversation/stream_chat`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `chat_session_id` | string (UUID) | Yes | ID of the chat session |
+| `message` | string | Yes | User message to send to the language model |
+
+**Response:**
+
+Server-sent events (SSE) stream with the following event types:
+
+- `start`: Indicates the beginning of the response with a message ID
+- `content`: Contains chunks of the model's response content
+- `end`: Indicates the end of the response
+
+### List Conversations
+
+Get a list of all conversations for an organization.
+
+<CodeGroup>
+```bash Request
+curl -X GET {{baseUrl}}/api/conversation/list?org_id=your-org-id \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/conversation/list"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "org_id": "your-org-id"
+}
+
+response = requests.get(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/conversation/list";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    org_id: "your-org-id"
+};
+
+axios.get(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+[
+  {
+    "id": "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m",
+    "title": "Project Discussion",
+    "is_archived": false,
+    "created_at": "2023-07-25T10:30:00Z",
+    "updated_at": "2023-07-25T10:30:00Z"
+  },
+  {
+    "id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+    "title": "Customer Support",
+    "is_archived": true,
+    "created_at": "2023-07-24T15:45:00Z",
+    "updated_at": "2023-07-24T16:30:00Z"
+  }
+]
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/conversation/list`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+
+### Get Conversation with Sessions
+
+Get details of a specific conversation including its chat sessions.
+
+<CodeGroup>
+```bash Request
+curl -X GET {{baseUrl}}/api/conversation/get_with_sessions?org_id=your-org-id&conversation_id=your-conversation-id \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/conversation/get_with_sessions"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "org_id": "your-org-id",
+    "conversation_id": "your-conversation-id"
+}
+
+response = requests.get(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/conversation/get_with_sessions";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    org_id: "your-org-id",
+    conversation_id: "your-conversation-id"
+};
+
+axios.get(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "conversation": {
+    "id": "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m",
+    "title": "Project Discussion",
+    "is_archived": false,
+    "created_at": "2023-07-25T10:30:00Z",
+    "updated_at": "2023-07-25T10:30:00Z"
+  },
+  "sessions": [
+    {
+      "id": "9b8c7d6e-5f4e-3d2c-1b0a-9z8y7x6w5v4u",
+      "model": {
+        "id": "457d4f38-e3c0-43eb-b519-a867f9f5325a",
+        "name": "GPT-4o",
+        "provider": "openai"
+      },
+      "status": "active",
+      "created_at": "2023-07-25T10:35:00Z"
+    }
+  ]
+}
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/conversation/get_with_sessions`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+| `conversation_id` | Yes | Conversation ID |
+
+### Get Messages
+
+Get messages from a conversation.
+
+<CodeGroup>
+```bash Request
+curl -X GET "{{baseUrl}}/api/conversation/messages?org_id=your-org-id&conversation_id=your-conversation-id&limit=10&offset=0" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/conversation/messages"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "org_id": "your-org-id",
+    "conversation_id": "your-conversation-id",
+    "limit": 10,
+    "offset": 0
+}
+
+response = requests.get(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/conversation/messages";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    org_id: "your-org-id",
+    conversation_id: "your-conversation-id",
+    limit: 10,
+    offset: 0
+};
+
+axios.get(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "messages": [
+    {
+      "id": "msg_123abc",
+      "role": "user",
+      "content": "Can you explain how vector databases work?",
+      "created_at": "2023-07-25T10:40:00Z",
+      "chat_session_id": "9b8c7d6e-5f4e-3d2c-1b0a-9z8y7x6w5v4u"
+    },
+    {
+      "id": "msg_456def",
+      "role": "assistant",
+      "content": "Vector databases are specialized database systems designed to store and search high-dimensional vectors, which are mathematical representations of data. These vectors are often generated by machine learning models, especially embedding models that convert text, images, or other data into numerical representations.",
+      "created_at": "2023-07-25T10:40:10Z",
+      "chat_session_id": "9b8c7d6e-5f4e-3d2c-1b0a-9z8y7x6w5v4u"
+    }
+  ],
+  "total": 2,
+  "offset": 0,
+  "limit": 10
+}
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/conversation/messages`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+| `conversation_id` | Yes | Conversation ID |
+| `limit` | No | Maximum number of messages to return (default: 20) |
+| `offset` | No | Number of messages to skip (default: 0) |
+
+## Error Responses
+
+| Status Code | Description |
+|-------------|-------------|
+| 400 | Bad Request - Invalid input or validation error |
+| 401 | Unauthorized - Invalid or missing token |
+| 403 | Forbidden - Insufficient permissions |
+| 404 | Not Found - Resource doesn't exist |
+| 429 | Too Many Requests - Rate limit exceeded |
+| 500 | Internal Server Error - Server-side error |
+
+## Implementation Notes
+
+- The streaming API uses Server-Sent Events (SSE) to deliver model responses
+- Messages are stored in the database and can be retrieved historically
+- Multiple chat sessions can be created for a single conversation, each using a different model
+- Responses are generated asynchronously, allowing for real-time streaming of content

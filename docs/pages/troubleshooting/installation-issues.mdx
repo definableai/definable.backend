@@ -1,0 +1,599 @@
+---
+title: 'Installation Issues'
+description: 'Troubleshooting common installation and setup problems for the Zyeta backend'
+---
+
+This guide covers common issues that may arise during the installation and setup of the Zyeta backend development environment.
+
+## Python Environment Issues
+
+### Poetry Installation Failures
+
+<Accordion title="Poetry installation fails">
+  **Symptoms:**
+  - Error messages during Poetry installation
+  - `command not found: poetry` after installation
+
+  **Solutions:**
+  
+  1. **Ensure Python is correctly installed:**
+     ```bash
+     python --version  # Should be 3.10 or higher
+     ```
+  
+  2. **Try the alternative installation method:**
+     ```bash
+     # Using pip
+     pip install poetry
+     
+     # Or using the official installer with different parameters
+     curl -sSL https://install.python-poetry.org | POETRY_HOME=$HOME/.poetry python3 -
+     ```
+  
+  3. **Add Poetry to your PATH:**
+     ```bash
+     # For Bash/Zsh
+     export PATH="$HOME/.poetry/bin:$PATH"
+     
+     # For Windows PowerShell
+     $Env:Path += ";$Env:USERPROFILE\.poetry\bin"
+     ```
+</Accordion>
+
+<Accordion title="Dependency conflicts with Poetry">
+  **Symptoms:**
+  - Error messages like: `SolverProblemError: Unable to find a suitable version for package X`
+  - Dependency resolution hangs for a long time
+  
+  **Solutions:**
+  
+  1. **Update Poetry to the latest version:**
+     ```bash
+     poetry self update
+     ```
+  
+  2. **Clear Poetry's cache:**
+     ```bash
+     poetry cache clear .
+     poetry cache clear --all pypi
+     ```
+  
+  3. **Try installing with verbose output for more information:**
+     ```bash
+     poetry install -v
+     ```
+  
+  4. **As a last resort, delete `poetry.lock` and create a fresh one:**
+     ```bash
+     rm poetry.lock
+     poetry install
+     ```
+     <Warning>
+     Only do this in a development environment, as it may change your dependency versions.
+     </Warning>
+</Accordion>
+
+<Accordion title="Poetry can't find Python interpreter">
+  **Symptoms:**
+  - Error like: `Poetry could not find a Python executable`
+  
+  **Solutions:**
+  
+  1. **Explicitly set Python version for your project:**
+     ```bash
+     poetry env use python3.10
+     ```
+  
+  2. **Verify that the correct Python version is installed and available:**
+     ```bash
+     which python3.10
+     python3.10 --version
+     ```
+  
+  3. **If using pyenv, ensure it's properly initialized:**
+     ```bash
+     eval "$(pyenv init --path)"
+     pyenv local 3.10.x
+     ```
+</Accordion>
+
+### Virtual Environment Problems
+
+<Accordion title="Virtual environment activation issues">
+  **Symptoms:**
+  - `command not found: activate` or similar errors
+  - Virtual environment does not activate correctly
+  
+  **Solutions:**
+  
+  1. **Verify your shell and use the correct activation command:**
+     
+     **Bash/Zsh (Linux/macOS):**
+     ```bash
+     source venv/bin/activate
+     ```
+     
+     **Windows Command Prompt:**
+     ```cmd
+     venv\Scripts\activate.bat
+     ```
+     
+     **Windows PowerShell:**
+     ```powershell
+     .\venv\Scripts\Activate.ps1
+     ```
+     
+  2. **If PowerShell has execution policy issues:**
+     ```powershell
+     Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+     ```
+     
+  3. **Recreate the virtual environment if necessary:**
+     ```bash
+     rm -rf venv
+     python -m venv venv
+     ```
+</Accordion>
+
+<Accordion title="Import errors after installation">
+  **Symptoms:**
+  - `ModuleNotFoundError: No module named 'X'` despite successful installation
+  
+  **Solutions:**
+  
+  1. **Verify the package is installed:**
+     ```bash
+     pip list | grep package-name
+     # or with Poetry
+     poetry show
+     ```
+  
+  2. **Ensure you're using the correct Python environment:**
+     ```bash
+     which python  # Should point to your virtual environment
+     ```
+  
+  3. **Try reinstalling the specific package:**
+     ```bash
+     pip install -e .  # If installing the project itself
+     # or
+     pip install package-name
+     ```
+  
+  4. **Check for Python path issues:**
+     ```bash
+     python -c "import sys; print(sys.path)"  # Should include your project path
+     ```
+</Accordion>
+
+## PostgreSQL Issues
+
+<Accordion title="PostgreSQL installation problems">
+  **Symptoms:**
+  - Unable to install PostgreSQL
+  - PostgreSQL service won't start
+  
+  **Solutions:**
+  
+  1. **For Windows users:**
+     - Use the official PostgreSQL installer from [postgresql.org](https://www.postgresql.org/download/windows/)
+     - Ensure the service is running: `Services.msc` > Find PostgreSQL service > Start
+  
+  2. **For macOS users:**
+     ```bash
+     # Using Homebrew
+     brew install postgresql@14
+     brew services start postgresql@14
+     ```
+  
+  3. **For Linux users:**
+     ```bash
+     # Ubuntu/Debian
+     sudo apt update
+     sudo apt install postgresql postgresql-contrib
+     sudo systemctl start postgresql
+     sudo systemctl enable postgresql
+     ```
+  
+  4. **As an alternative, use Docker:**
+     ```bash
+     docker run --name postgres -e POSTGRES_PASSWORD=mysecretpassword -p 5432:5432 -d postgres:14
+     ```
+</Accordion>
+
+<Accordion title="PostgreSQL connection issues">
+  **Symptoms:**
+  - `could not connect to server: Connection refused`
+  - `psql: error: FATAL: role "postgres" does not exist`
+  
+  **Solutions:**
+  
+  1. **Verify PostgreSQL is running:**
+     ```bash
+     # Check service status
+     sudo systemctl status postgresql  # Linux
+     brew services list  # macOS
+     
+     # Check if you can connect with psql
+     psql -U postgres
+     ```
+  
+  2. **Create the missing user if needed:**
+     ```bash
+     sudo -u postgres createuser --superuser your_username
+     ```
+  
+  3. **Check and update PostgreSQL authentication settings:**
+     - Edit `pg_hba.conf` (location varies by system)
+     - Change authentication method from `peer` to `md5` or `trust` for local connections (for development only)
+     
+  4. **For Docker, check container status:**
+     ```bash
+     docker ps  # Should show running postgres container
+     docker logs postgres  # Check container logs for errors
+     ```
+</Accordion>
+
+<Accordion title="pgvector extension installation issues">
+  **Symptoms:**
+  - `ERROR: could not open extension control file "pgvector"`
+  - Migration fails with pgvector-related errors
+  
+  **Solutions:**
+  
+  1. **Install the pgvector extension:**
+     ```bash
+     # For local PostgreSQL installation
+     sudo apt-get install postgresql-14-pgvector  # Linux
+     brew install pgvector  # macOS
+     ```
+  
+  2. **For Docker, use a container with pgvector pre-installed:**
+     ```bash
+     # Use the pgvector-enabled image
+     docker pull ankane/pgvector
+     docker run --name postgres -e POSTGRES_PASSWORD=mysecretpassword -p 5432:5432 -d ankane/pgvector
+     ```
+  
+  3. **Create the extension in your database:**
+     ```sql
+     CREATE EXTENSION IF NOT EXISTS vector;
+     ```
+  
+  4. **If using Supabase, enable the extension through the dashboard:**
+     - Go to Supabase dashboard > Database > Extensions
+     - Find and enable the `vector` extension
+</Accordion>
+
+## Pre-commit Hook Issues
+
+<Accordion title="Pre-commit hook installation failures">
+  **Symptoms:**
+  - `pre-commit: command not found`
+  - Pre-commit hooks don't run when committing
+  
+  **Solutions:**
+  
+  1. **Install pre-commit globally:**
+     ```bash
+     pip install pre-commit
+     ```
+  
+  2. **Install the git hooks:**
+     ```bash
+     pre-commit install
+     ```
+  
+  3. **Update to the latest hooks:**
+     ```bash
+     pre-commit autoupdate
+     ```
+  
+  4. **Run the hooks manually to verify they work:**
+     ```bash
+     pre-commit run --all-files
+     ```
+</Accordion>
+
+<Accordion title="Pre-commit hooks failing">
+  **Symptoms:**
+  - Commit blocked with error messages from ruff, mypy, or other checks
+  - Hooks taking too long to run
+  
+  **Solutions:**
+  
+  1. **Fix the specific issues reported by the checks:**
+     - For ruff issues: `ruff check --fix`
+     - For mypy issues: Fix type annotations according to errors
+  
+  2. **If hooks are too slow, run selectively:**
+     ```bash
+     pre-commit run ruff --files path/to/changed/files.py
+     ```
+  
+  3. **Temporarily skip hooks if needed (not recommended for regular use):**
+     ```bash
+     git commit --no-verify -m "Commit message"
+     ```
+  
+  4. **Check configuration files for issues:**
+     - `.pre-commit-config.yaml` - Hook settings
+     - `ruff.toml` - Ruff linter configuration
+     - `mypy.ini` - MyPy configuration
+</Accordion>
+
+## Docker Issues
+
+<Accordion title="Docker installation problems">
+  **Symptoms:**
+  - Unable to install Docker
+  - Docker commands not found
+  
+  **Solutions:**
+  
+  1. **Follow the official installation guides:**
+     - [Docker for Windows](https://docs.docker.com/desktop/install/windows-install/)
+     - [Docker for macOS](https://docs.docker.com/desktop/install/mac-install/)
+     - [Docker for Linux](https://docs.docker.com/engine/install/)
+  
+  2. **For Windows, ensure WSL2 is installed and configured:**
+     ```powershell
+     wsl --install
+     ```
+  
+  3. **Verify installation:**
+     ```bash
+     docker --version
+     docker run hello-world
+     ```
+</Accordion>
+
+<Accordion title="Docker Compose issues">
+  **Symptoms:**
+  - `docker-compose: command not found`
+  - Issues with `compose.yml` configuration
+  
+  **Solutions:**
+  
+  1. **Install Docker Compose:**
+     ```bash
+     # Modern Docker installations include Compose functionality
+     docker compose version
+     
+     # If using older Docker, install separately
+     pip install docker-compose
+     ```
+  
+  2. **Verify your compose.yml:**
+     ```bash
+     docker compose config  # Validates and prints compose configuration
+     ```
+  
+  3. **Common formatting issues:**
+     - Indentation errors in YAML
+     - Missing quotes around values with special characters
+     - Environment variables not properly set
+</Accordion>
+
+<Accordion title="Docker build failures">
+  **Symptoms:**
+  - `docker compose up --build` fails with errors
+  - Issues with the Dockerfile
+  
+  **Solutions:**
+  
+  1. **Check Dockerfile for errors:**
+     - Verify paths and commands
+     - Ensure base image exists
+  
+  2. **Check for network issues:**
+     ```bash
+     docker network ls
+     docker network create nginx_proxy_manager_default  # Create missing network
+     ```
+  
+  3. **Build with verbose output for more information:**
+     ```bash
+     docker compose build --progress=plain zyeta.backend
+     ```
+  
+  4. **Clean up Docker environment:**
+     ```bash
+     docker system prune -a  # Warning: Removes all unused images
+     ```
+</Accordion>
+
+## Configuration Issues
+
+<Accordion title="Environment file (.env) problems">
+  **Symptoms:**
+  - Application fails to start with configuration errors
+  - Missing environment variables
+  
+  **Solutions:**
+  
+  1. **Ensure .env file exists and has correct format:**
+     ```bash
+     cp .env.local .env  # Create from template
+     ```
+  
+  2. **Check for common formatting issues:**
+     - No spaces around equals sign: `KEY=value` (correct) vs `KEY = value` (incorrect)
+     - No quotes around values unless needed for escaping
+     - Line endings (Windows vs Unix)
+  
+  3. **Verify all required variables are set:**
+     - Check settings.py for required variables
+     - Compare with .env.local template
+  
+  4. **Test environment loading:**
+     ```python
+     # In Python interpreter
+     from dotenv import load_dotenv
+     load_dotenv()
+     import os
+     print(os.environ.get("DATABASE_URL"))  # Should print your configured value
+     ```
+</Accordion>
+
+<Accordion title="Alembic configuration issues">
+  **Symptoms:**
+  - Migration commands fail
+  - `alembic.ini` not found or incorrect
+  
+  **Solutions:**
+  
+  1. **Create alembic.ini from template:**
+     ```bash
+     cp alembic.copy.ini alembic.ini
+     ```
+  
+  2. **Update the database URL:**
+     - Edit `sqlalchemy.url` in alembic.ini
+     - Remember to escape % characters as %%
+  
+  3. **Check alembic directory structure:**
+     ```bash
+     ls -la alembic
+     # Should include env.py, script.py.mako, and versions/
+     ```
+  
+  4. **Recreate alembic setup if necessary:**
+     ```bash
+     alembic init alembic
+     # Then manually update alembic/env.py with your models import
+     ```
+</Accordion>
+
+## System-Specific Issues
+
+### Windows-Specific Issues
+
+<Accordion title="Windows path length limitations">
+  **Symptoms:**
+  - Errors about path too long
+  - Files not found in deeply nested directories
+  
+  **Solutions:**
+  
+  1. **Enable long paths in Windows:**
+     ```powershell
+     # Run as administrator
+     New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+     ```
+  
+  2. **Use shorter paths for your project:**
+     - Install in C:\Dev instead of deeply nested directories
+     - Use shorter folder names
+  
+  3. **Enable Git long paths:**
+     ```bash
+     git config --system core.longpaths true
+     ```
+</Accordion>
+
+<Accordion title="Windows line ending issues">
+  **Symptoms:**
+  - Git shows files as changed when you didn't modify them
+  - Scripts fail with syntax errors
+  
+  **Solutions:**
+  
+  1. **Configure Git to handle line endings correctly:**
+     ```bash
+     git config --global core.autocrlf true  # For Windows
+     ```
+  
+  2. **Add a .gitattributes file to your project:**
+     ```
+     # .gitattributes
+     * text=auto
+     *.py text eol=lf
+     *.sh text eol=lf
+     ```
+  
+  3. **Fix existing files:**
+     ```bash
+     # Convert all files to LF
+     dos2unix path/to/file.py
+     
+     # Or use VSCode: Open file > Bottom right corner > CRLF > Change to LF
+     ```
+</Accordion>
+
+### macOS-Specific Issues
+
+<Accordion title="macOS file permission issues">
+  **Symptoms:**
+  - Permission denied errors when running scripts
+  - Unable to write to directories
+  
+  **Solutions:**
+  
+  1. **Fix script permissions:**
+     ```bash
+     chmod +x path/to/script.sh
+     ```
+  
+  2. **Check folder ownership:**
+     ```bash
+     ls -la
+     sudo chown -R $(whoami) /path/to/directory
+     ```
+  
+  3. **For Homebrew issues:**
+     ```bash
+     sudo chown -R $(whoami) /usr/local/Cellar /usr/local/Homebrew
+     ```
+</Accordion>
+
+<Accordion title="macOS Gatekeeper blocking applications">
+  **Symptoms:**
+  - "App cannot be opened because the developer cannot be verified"
+  
+  **Solutions:**
+  
+  1. **Open application while bypassing Gatekeeper:**
+     - Right-click the app > Open
+     - When prompted, click "Open" again
+  
+  2. **For command-line tools:**
+     ```bash
+     xattr -d com.apple.quarantine /path/to/executable
+     ```
+</Accordion>
+
+### Linux-Specific Issues
+
+<Accordion title="Linux dependency issues">
+  **Symptoms:**
+  - Missing shared libraries
+  - Build failures for native extensions
+  
+  **Solutions:**
+  
+  1. **Ubuntu/Debian: Install development packages:**
+     ```bash
+     sudo apt update
+     sudo apt install build-essential python3-dev libpq-dev
+     ```
+  
+  2. **CentOS/RHEL/Fedora:**
+     ```bash
+     sudo dnf groupinstall "Development Tools"
+     sudo dnf install python3-devel postgresql-devel
+     ```
+  
+  3. **For specific package errors, install the required libraries:**
+     - SQLAlchemy with PostgreSQL: `sudo apt install libpq-dev`
+     - Cryptography: `sudo apt install libssl-dev libffi-dev`
+</Accordion>
+
+## Next Steps
+
+If you've resolved your installation issues, proceed to:
+
+- [Environment Setup](/getting-started/environment-setup)
+- [Development Workflow](/getting-started/development-workflow)
+
+If you're still experiencing problems, check the other troubleshooting guides or contact the development team for assistance. 

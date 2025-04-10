@@ -1,0 +1,901 @@
+---
+title: 'Tools Service API'
+description: 'API reference for managing AI agent tools and tool categories'
+---
+
+The Tools Service provides endpoints for managing and interacting with tools that can be used by AI agents. It includes functionality for creating, listing, updating, and testing tools, as well as managing tool categories.
+
+## Authentication
+
+All endpoints require a valid Bearer token in the Authorization header.
+
+## Base URL
+
+```
+/api/tools
+```
+
+## Tool Categories Endpoints
+
+### List Tool Categories
+
+Retrieve all tool categories.
+
+<CodeGroup>
+```bash Request
+curl -X GET {{baseUrl}}/api/tools/list_categories \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/tools/list_categories"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+
+response = requests.get(url, headers=headers)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/tools/list_categories";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+
+axios.get(url, { headers })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+[
+  {
+    "id": "6a5b4c3d-2e1f-0g9h-8i7j-6k5l4m3n2o1p",
+    "name": "Utility",
+    "description": "Basic utility tools",
+    "created_at": "2023-07-20T15:30:00Z",
+    "updated_at": "2023-07-20T15:30:00Z"
+  },
+  {
+    "id": "1p2o3n4m-5l6k-7j8i-9h0g-1f2e3d4c5b6a",
+    "name": "Web",
+    "description": "Web interaction tools",
+    "created_at": "2023-07-20T15:35:00Z",
+    "updated_at": "2023-07-20T15:35:00Z"
+  }
+]
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/tools/list_categories`
+
+### Create Tool Category
+
+Create a new tool category.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/tools/create_category?org_id=your-org-id \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Coding",
+    "description": "Coding tools for software development"
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/tools/create_category"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+params = {
+    "org_id": "your-org-id"
+}
+data = {
+    "name": "Coding",
+    "description": "Coding tools for software development"
+}
+
+response = requests.post(url, headers=headers, params=params, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/tools/create_category";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const params = {
+    org_id: "your-org-id"
+};
+const data = {
+    name: "Coding",
+    description: "Coding tools for software development"
+};
+
+axios.post(url, data, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "7b6c5d4e-3f2g-1h0i-9j8k-7l6m5n4o3p2q",
+  "name": "Coding",
+  "description": "Coding tools for software development",
+  "created_at": "2023-07-25T16:30:00Z",
+  "updated_at": "2023-07-25T16:30:00Z"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/tools/create_category`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Category name |
+| `description` | string | Yes | Category description |
+
+**Response:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string (UUID) | Category ID |
+| `name` | string | Category name |
+| `description` | string | Category description |
+| `created_at` | string (datetime) | Creation timestamp |
+| `updated_at` | string (datetime) | Last update timestamp |
+
+### Update Tool Category
+
+Update an existing tool category.
+
+<CodeGroup>
+```bash Request
+curl -X PUT {{baseUrl}}/api/tools/update_category?org_id=your-org-id&category_id=your-category-id \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Utility",
+    "description": "Basic utility tools"
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/tools/update_category"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+params = {
+    "org_id": "your-org-id",
+    "category_id": "your-category-id"
+}
+data = {
+    "name": "Utility",
+    "description": "Basic utility tools"
+}
+
+response = requests.put(url, headers=headers, params=params, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/tools/update_category";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const params = {
+    org_id: "your-org-id",
+    category_id: "your-category-id"
+};
+const data = {
+    name: "Utility",
+    description: "Basic utility tools"
+};
+
+axios.put(url, data, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "6a5b4c3d-2e1f-0g9h-8i7j-6k5l4m3n2o1p",
+  "name": "Utility",
+  "description": "Basic utility tools",
+  "created_at": "2023-07-20T15:30:00Z",
+  "updated_at": "2023-07-25T16:45:00Z"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `PUT /api/tools/update_category`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+| `category_id` | Yes | Category ID to update |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | No | New category name |
+| `description` | string | No | New category description |
+
+### Delete Tool Category
+
+Delete a tool category.
+
+<CodeGroup>
+```bash Request
+curl -X DELETE {{baseUrl}}/api/tools/delete_category?org_id=your-org-id&category_id=your-category-id \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/tools/delete_category"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "org_id": "your-org-id",
+    "category_id": "your-category-id"
+}
+
+response = requests.delete(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/tools/delete_category";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    org_id: "your-org-id",
+    category_id: "your-category-id"
+};
+
+axios.delete(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "success": true,
+  "message": "Category deleted successfully"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `DELETE /api/tools/delete_category`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+| `category_id` | Yes | Category ID to delete |
+
+## Tools Endpoints
+
+### Create Tool
+
+Create a new tool.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/tools?org_id=your-org-id \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Apify",
+    "description": "Web crawling and scraping tool",
+    "category_id": "6a5b4c3d-2e1f-0g9h-8i7j-6k5l4m3n2o1p",
+    "is_active": true,
+    "version": "2",
+    "logo_url": "",
+    "is_public": true,
+    "configuration": [
+      {
+        "name": "api_key",
+        "type": "str",
+        "description": "The API key for the Apify service",
+        "required": true,
+        "default": null
+      },
+      {
+        "name": "website_content_crawler",
+        "type": "bool",
+        "description": "",
+        "required": false,
+        "default": "True"
+      }
+    ],
+    "inputs": [
+      {
+        "name": "urls",
+        "type": "str",
+        "description": "The URLs to crawl.",
+        "required": true,
+        "default": null
+      },
+      {
+        "name": "timeout",
+        "type": "int",
+        "description": "The timeout for the crawling.",
+        "required": false,
+        "default": "60"
+      }
+    ],
+    "outputs": {
+      "type": "str",
+      "description": "A string with the crawled content"
+    },
+    "settings": {
+      "function_info": {
+        "name": "Apify Tool",
+        "is_async": true,
+        "description": "Crawls a website using Apify's website-content-crawler actor",
+        "code": "import aiohttp\\n\\nasync def run(self, urls: str, timeout: int | None = \\\"60\\\"):\\n\\n    \\\"\\\"\\\"\\n    Run the tool with the provided parameters.\\n    @param urls The URLs to crawl. (required)\\n    @param timeout The timeout for the crawling. (optional) (default: \\\"60\\\")\\n    \\n    Returns:\\n        dict: The result of the tool execution\\n    \\\"\\\"\\\"\\n    \\n    if self.api_key is None:\\n      return \\\"No API key provided\\\"\\n\\n    client = ApifyClient(self.api_key)\\n\\n    log_debug(f\\\"Crawling URLs: {urls}\\\")\\n\\n    formatted_urls = [{\\\"url\\\": url} for url in urls]\\n\\n    run_input = {\\\"startUrls\\\": formatted_urls}\\n\\n    run = client.actor(\\\"apify/website-content-crawler\\\").call(run_input=run_input, timeout_secs=timeout)\\n\\n    results: str = \\\"\\\"\\n\\n    for item in client.dataset(run[\\\"defaultDatasetId\\\"]).iterate_items():\\n      results += \\\"Results for URL: \\\" + item.get(\\\"url\\\") + \\\"\\\\n\\\"\\n      results += item.get(\\\"text\\\") + \\\"\\\\n\\\"\\n\\n    return results\\n"
+      },
+      "requirements": [
+        "apify_client"
+      ],
+      "deployment": {
+        "framework": "agno",
+        "toolkit_class": true,
+        "standalone_function": false
+      }
+    }
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/tools"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+params = {
+    "org_id": "your-org-id"
+}
+data = {
+    "name": "Apify",
+    "description": "Web crawling and scraping tool",
+    "category_id": "6a5b4c3d-2e1f-0g9h-8i7j-6k5l4m3n2o1p",
+    "is_active": True,
+    "version": "2",
+    "logo_url": "",
+    "is_public": True,
+    "configuration": [
+        {
+            "name": "api_key",
+            "type": "str",
+            "description": "The API key for the Apify service",
+            "required": True,
+            "default": None
+        },
+        {
+            "name": "website_content_crawler",
+            "type": "bool",
+            "description": "",
+            "required": False,
+            "default": "True"
+        }
+    ],
+    "inputs": [
+        {
+            "name": "urls",
+            "type": "str",
+            "description": "The URLs to crawl.",
+            "required": True,
+            "default": None
+        },
+        {
+            "name": "timeout",
+            "type": "int",
+            "description": "The timeout for the crawling.",
+            "required": False,
+            "default": "60"
+        }
+    ],
+    "outputs": {
+        "type": "str",
+        "description": "A string with the crawled content"
+    },
+    "settings": {
+        "function_info": {
+            "name": "Apify Tool",
+            "is_async": True,
+            "description": "Crawls a website using Apify's website-content-crawler actor",
+            "code": "import aiohttp\n\nasync def run(self, urls: str, timeout: int | None = \"60\"):\n\n    \"\"\"\n    Run the tool with the provided parameters.\n    @param urls The URLs to crawl. (required)\n    @param timeout The timeout for the crawling. (optional) (default: \"60\")\n    \n    Returns:\n        dict: The result of the tool execution\n    \"\"\"\n    \n    if self.api_key is None:\n      return \"No API key provided\"\n\n    client = ApifyClient(self.api_key)\n\n    log_debug(f\"Crawling URLs: {urls}\")\n\n    formatted_urls = [{\"url\": url} for url in urls]\n\n    run_input = {\"startUrls\": formatted_urls}\n\n    run = client.actor(\"apify/website-content-crawler\").call(run_input=run_input, timeout_secs=timeout)\n\n    results: str = \"\"\n\n    for item in client.dataset(run[\"defaultDatasetId\"]).iterate_items():\n      results += \"Results for URL: \" + item.get(\"url\") + \"\\n\"\n      results += item.get(\"text\") + \"\\n\"\n\n    return results\n"
+        },
+        "requirements": [
+            "apify_client"
+        ],
+        "deployment": {
+            "framework": "agno",
+            "toolkit_class": True,
+            "standalone_function": False
+        }
+    }
+}
+
+response = requests.post(url, headers=headers, params=params, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/tools";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const params = {
+    org_id: "your-org-id"
+};
+const data = {
+    name: "Apify",
+    description: "Web crawling and scraping tool",
+    category_id: "6a5b4c3d-2e1f-0g9h-8i7j-6k5l4m3n2o1p",
+    is_active: true,
+    version: "2",
+    logo_url: "",
+    is_public: true,
+    configuration: [
+        {
+            name: "api_key",
+            type: "str",
+            description: "The API key for the Apify service",
+            required: true,
+            default: null
+        },
+        {
+            name: "website_content_crawler",
+            type: "bool",
+            description: "",
+            required: false,
+            default: "True"
+        }
+    ],
+    inputs: [
+        {
+            name: "urls",
+            type: "str",
+            description: "The URLs to crawl.",
+            required: true,
+            default: null
+        },
+        {
+            name: "timeout",
+            type: "int",
+            description: "The timeout for the crawling.",
+            required: false,
+            default: "60"
+        }
+    ],
+    outputs: {
+        type: "str",
+        description: "A string with the crawled content"
+    },
+    settings: {
+        function_info: {
+            name: "Apify Tool",
+            is_async: true,
+            description: "Crawls a website using Apify's website-content-crawler actor",
+            code: "import aiohttp\\n\\nasync def run(self, urls: str, timeout: int | None = \\\"60\\\"):\\n\\n    \\\"\\\"\\\"\\n    Run the tool with the provided parameters.\\n    @param urls The URLs to crawl. (required)\\n    @param timeout The timeout for the crawling. (optional) (default: \\\"60\\\")\\n    \\n    Returns:\\n        dict: The result of the tool execution\\n    \\\"\\\"\\\"\\n    \\n    if self.api_key is None:\\n      return \\\"No API key provided\\\"\\n\\n    client = ApifyClient(self.api_key)\\n\\n    log_debug(f\\\"Crawling URLs: {urls}\\\")\\n\\n    formatted_urls = [{\\\"url\\\": url} for url in urls]\\n\\n    run_input = {\\\"startUrls\\\": formatted_urls}\\n\\n    run = client.actor(\\\"apify/website-content-crawler\\\").call(run_input=run_input, timeout_secs=timeout)\\n\\n    results: str = \\\"\\\"\\n\\n    for item in client.dataset(run[\\\"defaultDatasetId\\\"]).iterate_items():\\n      results += \\\"Results for URL: \\\" + item.get(\\\"url\\\") + \\\"\\\\n\\\"\\n      results += item.get(\\\"text\\\") + \\\"\\\\n\\\"\\n\\n    return results\\n"
+        },
+        requirements: [
+            "apify_client"
+        ],
+        deployment: {
+            framework: "agno",
+            toolkit_class: true,
+            standalone_function: false
+        }
+    }
+};
+
+axios.post(url, data, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "8c7d6e5f-4g3h-2i1j-0k9l-8m7n6o5p4q3r",
+  "name": "Apify",
+  "description": "Web crawling and scraping tool",
+  "category_id": "6a5b4c3d-2e1f-0g9h-8i7j-6k5l4m3n2o1p",
+  "is_active": true,
+  "version": "2",
+  "logo_url": "",
+  "is_public": true,
+  "created_at": "2023-07-25T17:00:00Z",
+  "updated_at": "2023-07-25T17:00:00Z"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/tools`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Tool name |
+| `description` | string | Yes | Tool description |
+| `category_id` | string (UUID) | Yes | Category ID |
+| `is_active` | boolean | No | Whether the tool is active (default: true) |
+| `version` | string | Yes | Tool version |
+| `logo_url` | string | No | URL to the tool's logo |
+| `is_public` | boolean | No | Whether the tool is publicly available (default: false) |
+| `configuration` | array | Yes | Configuration parameters for the tool |
+| `inputs` | array | Yes | Input parameters for the tool |
+| `outputs` | object | Yes | Output specification |
+| `settings` | object | Yes | Tool implementation settings |
+
+### List All Tools
+
+Retrieve all available tools.
+
+<CodeGroup>
+```bash Request
+curl -X GET {{baseUrl}}/api/tools/list_all \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/tools/list_all"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+
+response = requests.get(url, headers=headers)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/tools/list_all";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+
+axios.get(url, { headers })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+[
+  {
+    "id": "8c7d6e5f-4g3h-2i1j-0k9l-8m7n6o5p4q3r",
+    "name": "Apify",
+    "description": "Web crawling and scraping tool",
+    "category": {
+      "id": "6a5b4c3d-2e1f-0g9h-8i7j-6k5l4m3n2o1p",
+      "name": "Utility"
+    },
+    "is_active": true,
+    "version": "2",
+    "logo_url": "",
+    "is_public": true,
+    "created_at": "2023-07-25T17:00:00Z",
+    "updated_at": "2023-07-25T17:00:00Z",
+    "configuration": [
+      {
+        "name": "api_key",
+        "type": "str",
+        "description": "The API key for the Apify service",
+        "required": true,
+        "default": null
+      }
+    ],
+    "inputs": [
+      {
+        "name": "urls",
+        "type": "str",
+        "description": "The URLs to crawl.",
+        "required": true,
+        "default": null
+      }
+    ],
+    "outputs": {
+      "type": "str",
+      "description": "A string with the crawled content"
+    }
+  }
+]
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/tools/list_all`
+
+### Update Tool
+
+Update an existing tool.
+
+<CodeGroup>
+```bash Request
+curl -X PUT {{baseUrl}}/api/tools?org_id=your-org-id&tool_id=your-tool-id \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "is_active": false,
+    "name": "Apify Crawler"
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/tools"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+params = {
+    "org_id": "your-org-id",
+    "tool_id": "your-tool-id"
+}
+data = {
+    "is_active": False,
+    "name": "Apify Crawler"
+}
+
+response = requests.put(url, headers=headers, params=params, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/tools";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const params = {
+    org_id: "your-org-id",
+    tool_id: "your-tool-id"
+};
+const data = {
+    is_active: false,
+    name: "Apify Crawler"
+};
+
+axios.put(url, data, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "8c7d6e5f-4g3h-2i1j-0k9l-8m7n6o5p4q3r",
+  "name": "Apify Crawler",
+  "description": "Web crawling and scraping tool",
+  "is_active": false,
+  "updated_at": "2023-07-25T17:15:00Z"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `PUT /api/tools`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+| `tool_id` | Yes | Tool ID to update |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | No | New tool name |
+| `description` | string | No | New tool description |
+| `is_active` | boolean | No | Whether the tool is active |
+| ... | ... | No | Any other fields to update |
+
+### Test Tool
+
+Test a tool with specified inputs and configurations.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/tools/test_tool?tool_id=your-tool-id \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input_prompt": "scrape the detailed stock: https://www.nseindia.com/get-quotes/equity?symbol=CURAA",
+    "config_items": [
+      {
+        "name": "api_key",
+        "value": "apify_api_rC3533Oxdr9hVI1HaVTNYnsV3h2aXs4C4XsC"
+      },
+      {
+        "name": "website_content_crawler",
+        "value": true
+      }
+    ],
+    "provider": "anthropic",
+    "model_name": "claude-3-7-sonnet-latest",
+    "api_key": "your-anthropic-api-key",
+    "instructions": "You are a powerful agent that can scrape the web and extract information."
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/tools/test_tool"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+params = {
+    "tool_id": "your-tool-id"
+}
+data = {
+    "input_prompt": "scrape the detailed stock: https://www.nseindia.com/get-quotes/equity?symbol=CURAA",
+    "config_items": [
+        {
+            "name": "api_key",
+            "value": "apify_api_rC3533Oxdr9hVI1HaVTNYnsV3h2aXs4C4XsC"
+        },
+        {
+            "name": "website_content_crawler",
+            "value": True
+        }
+    ],
+    "provider": "anthropic",
+    "model_name": "claude-3-7-sonnet-latest",
+    "api_key": "your-anthropic-api-key",
+    "instructions": "You are a powerful agent that can scrape the web and extract information."
+}
+
+response = requests.post(url, headers=headers, params=params, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/tools/test_tool";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const params = {
+    tool_id: "your-tool-id"
+};
+const data = {
+    input_prompt: "scrape the detailed stock: https://www.nseindia.com/get-quotes/equity?symbol=CURAA",
+    config_items: [
+        {
+            name: "api_key",
+            value: "apify_api_rC3533Oxdr9hVI1HaVTNYnsV3h2aXs4C4XsC"
+        },
+        {
+            name: "website_content_crawler",
+            value: true
+        }
+    ],
+    provider: "anthropic",
+    model_name: "claude-3-7-sonnet-latest",
+    api_key: "your-anthropic-api-key",
+    instructions: "You are a powerful agent that can scrape the web and extract information."
+};
+
+axios.post(url, data, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "result": "Stock Details for CURAA\n\nCompany: Cura Technologies Ltd\nCurrent Price: ₹450.75\nPrevious Close: ₹448.20\nDay's Change: +2.55 (0.57%)\n\nTrading Details:\nVolume: 1,245,300 shares\n52-Week High: ₹512.35\n52-Week Low: ₹310.40\nMarket Cap: ₹9,015 Cr\n\nKey Ratios:\nP/E: 22.4\nEPS: 20.12\nDividend Yield: 1.8%\n\nLatest News:\n- Q2 Results announced, showing 12% YoY growth\n- New product launch scheduled for next month\n- Strategic partnership with global tech firm announced",
+  "execution_time": 2.456,
+  "token_usage": {
+    "prompt_tokens": 235,
+    "completion_tokens": 185,
+    "total_tokens": 420
+  }
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/tools/test_tool`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `tool_id` | Yes | Tool ID to test |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `input_prompt` | string | Yes | Prompt to send to the tool |
+| `config_items` | array | Yes | Configuration parameters |
+| `provider` | string | Yes | LLM provider to use |
+| `model_name` | string | Yes | Model name to use |
+| `api_key` | string | Yes | API key for the LLM provider |
+| `instructions` | string | No | System instructions for the LLM |
+
+**Response:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `result` | string | Result from the tool execution |
+| `execution_time` | number | Time taken to execute the tool (in seconds) |
+| `token_usage` | object | Token usage information |
+
+## Error Responses
+
+| Status Code | Description |
+|-------------|-------------|
+| 400 | Bad Request - Invalid input or validation error |
+| 401 | Unauthorized - Invalid or missing token |
+| 403 | Forbidden - Insufficient permissions |
+| 404 | Not Found - Resource doesn't exist |
+| 500 | Internal Server Error - Server-side error |
+
+## Implementation Notes
+
+- Tools are designed to be integrated with AI agents
+- Tools can be organized into categories for better management
+- Each tool requires specific configuration parameters and input/output specifications
+- The testing functionality allows users to verify tool functionality with different inputs
+- Tools can be public (available to all organizations) or private (only available to the creating organization)

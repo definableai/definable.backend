@@ -1,0 +1,1101 @@
+---
+title: 'Knowledge Base Service API'
+description: 'API reference for managing knowledge bases and vector stores'
+---
+
+The Knowledge Base Service provides endpoints for creating, managing, and querying document-based knowledge bases. It enables users to create vector stores from multiple document sources, manage documents, and perform semantic search over the stored content.
+
+## Authentication
+
+All endpoints require a valid Bearer token in the Authorization header.
+
+## Base URL
+
+```
+/api/kb
+```
+
+## Knowledge Base Endpoints
+
+### Create Knowledge Base
+
+Create a new knowledge base in your organization.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/kb/create?org_id=your-org-id \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Product Documentation",
+    "description": "Knowledge base for all product documentation and guides",
+    "embedding_model": "text-embedding-ada-002",
+    "sources": [
+      {
+        "type": "s3",
+        "config": {
+          "bucket_name": "docs-bucket",
+          "prefix": "product-docs/",
+          "aws_access_key_id": "YOUR_ACCESS_KEY",
+          "aws_secret_access_key": "YOUR_SECRET_KEY",
+          "aws_region": "us-west-2"
+        }
+      }
+    ]
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/kb/create"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+params = {
+    "org_id": "your-org-id"
+}
+data = {
+    "name": "Product Documentation",
+    "description": "Knowledge base for all product documentation and guides",
+    "embedding_model": "text-embedding-ada-002",
+    "sources": [
+        {
+            "type": "s3",
+            "config": {
+                "bucket_name": "docs-bucket",
+                "prefix": "product-docs/",
+                "aws_access_key_id": "YOUR_ACCESS_KEY",
+                "aws_secret_access_key": "YOUR_SECRET_KEY",
+                "aws_region": "us-west-2"
+            }
+        }
+    ]
+}
+
+response = requests.post(url, headers=headers, params=params, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/kb/create";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const params = {
+    org_id: "your-org-id"
+};
+const data = {
+    name: "Product Documentation",
+    description: "Knowledge base for all product documentation and guides",
+    embedding_model: "text-embedding-ada-002",
+    sources: [
+        {
+            type: "s3",
+            config: {
+                bucket_name: "docs-bucket",
+                prefix: "product-docs/",
+                aws_access_key_id: "YOUR_ACCESS_KEY",
+                aws_secret_access_key: "YOUR_SECRET_KEY",
+                aws_region: "us-west-2"
+            }
+        }
+    ]
+};
+
+axios.post(url, data, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s",
+  "name": "Product Documentation",
+  "description": "Knowledge base for all product documentation and guides",
+  "created_at": "2023-08-01T10:00:00Z",
+  "updated_at": "2023-08-01T10:00:00Z",
+  "org_id": "your-org-id",
+  "status": "processing"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/kb/create`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Name of the knowledge base |
+| `description` | string | Yes | Description of the knowledge base's purpose |
+| `embedding_model` | string | Yes | Model to use for embedding (e.g., "text-embedding-ada-002") |
+| `sources` | array | Yes | List of document sources to ingest |
+
+**Source Configuration:**
+
+Each source object must have the following fields:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | Yes | Source type (e.g., "s3", "web", "file") |
+| `config` | object | Yes | Configuration parameters specific to the source type |
+
+Example source configurations:
+
+**S3 Source:**
+```json
+{
+  "type": "s3",
+  "config": {
+    "bucket_name": "docs-bucket",
+    "prefix": "product-docs/",
+    "aws_access_key_id": "YOUR_ACCESS_KEY",
+    "aws_secret_access_key": "YOUR_SECRET_KEY",
+    "aws_region": "us-west-2"
+  }
+}
+```
+
+**Web Source:**
+```json
+{
+  "type": "web",
+  "config": {
+    "urls": [
+      "https://example.com/docs",
+      "https://example.com/faq"
+    ]
+  }
+}
+```
+
+**File Upload Source:**
+```json
+{
+  "type": "file",
+  "config": {
+    "file_ids": [
+      "file-123456789",
+      "file-987654321"
+    ]
+  }
+}
+```
+
+### List Knowledge Bases
+
+Retrieve all knowledge bases for an organization.
+
+<CodeGroup>
+```bash Request
+curl -X GET {{baseUrl}}/api/kb/list?org_id=your-org-id \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/kb/list"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "org_id": "your-org-id"
+}
+
+response = requests.get(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/kb/list";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    org_id: "your-org-id"
+};
+
+axios.get(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+[
+  {
+    "id": "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s",
+    "name": "Product Documentation",
+    "description": "Knowledge base for all product documentation and guides",
+    "created_at": "2023-08-01T10:00:00Z",
+    "updated_at": "2023-08-01T10:00:00Z",
+    "org_id": "your-org-id",
+    "status": "ready",
+    "document_count": 150
+  },
+  {
+    "id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+    "name": "Customer Support FAQ",
+    "description": "Knowledge base for customer support frequently asked questions",
+    "created_at": "2023-08-02T10:00:00Z",
+    "updated_at": "2023-08-02T10:00:00Z",
+    "org_id": "your-org-id",
+    "status": "processing",
+    "document_count": 0
+  }
+]
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/kb/list`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+
+### Get Knowledge Base Details
+
+Retrieve detailed information about a specific knowledge base.
+
+<CodeGroup>
+```bash Request
+curl -X GET {{baseUrl}}/api/kb/get?kb_id=9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/kb/get"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "kb_id": "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s"
+}
+
+response = requests.get(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/kb/get";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    kb_id: "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s"
+};
+
+axios.get(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s",
+  "name": "Product Documentation",
+  "description": "Knowledge base for all product documentation and guides",
+  "embedding_model": "text-embedding-ada-002",
+  "created_at": "2023-08-01T10:00:00Z",
+  "updated_at": "2023-08-01T10:00:00Z",
+  "org_id": "your-org-id",
+  "status": "ready",
+  "document_count": 150,
+  "sources": [
+    {
+      "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "type": "s3",
+      "config": {
+        "bucket_name": "docs-bucket",
+        "prefix": "product-docs/"
+      },
+      "status": "completed",
+      "document_count": 150,
+      "created_at": "2023-08-01T10:00:00Z"
+    }
+  ]
+}
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/kb/get`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `kb_id` | Yes | Knowledge Base ID |
+
+### Update Knowledge Base
+
+Update an existing knowledge base's metadata.
+
+<CodeGroup>
+```bash Request
+curl -X PUT {{baseUrl}}/api/kb/update?kb_id=9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Updated Product Documentation",
+    "description": "Comprehensive knowledge base for all product documentation and guides"
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/kb/update"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+params = {
+    "kb_id": "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s"
+}
+data = {
+    "name": "Updated Product Documentation",
+    "description": "Comprehensive knowledge base for all product documentation and guides"
+}
+
+response = requests.put(url, headers=headers, params=params, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/kb/update";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const params = {
+    kb_id: "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s"
+};
+const data = {
+    name: "Updated Product Documentation",
+    description: "Comprehensive knowledge base for all product documentation and guides"
+};
+
+axios.put(url, data, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s",
+  "name": "Updated Product Documentation",
+  "description": "Comprehensive knowledge base for all product documentation and guides",
+  "updated_at": "2023-08-03T10:00:00Z"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `PUT /api/kb/update`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `kb_id` | Yes | Knowledge Base ID |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | No | New name for the knowledge base |
+| `description` | string | No | New description |
+
+### Delete Knowledge Base
+
+Delete a knowledge base and all its contents.
+
+<CodeGroup>
+```bash Request
+curl -X DELETE {{baseUrl}}/api/kb/delete?kb_id=9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/kb/delete"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "kb_id": "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s"
+}
+
+response = requests.delete(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/kb/delete";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    kb_id: "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s"
+};
+
+axios.delete(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "success": true,
+  "message": "Knowledge base deleted successfully"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `DELETE /api/kb/delete`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `kb_id` | Yes | ID of the knowledge base to delete |
+
+## Document Management Endpoints
+
+### Add Source to Knowledge Base
+
+Add a new document source to an existing knowledge base.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/kb/add_source?kb_id=9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "web",
+    "config": {
+      "urls": [
+        "https://example.com/docs/new-section",
+        "https://example.com/docs/faq"
+      ]
+    }
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/kb/add_source"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+params = {
+    "kb_id": "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s"
+}
+data = {
+    "type": "web",
+    "config": {
+        "urls": [
+            "https://example.com/docs/new-section",
+            "https://example.com/docs/faq"
+        ]
+    }
+}
+
+response = requests.post(url, headers=headers, params=params, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/kb/add_source";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const params = {
+    kb_id: "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s"
+};
+const data = {
+    type: "web",
+    config: {
+        urls: [
+            "https://example.com/docs/new-section",
+            "https://example.com/docs/faq"
+        ]
+    }
+};
+
+axios.post(url, data, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "source_id": "5a4b3c2d-1e0f-9g8h-7i6j-5k4l3m2n1o0p",
+  "kb_id": "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s",
+  "type": "web",
+  "status": "processing",
+  "created_at": "2023-08-03T10:00:00Z"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/kb/add_source`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `kb_id` | Yes | Knowledge Base ID |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | Yes | Source type (e.g., "s3", "web", "file") |
+| `config` | object | Yes | Configuration parameters specific to the source type |
+
+### List Documents
+
+List all documents in a knowledge base with pagination.
+
+<CodeGroup>
+```bash Request
+curl -X GET "{{baseUrl}}/api/kb/list_documents?kb_id=9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s&page=1&limit=10" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/kb/list_documents"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "kb_id": "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s",
+    "page": 1,
+    "limit": 10
+}
+
+response = requests.get(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/kb/list_documents";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    kb_id: "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s",
+    page: 1,
+    limit: 10
+};
+
+axios.get(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "total": 150,
+  "page": 1,
+  "limit": 10,
+  "documents": [
+    {
+      "id": "doc-123456789",
+      "title": "Getting Started Guide",
+      "source": "s3://docs-bucket/product-docs/getting-started.pdf",
+      "metadata": {
+        "author": "Product Team",
+        "created_at": "2023-07-01T10:00:00Z",
+        "file_type": "pdf",
+        "page_count": 15
+      },
+      "chunk_count": 30,
+      "created_at": "2023-08-01T10:05:00Z"
+    },
+    {
+      "id": "doc-987654321",
+      "title": "API Reference",
+      "source": "s3://docs-bucket/product-docs/api-reference.md",
+      "metadata": {
+        "author": "Developer Team",
+        "created_at": "2023-07-15T10:00:00Z",
+        "file_type": "markdown",
+        "word_count": 5000
+      },
+      "chunk_count": 25,
+      "created_at": "2023-08-01T10:06:00Z"
+    },
+    // ... more documents
+  ]
+}
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/kb/list_documents`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `kb_id` | Yes | Knowledge Base ID |
+| `page` | No | Page number (default: 1) |
+| `limit` | No | Number of documents per page (default: 10) |
+| `search` | No | Optional search term to filter documents |
+
+### Delete Document
+
+Delete a specific document from the knowledge base.
+
+<CodeGroup>
+```bash Request
+curl -X DELETE {{baseUrl}}/api/kb/delete_document?kb_id=9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s&document_id=doc-123456789 \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/kb/delete_document"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "kb_id": "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s",
+    "document_id": "doc-123456789"
+}
+
+response = requests.delete(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/kb/delete_document";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    kb_id: "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s",
+    document_id: "doc-123456789"
+};
+
+axios.delete(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "success": true,
+  "message": "Document deleted successfully"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `DELETE /api/kb/delete_document`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `kb_id` | Yes | Knowledge Base ID |
+| `document_id` | Yes | Document ID to delete |
+
+## Query Endpoints
+
+### Search Knowledge Base
+
+Perform a semantic search on the knowledge base.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/kb/search?kb_id=9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "How do I reset my password?",
+    "limit": 5,
+    "filter": {
+      "metadata": {
+        "source_type": "faq"
+      }
+    }
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/kb/search"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+params = {
+    "kb_id": "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s"
+}
+data = {
+    "query": "How do I reset my password?",
+    "limit": 5,
+    "filter": {
+        "metadata": {
+            "source_type": "faq"
+        }
+    }
+}
+
+response = requests.post(url, headers=headers, params=params, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/kb/search";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const params = {
+    kb_id: "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s"
+};
+const data = {
+    query: "How do I reset my password?",
+    limit: 5,
+    filter: {
+        metadata: {
+            source_type: "faq"
+        }
+    }
+};
+
+axios.post(url, data, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "results": [
+    {
+      "document_id": "doc-123456789",
+      "chunk_id": "chunk-12345",
+      "content": "To reset your password, go to the login page and click on the 'Forgot Password' link. You will receive an email with instructions to reset your password.",
+      "metadata": {
+        "source": "https://example.com/docs/faq",
+        "source_type": "faq",
+        "section": "Account Management"
+      },
+      "score": 0.92
+    },
+    {
+      "document_id": "doc-987654321",
+      "chunk_id": "chunk-67890",
+      "content": "If you've forgotten your password, you can request a password reset through the login page. Click on 'Forgot Password' and follow the email instructions.",
+      "metadata": {
+        "source": "s3://docs-bucket/product-docs/user-guide.pdf",
+        "source_type": "user_guide",
+        "page": 25
+      },
+      "score": 0.87
+    },
+    // ... more results
+  ]
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/kb/search`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `kb_id` | Yes | Knowledge Base ID |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | Yes | Search query text |
+| `limit` | number | No | Maximum number of results to return (default: 5) |
+| `filter` | object | No | Metadata filters to apply to the search |
+
+### RAG Query
+
+Perform a Retrieval-Augmented Generation (RAG) query on the knowledge base.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/kb/query?kb_id=9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "How do I reset my password?",
+    "model": "gpt-4",
+    "limit": 5,
+    "filter": {
+      "metadata": {
+        "source_type": "faq"
+      }
+    },
+    "params": {
+      "temperature": 0.3,
+      "include_sources": true
+    }
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/kb/query"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+params = {
+    "kb_id": "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s"
+}
+data = {
+    "query": "How do I reset my password?",
+    "model": "gpt-4",
+    "limit": 5,
+    "filter": {
+        "metadata": {
+            "source_type": "faq"
+        }
+    },
+    "params": {
+        "temperature": 0.3,
+        "include_sources": True
+    }
+}
+
+response = requests.post(url, headers=headers, params=params, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/kb/query";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const params = {
+    kb_id: "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s"
+};
+const data = {
+    query: "How do I reset my password?",
+    model: "gpt-4",
+    limit: 5,
+    filter: {
+        metadata: {
+            source_type: "faq"
+        }
+    },
+    params: {
+        temperature: 0.3,
+        include_sources: true
+    }
+};
+
+axios.post(url, data, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "answer": "To reset your password, follow these steps:\n\n1. Go to the login page of the application\n2. Click on the 'Forgot Password' link below the login form\n3. Enter the email address associated with your account\n4. Check your email for a password reset link\n5. Click the link and follow the instructions to create a new password\n\nIf you don't receive the email within a few minutes, check your spam folder. If you still don't see it, you may need to contact support for assistance.",
+  "sources": [
+    {
+      "document_id": "doc-123456789",
+      "chunk_id": "chunk-12345",
+      "content": "To reset your password, go to the login page and click on the 'Forgot Password' link. You will receive an email with instructions to reset your password.",
+      "metadata": {
+        "source": "https://example.com/docs/faq",
+        "source_type": "faq",
+        "section": "Account Management"
+      }
+    },
+    {
+      "document_id": "doc-987654321",
+      "chunk_id": "chunk-67890",
+      "content": "If you've forgotten your password, you can request a password reset through the login page. Click on 'Forgot Password' and follow the email instructions.",
+      "metadata": {
+        "source": "s3://docs-bucket/product-docs/user-guide.pdf",
+        "source_type": "user_guide",
+        "page": 25
+      }
+    }
+  ]
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/kb/query`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `kb_id` | Yes | Knowledge Base ID |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | Yes | Query text |
+| `model` | string | Yes | LLM model to use (e.g., "gpt-4", "claude-3-opus") |
+| `limit` | number | No | Maximum number of context chunks to retrieve (default: 5) |
+| `filter` | object | No | Metadata filters to apply to the search |
+| `params` | object | No | Additional parameters for the LLM |
+
+**LLM Parameters:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `temperature` | number | Sampling temperature (0-1) |
+| `include_sources` | boolean | Whether to include source references in the response |
+| `system_prompt` | string | Custom system prompt to use with the LLM |
+
+## Status and Monitoring Endpoints
+
+### Get Ingestion Status
+
+Check the status of document ingestion for a knowledge base.
+
+<CodeGroup>
+```bash Request
+curl -X GET {{baseUrl}}/api/kb/ingestion_status?kb_id=9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/kb/ingestion_status"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "kb_id": "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s"
+}
+
+response = requests.get(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/kb/ingestion_status";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    kb_id: "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s"
+};
+
+axios.get(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "kb_id": "9d8e7f6g-5h4i-3j2k-1l0m-9n8o7p6q5r4s",
+  "status": "processing",
+  "sources": [
+    {
+      "source_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "type": "s3",
+      "status": "completed",
+      "document_count": 150,
+      "error": null,
+      "progress": 100,
+      "started_at": "2023-08-01T10:00:00Z",
+      "completed_at": "2023-08-01T10:15:00Z"
+    },
+    {
+      "source_id": "5a4b3c2d-1e0f-9g8h-7i6j-5k4l3m2n1o0p",
+      "type": "web",
+      "status": "processing",
+      "document_count": 5,
+      "error": null,
+      "progress": 60,
+      "started_at": "2023-08-03T10:00:00Z",
+      "completed_at": null
+    }
+  ],
+  "total_document_count": 155,
+  "total_chunk_count": 350
+}
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/kb/ingestion_status`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `kb_id` | Yes | Knowledge Base ID |
+
+## Error Responses
+
+| Status Code | Description |
+|-------------|-------------|
+| 400 | Bad Request - Invalid input or validation error |
+| 401 | Unauthorized - Invalid or missing token |
+| 403 | Forbidden - Insufficient permissions |
+| 404 | Not Found - Resource doesn't exist |
+| 409 | Conflict - Resource already exists or conflict with existing resource |
+| 500 | Internal Server Error - Server-side error |
+
+## Implementation Notes
+
+- Knowledge bases support multiple document sources (S3, web URLs, file uploads)
+- Documents are chunked and embedded for semantic search capability
+- RAG queries combine semantic search with LLM generation for context-aware responses
+- Metadata filters can be used to narrow search results
+- Document ingestion runs as a background process and can be monitored
+- Embeddings are stored in a vector database (PGVector) for efficient similarity search

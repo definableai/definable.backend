@@ -1,0 +1,193 @@
+---
+title: 'WebSocket Service API'
+description: 'API reference for real-time communication using WebSockets'
+---
+
+The WebSocket Service provides endpoints for establishing persistent connections between clients and the server, enabling real-time, bidirectional communication. This service is used for features that require instant updates and notifications.
+
+## Authentication
+
+WebSocket connections require authentication via a valid JWT token provided as a query parameter.
+
+## Base URL
+
+```
+/api/ws
+```
+
+## WebSocket Endpoints
+
+### Establish Connection
+
+Create a persistent WebSocket connection.
+
+```
+ws://your-api-domain.com/api/ws?token=YOUR_JWT_TOKEN
+```
+
+When using HTTPS, use the `wss://` protocol instead:
+
+```
+wss://your-api-domain.com/api/ws?token=YOUR_JWT_TOKEN
+```
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `token` | Yes | Valid JWT token for authentication |
+
+## Message Format
+
+Messages exchanged over the WebSocket connection are JSON-formatted with the following structure:
+
+### Client-to-Server Messages
+
+```json
+{
+  "type": "message_type",
+  "data": {
+    // Message-specific payload
+  }
+}
+```
+
+### Server-to-Client Messages
+
+```json
+{
+  "type": "message_type",
+  "data": {
+    // Message-specific payload
+  },
+  "timestamp": "2023-08-15T10:30:00Z"
+}
+```
+
+## Message Types
+
+### Events
+
+The WebSocket service broadcasts various events to connected clients:
+
+| Event Type | Description | Example Data |
+|------------|-------------|--------------|
+| `notification` | System notification | `{"message": "New comment on your post", "level": "info"}` |
+| `chat_message` | New chat message | `{"conversation_id": "conv-123", "sender_id": "user-456", "content": "Hello there!"}` |
+| `status_update` | Status change | `{"entity_type": "task", "entity_id": "task-789", "status": "completed"}` |
+
+### Commands
+
+Clients can send commands to the server:
+
+| Command Type | Description | Example Data |
+|--------------|-------------|--------------|
+| `subscribe` | Subscribe to a specific channel | `{"channel": "conversation:conv-123"}` |
+| `unsubscribe` | Unsubscribe from a channel | `{"channel": "conversation:conv-123"}` |
+| `ping` | Check connection | `{}` |
+
+## Error Handling
+
+The server may send error messages in the following format:
+
+```json
+{
+  "type": "error",
+  "data": {
+    "code": "invalid_request",
+    "message": "Invalid message format"
+  },
+  "timestamp": "2023-08-15T10:31:00Z"
+}
+```
+
+Common error codes:
+
+| Error Code | Description |
+|------------|-------------|
+| `invalid_request` | The message format is invalid |
+| `unauthorized` | Authentication failed or insufficient permissions |
+| `subscription_failed` | Failed to subscribe to the requested channel |
+| `internal_error` | Server-side error |
+
+## Connection Example
+
+### JavaScript Client Example
+
+```javascript
+// Establish WebSocket connection
+const token = "your-jwt-token";
+const socket = new WebSocket(`wss://your-api-domain.com/api/ws?token=${token}`);
+
+// Connection opened
+socket.addEventListener('open', (event) => {
+  console.log('Connected to WebSocket server');
+  
+  // Subscribe to a channel
+  socket.send(JSON.stringify({
+    type: 'subscribe',
+    data: {
+      channel: 'conversation:conv-123'
+    }
+  }));
+});
+
+// Listen for messages
+socket.addEventListener('message', (event) => {
+  const message = JSON.parse(event.data);
+  console.log('Message from server:', message);
+  
+  // Handle different message types
+  switch (message.type) {
+    case 'chat_message':
+      // Handle new chat message
+      break;
+    case 'notification':
+      // Handle notification
+      break;
+    case 'error':
+      // Handle error
+      break;
+  }
+});
+
+// Connection closed
+socket.addEventListener('close', (event) => {
+  console.log('Disconnected from WebSocket server:', event.code, event.reason);
+});
+
+// Send a message
+function sendMessage(content) {
+  socket.send(JSON.stringify({
+    type: 'chat_message',
+    data: {
+      conversation_id: 'conv-123',
+      content: content
+    }
+  }));
+}
+```
+
+## Reconnection Strategy
+
+It's recommended to implement a reconnection strategy in your client application to handle unexpected disconnections:
+
+1. Start with a small delay (e.g., 1 second)
+2. Use exponential backoff with jitter to increase the delay between reconnection attempts
+3. Set a maximum retry limit or maximum delay
+4. Reset the delay when a successful connection is established
+
+## Security Considerations
+
+- WebSocket connections are authenticated using JWT tokens
+- Tokens should be kept secret and not shared
+- Connections will be terminated when tokens expire
+- The server may implement rate limiting to prevent abuse
+
+## Implementation Notes
+
+- The WebSocket service uses the standard WebSocket protocol (RFC 6455)
+- Messages are exchanged in JSON format
+- The service supports multiple concurrent connections
+- Channel subscriptions allow for efficient message filtering
+- Clients should handle reconnection logic on their side

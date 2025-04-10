@@ -1,0 +1,273 @@
+---
+title: 'Installation'
+description: 'How to set up the Zyeta backend development environment'
+---
+
+This guide will walk you through the process of setting up the Zyeta backend development environment on your local machine.
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed:
+
+- **Python 3.10+** - The core programming language
+- **Poetry** - For dependency management
+- **PostgreSQL 14+** - The main database
+- **Redis** - For caching and Celery task queue
+- **Git** - For version control
+- **Docker** (optional) - For containerized development
+- **Node.js 20.17** (optional) - For sandbox servers
+- **NVM** (optional) - To manage Node.js versions
+
+## Clone the Repository
+
+First, clone the repository from GitHub:
+
+```bash
+git clone https://github.com/your-org/zyeta.backend.git
+cd zyeta.backend
+```
+
+## Setting Up Python Environment
+
+We use Poetry for dependency management:
+
+```bash
+# Install Poetry (if not already installed)
+curl -sSL https://install.python-poetry.org | python3 -
+
+# Install dependencies
+poetry install
+```
+
+Alternatively, you can use a virtual environment:
+
+```bash
+# Create a virtual environment
+python3.10 -m venv venv
+
+# Activate the virtual environment
+# On Windows
+venv\Scripts\activate
+# On macOS/Linux
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+## Setting Up Pre-commit Hooks
+
+We use pre-commit hooks to ensure code quality:
+
+```bash
+pre-commit install
+```
+
+This will configure automatic linting and type checking before each commit.
+
+## Setting Up PostgreSQL
+
+### Option 1: Local PostgreSQL with Docker
+
+The easiest way to set up PostgreSQL is using Docker:
+
+```bash
+docker run --name zyeta -e POSTGRES_PASSWORD=mysecretpassword -d postgres
+```
+
+### Option 2: Using Supabase
+
+If you don't want to set up PostgreSQL locally, you can use Supabase as a managed PostgreSQL service:
+
+1. Create a Supabase account at [supabase.com](https://supabase.com)
+2. Create a new project
+3. Navigate to the Database settings in your Supabase dashboard
+4. Copy the connection string from the "Connection Pooling" section
+
+<Tip>
+When using the connection string, replace `[YOUR-PASSWORD]` with your actual database password.
+</Tip>
+
+#### Connection String Types
+
+Supabase offers different connection types for different use cases:
+
+1. **Direct Connection**: 
+   - Best for applications with persistent, long-lived connections
+   - Format: `postgresql://postgres:[YOUR-PASSWORD]@db.izufeytmzeanvqoyck...`
+   - Each client gets a dedicated connection to Postgres
+
+2. **Transaction Pooler**:
+   - Ideal for stateless applications like serverless functions
+   - Format: `postgresql://postgres.izufeytmzeanvqoyckvp:[YOUR-PASSWORD]@...`
+   - Pre-warmed connection pool to Postgres
+   - IPv4 compatible
+
+3. **Session Pooler**:
+   - Alternative to Direct Connection when connecting via an IPv4 network
+   - Format: `postgresql://postgres.izufeytmzeanvqoyckvp:[YOUR-PASSWORD]@...`
+   - Only recommended if you have IPv4 compatibility issues
+
+## Configuration Files
+
+The project requires configuration files. Template files are provided to help you get started:
+
+```bash
+# Copy configuration templates
+cp .env.local .env
+cp alembic.copy.ini alembic.ini
+```
+
+Update the connection strings in both files to match your database setup.
+
+## Database Migrations
+
+Set up the database schema using Alembic migrations:
+
+```bash
+# Run migrations
+alembic upgrade head
+```
+
+## Setting Up Sandbox Servers (Optional)
+
+If you want to develop or test tools that run dynamic code:
+
+```bash
+# Install NVM
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | bash
+
+# Install Node.js
+nvm install 20.17
+nvm use 20.17
+
+# Navigate to the Python tool tester
+cd src/servers/python_tool_tester
+
+# Install dependencies
+npm install
+npm install -g tsx
+
+# Start the sandbox server
+tsx index.ts
+```
+
+## Running the Application
+
+Start the application in development mode:
+
+```bash
+# Run the FastAPI application with auto-reload
+python -m src.app --dev
+```
+
+Or with FastAPI CLI (if installed):
+
+```bash
+fastapi dev src/app.py
+```
+
+The API will be available at `http://localhost:8000`.
+
+## Docker Deployment
+
+For a containerized environment, you can use Docker:
+
+```bash
+# Build and start the services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+```
+
+## Accessing the API Documentation
+
+FastAPI automatically generates interactive API documentation:
+
+- **Swagger UI**: `http://localhost:8000/docs`
+- **ReDoc**: `http://localhost:8000/redoc`
+
+## Next Steps
+
+After installation, you'll need to set up your environment variables. See our [Environment Setup](/pages/getting-started/environment-setup) guide to configure your application.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Database Connection Issues">
+    Ensure PostgreSQL is running and the database exists. Check your connection string in the `.env` file.
+    
+    ```bash
+    # Check if PostgreSQL is running
+    pg_isready
+
+    # Check if you can connect to your database
+    psql -U postgres -d postgres
+    ```
+  </Accordion>
+  
+  <Accordion title="Poetry Dependency Issues">
+    If you encounter issues with Poetry:
+    
+    ```bash
+    # Update Poetry
+    poetry self update
+    
+    # Clear Poetry cache
+    poetry cache clear pypi --all
+    
+    # Update dependencies
+    poetry update
+    ```
+  </Accordion>
+  
+  <Accordion title="Migration Errors">
+    If migrations fail, try resetting the migration state:
+    
+    ```bash
+    # Downgrade to base
+    alembic downgrade base
+    
+    # Then upgrade again
+    alembic upgrade head
+    ```
+  </Accordion>
+  
+  <Accordion title="Supabase Connectivity Issues (IPv4/IPv6)">
+    If you're using Supabase and experiencing connection issues, it may be related to IPv4/IPv6 compatibility:
+    
+    **Symptoms:**
+    - Connection timeouts
+    - "Could not connect to server" errors
+    - Intermittent connection issues
+    
+    **Solution:**
+    1. Check if your network primarily uses IPv4 (many home and office networks do)
+    2. If you're on an IPv4 network, use the Session Pooler or Transaction Pooler connection string:
+    
+    ```
+    # Instead of Direct Connection
+    postgresql://postgres:[YOUR-PASSWORD]@db.izufeytmzeanvqoyck...
+    
+    # Use Session Pooler
+    postgresql://postgres.izufeytmzeanvqoyckvp:[YOUR-PASSWORD]@...
+    ```
+    
+    3. If you're experiencing high latency, the Transaction Pooler is recommended as it maintains pre-warmed connections.
+    
+    <Note>
+    Supabase proxies Session and Transaction pooler connections for IPv4 networks, making them more reliable if you're experiencing IPv6 compatibility issues.
+    </Note>
+  </Accordion>
+</AccordionGroup>
+
+## Development Tools
+
+We recommend these tools for an optimal development experience:
+
+- **Cursor** - AI-powered IDE recommended for development
+- **VSCode** with Python and FastAPI extensions
+- **pgAdmin** for PostgreSQL management
+- **Redis Desktop Manager** for Redis inspection
+- **Insomnia** or **Postman** for API testing
