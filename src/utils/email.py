@@ -66,3 +66,22 @@ async def send_password_reset_email(email: str, reset_token: str) -> None:
     resend.Emails.send(params)
   except Exception as e:
     raise HTTPException(status_code=500, detail=f"Failed to send password reset email: {str(e)}")
+
+
+async def send_password_reset_confirmation_email(email: str) -> None:
+  """Send password reset confirmation email."""
+  try:
+    params: resend.Emails.SendParams = {
+      "from": "Password Reset <noreply@dolbo.ai>",
+      "to": email,
+      "subject": "Password Reset Successful",
+      "html": """
+                  <h1>Password Reset Successful</h1>
+                  <p>Your password has been successfully reset.</p>
+                  <p>If you did not make this change, please contact our support team immediately.</p>
+                  <p>For security reasons, we recommend reviewing your account activity.</p>
+              """,
+    }
+    resend.Emails.send(params)
+  except Exception as e:
+    raise HTTPException(status_code=500, detail=f"Failed to send password reset confirmation email: {str(e)}")
