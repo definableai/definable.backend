@@ -1,0 +1,965 @@
+---
+title: 'API Errors'
+description: 'Troubleshooting common API errors in the Zyeta backend'
+---
+
+This guide covers common API-related errors that may arise when working with the Zyeta backend.
+
+## HTTP Status Code Errors
+
+<Accordion title="400 Bad Request errors">
+  **Symptoms:**
+  - Error response with status code 400
+  - Response body containing validation errors
+  - Client-side error messages about invalid data
+  
+  **Solutions:**
+  
+  1. **Check request payload format:**
+     ```python
+     # Ensure JSON is properly formatted
+     import json
+     try:
+         json_data = json.dumps(your_data)
+     except json.JSONDecodeError as e:
+         print(f"Invalid JSON: {e}")
+     ```
+  
+  2. **Validate against API schema:**
+     - Review the API documentation for required fields
+     - Check field types and constraints
+     - Use Pydantic validators for client-side validation
+     ```python
+     from pydantic import BaseModel, validator
+     
+     class UserCreate(BaseModel):
+         email: str
+         password: str
+         
+         @validator('email')
+         def email_must_be_valid(cls, v):
+             # Validate email format
+             if '@' not in v:
+                 raise ValueError('Invalid email format')
+             return v
+     
+     # Validate before sending
+     try:
+         user_data = UserCreate(email="invalid", password="secret")
+     except Exception as e:
+         print(f"Validation error: {e}")
+     ```
+  
+  3. **Check for missing required fields:**
+     - Ensure all required fields are included
+     - Pay attention to nested objects and arrays
+     - Check for typos in field names
+</Accordion>
+
+<Accordion title="401 Unauthorized errors">
+  **Symptoms:**
+  - Error response with status code 401
+  - Message indicating "Unauthorized" or "Invalid credentials"
+  - JWT-related errors
+  
+  **Solutions:**
+  
+  1. **Verify authentication headers:**
+     ```python
+     # Correct header format
+     headers = {
+         "Authorization": f"Bearer {access_token}"
+     }
+     ```
+  
+  2. **Check token expiration:**
+     ```python
+     # Decode JWT to check expiration
+     import jwt
+     from datetime import datetime
+     
+     try:
+         decoded = jwt.decode(token, options={"verify_signature": False})
+         exp = decoded.get('exp')
+         if exp:
+             if datetime.fromtimestamp(exp) < datetime.now():
+                 print("Token has expired")
+     except jwt.PyJWTError as e:
+         print(f"Token error: {e}")
+     ```
+  
+  3. **Refresh the token if expired:**
+     ```python
+     # Using refresh token to get new access token
+     refresh_response = requests.post(
+         f"{API_URL}/auth/refresh",
+         json={"refresh_token": refresh_token}
+     )
+     
+     if refresh_response.status_code == 200:
+         new_tokens = refresh_response.json()
+         access_token = new_tokens["access_token"]
+     ```
+  
+  4. **Check user permissions in your database:**
+     - Verify user exists and is active
+     - Check if account is locked or disabled
+</Accordion>
+
+<Accordion title="403 Forbidden errors">
+  **Symptoms:**
+  - Error response with status code 403
+  - Message indicating "Forbidden" or "Insufficient permissions"
+  - RBAC-related errors
+  
+  **Solutions:**
+  
+  1. **Check user roles and permissions:**
+     ```python
+     # Verify user roles
+     response = requests.get(
+         f"{API_URL}/users/me",
+         headers={"Authorization": f"Bearer {access_token}"}
+     )
+     
+     if response.status_code == 200:
+         user_data = response.json()
+         print(f"User roles: {user_data.get('roles', [])}")
+     ```
+  
+  2. **Verify endpoint permission requirements:**
+     - Review API documentation for required permissions
+     - Ensure the authenticated user has the necessary role
+  
+  3. **Check organization/workspace access:**
+     - Some endpoints require specific organization membership
+     - Verify the user belongs to the correct organization
+     ```python
+     # Check organization memberships
+     response = requests.get(
+         f"{API_URL}/users/me/organizations",
+         headers={"Authorization": f"Bearer {access_token}"}
+     )
+     ```
+  
+  4. **Review role-based access control settings:**
+     - Update user roles if necessary
+     - Check if permissions have changed in recent deployments
+</Accordion>
+
+<Accordion title="404 Not Found errors">
+  **Symptoms:**
+  - Error response with status code 404
+  - Message indicating "Not Found" or "Resource not found"
+  
+  **Solutions:**
+  
+  1. **Verify the API endpoint URL:**
+     ```python
+     # Check for typos in URL path
+     # Correct: /api/v1/users/{id}
+     # Incorrect: /api/v1/user/{id} or /api/users/{id}
+     ```
+  
+  2. **Check if the resource exists:**
+     ```python
+     # Verify resource exists before attempting operations
+     response = requests.get(
+         f"{API_URL}/resources/{resource_id}",
+         headers={"Authorization": f"Bearer {access_token}"}
+     )
+     
+     if response.status_code == 404:
+         print(f"Resource {resource_id} does not exist")
+     ```
+  
+  3. **Examine resource permissions:**
+     - Resource may exist but not be accessible to current user
+     - Check if resource belongs to a different organization
+  
+  4. **Check API version:**
+     - Ensure you're using the correct API version
+     - Some endpoints may be deprecated or moved
+</Accordion>
+
+<Accordion title="429 Too Many Requests errors">
+  **Symptoms:**
+  - Error response with status code 429
+  - Message about rate limits or quotas
+  - Headers indicating rate limit information
+  - Response body containing "detail": "Too many requests"
+  
+  **Solutions:**
+  
+  1. **Implement exponential backoff:**
+     ```python
+     import time
+     import random
+     
+     def make_request_with_backoff(url, max_retries=5):
+         retries = 0
+         while retries < max_retries:
+             response = requests.get(url)
+             if response.status_code != 429:
+                 return response
+                 
+             # Calculate backoff time with jitter
+             backoff_time = (2 ** retries) + random.uniform(0, 1)
+             print(f"Rate limited. Retrying in {backoff_time} seconds...")
+             time.sleep(backoff_time)
+             retries += 1
+         
+         return response  # Return the last response if all retries failed
+     ```
+  
+  2. **Check for rate limit headers:**
+     ```python
+     response = requests.get(url)
+     if response.status_code == 429:
+         # Check for rate limit information
+         reset_time = response.headers.get('X-RateLimit-Reset')
+         limit = response.headers.get('X-RateLimit-Limit')
+         remaining = response.headers.get('X-RateLimit-Remaining')
+         
+         print(f"Rate limit: {remaining}/{limit}. Resets at: {reset_time}")
+     ```
+  
+  3. **Optimize API usage:**
+     - Batch requests when possible
+     - Cache responses to reduce API calls
+     - Implement request throttling on client side
+     
+  4. **Understand Zyeta's rate limiting implementation:**
+     ```python
+     # Zyeta uses a sliding window rate limiter based on client IP
+     # Default: 100 requests per 60-second window
+     # When rate limit is reached, requests return:
+     # Status code: 429
+     # Body: {"detail": "Too many requests"}
+     
+     # Client-side handling example:
+     def handle_potential_rate_limit(response):
+         if response.status_code == 429:
+             # Extract rate limit info (if headers are implemented)
+             print("Rate limit exceeded")
+             
+             # Implement increasing backoff
+             retry_after = int(response.headers.get('Retry-After', '5'))
+             print(f"Waiting for {retry_after} seconds")
+             time.sleep(retry_after)
+             return True  # Retry needed
+         return False  # No retry needed
+     ```
+</Accordion>
+
+<Accordion title="500 Internal Server Error">
+  **Symptoms:**
+  - Error response with status code 500
+  - Generic error messages in response
+  - Server-side exceptions
+  - Development mode: Detailed error with traceback information
+  - Production mode: Simple "Internal server error" message
+  
+  **Solutions:**
+  
+  1. **Check server logs for details:**
+     - Review application logs for exceptions
+     - Look for stack traces related to your request
+     - In development mode, examine the detailed error response
+  
+  2. **Report the issue with details:**
+     ```
+     # Information to include in bug reports
+     - Request URL and method
+     - Request headers and body
+     - Response status and body
+     - Timestamp of the error
+     - Steps to reproduce
+     - Environment (development/production)
+     ```
+  
+  3. **Implement client-side error handling:**
+     ```python
+     try:
+         response = requests.post(url, json=data)
+         response.raise_for_status()  # Raise exception for 4XX/5XX responses
+     except requests.exceptions.RequestException as e:
+         print(f"Request failed: {e}")
+         # Implement appropriate fallback behavior
+     ```
+  
+  4. **Check for recent deployments or changes:**
+     - Recent code changes may have introduced bugs
+     - Infrastructure changes might affect API stability
+     
+  5. **Error structure in development mode:**
+     ```python
+     # Zyeta returns detailed errors in development mode
+     if response.status_code == 500:
+         error_data = response.json()
+         if isinstance(error_data, dict) and 'error_type' in error_data:
+             print(f"Error type: {error_data['error_type']}")
+             print(f"Error message: {error_data['error_message']}")
+             if 'traceback' in error_data:
+                 print("Stack trace:")
+                 for frame in error_data['traceback']:
+                     print(f"  File {frame['filename']}, line {frame['lineno']}, in {frame['name']}")
+                     print(f"    {frame['line']}")
+     ```
+</Accordion>
+
+## Request/Response Issues
+
+<Accordion title="Serialization/deserialization errors">
+  **Symptoms:**
+  - Error messages about invalid JSON
+  - Type errors when processing responses
+  - Fields missing or incorrectly formatted
+  
+  **Solutions:**
+  
+  1. **Validate request data before sending:**
+     ```python
+     # Using Pydantic for validation
+     from pydantic import BaseModel, ValidationError
+     
+     class RequestData(BaseModel):
+         name: str
+         age: int
+         email: str
+     
+     try:
+         validated_data = RequestData(**data).dict()
+         # Now send validated_data to API
+     except ValidationError as e:
+         print(f"Validation error: {e}")
+     ```
+  
+  2. **Parse response data carefully:**
+     ```python
+     response = requests.get(url)
+     try:
+         data = response.json()
+     except ValueError:
+         print("Response is not valid JSON")
+         print(f"Raw response: {response.text}")
+     ```
+  
+  3. **Check for encoding issues:**
+     ```python
+     # Set proper content type and encoding
+     headers = {
+         "Content-Type": "application/json; charset=utf-8"
+     }
+     
+     # Explicitly encode/decode
+     response = requests.post(url, data=json.dumps(data).encode('utf-8'), headers=headers)
+     ```
+  
+  4. **Handle nullable fields:**
+     - Use `None` for missing values
+     - Implement default values for optional fields
+     ```python
+     # Safe access to possibly missing fields
+     user_name = data.get('user', {}).get('name', 'Unknown')
+     ```
+</Accordion>
+
+<Accordion title="CORS issues">
+  **Symptoms:**
+  - Browser console errors about CORS policy
+  - Requests fail in browser but work in Postman
+  - Preflight requests failing
+  - "Access-Control-Allow-Origin" missing or incorrect
+  
+  **Solutions:**
+  
+  1. **Check the Origin header:**
+     ```javascript
+     // In browser JavaScript
+     fetch('https://api.example.com/data', {
+       method: 'GET',
+       headers: {
+         'Content-Type': 'application/json',
+         // Origin is automatically set by the browser
+       },
+       credentials: 'include', // For cookies, if needed
+     })
+     ```
+  
+  2. **Verify Zyeta's CORS configuration:**
+     - Zyeta's API allows all origins by default with "*"
+     - Credentials are allowed by default
+     - All methods and headers are allowed
+     ```javascript
+     // Zyeta's CORS is configured in app.py with:
+     app.add_middleware(
+       CORSMiddleware,
+       allow_origins=["*"],  // Allows all origins
+       allow_credentials=True,
+       allow_methods=["*"],  // Allows all methods
+       allow_headers=["*"],  // Allows all headers
+     )
+     ```
+  
+  3. **For development, use a proxy:**
+     ```javascript
+     // In package.json for React apps
+     {
+       "proxy": "https://api.example.com"
+     }
+     
+     // Then use relative URLs in fetch requests
+     fetch('/data')
+     ```
+  
+  4. **Handle preflight requests:**
+     - Complex requests trigger OPTIONS preflight
+     - Ensure server correctly responds to OPTIONS
+     - Check allowed headers and methods in response
+     
+  5. **Debug CORS issues:**
+     ```javascript
+     // Add this to troubleshoot CORS issues
+     const debugCORS = async (url) => {
+       try {
+         // First try a preflight request
+         const preflightResponse = await fetch(url, {
+           method: 'OPTIONS',
+           mode: 'cors'
+         });
+         console.log('Preflight status:', preflightResponse.status);
+         console.log('Preflight headers:', Object.fromEntries([...preflightResponse.headers]));
+         
+         // Then try the actual request
+         const response = await fetch(url, {
+           method: 'GET',
+           headers: {'Content-Type': 'application/json'},
+           mode: 'cors'
+         });
+         console.log('Response status:', response.status);
+         console.log('Response headers:', Object.fromEntries([...response.headers]));
+         
+         return await response.json();
+       } catch (error) {
+         console.error('CORS Error:', error);
+         return null;
+       }
+     };
+     ```
+</Accordion>
+
+<Accordion title="Content type and encoding issues">
+  **Symptoms:**
+  - "Unsupported Media Type" errors
+  - Character encoding problems in responses
+  - Binary data corruption
+  
+  **Solutions:**
+  
+  1. **Set the correct Content-Type header:**
+     ```python
+     # For JSON requests
+     headers = {"Content-Type": "application/json"}
+     
+     # For form data
+     headers = {"Content-Type": "application/x-www-form-urlencoded"}
+     
+     # For multipart form data (file uploads)
+     # Let the requests library set this automatically
+     ```
+  
+  2. **Handle different response types:**
+     ```python
+     response = requests.get(url)
+     
+     # Check content type
+     content_type = response.headers.get('Content-Type', '')
+     
+     if 'application/json' in content_type:
+         data = response.json()
+     elif 'text/' in content_type:
+         text = response.text
+     elif 'application/octet-stream' in content_type:
+         binary_data = response.content
+     ```
+  
+  3. **For file uploads, use multipart/form-data:**
+     ```python
+     files = {'file': open('document.pdf', 'rb')}
+     response = requests.post(url, files=files)
+     ```
+  
+  4. **Handle character encodings:**
+     ```python
+     # Force a specific encoding if needed
+     response.encoding = 'utf-8'
+     text = response.text
+     ```
+</Accordion>
+
+## Authentication Issues
+
+<Accordion title="JWT token problems">
+  **Symptoms:**
+  - "Token expired" or "Invalid token" errors
+  - "Invalid authorization" error message
+  - Frequent authentication failures
+  - Error message: "Invalid or expired token"
+  - Status code 403 with JWT-related error messages
+  
+  **Solutions:**
+  
+  1. **Implement proper token storage and refresh:**
+     ```javascript
+     // Browser storage (localStorage)
+     function getTokens() {
+       return {
+         accessToken: localStorage.getItem('access_token'),
+         refreshToken: localStorage.getItem('refresh_token')
+       };
+     }
+     
+     async function refreshTokens() {
+       const { refreshToken } = getTokens();
+       
+       try {
+         const response = await fetch('/auth/refresh', {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({ refresh_token: refreshToken })
+         });
+         
+         if (!response.ok) throw new Error('Refresh failed');
+         
+         const tokens = await response.json();
+         localStorage.setItem('access_token', tokens.access_token);
+         localStorage.setItem('refresh_token', tokens.refresh_token);
+         
+         return tokens.access_token;
+       } catch (error) {
+         // Clear tokens and redirect to login
+         localStorage.removeItem('access_token');
+         localStorage.removeItem('refresh_token');
+         window.location.href = '/login';
+       }
+     }
+     ```
+  
+  2. **Check token payload and claims:**
+     ```python
+     import jwt
+     
+     # Decode without verification (for debugging)
+     try:
+         payload = jwt.decode(token, options={"verify_signature": False})
+         print(f"Token payload: {payload}")
+         print(f"Expiration: {payload.get('exp')}")
+         # Zyeta JWT structure - should have 'id' claim
+         user_id = payload.get('id')
+         print(f"User ID: {user_id}")
+     except jwt.PyJWTError as e:
+         print(f"Invalid token format: {e}")
+     ```
+  
+  3. **Implement token validation on client:**
+     ```python
+     from datetime import datetime
+     
+     def is_token_expired(token):
+         try:
+             payload = jwt.decode(token, options={"verify_signature": False})
+             exp = payload.get('exp')
+             if not exp:
+                 return True
+                 
+             # Check if token is expired or about to expire (within 5 minutes)
+             current_time = datetime.now().timestamp()
+             return current_time > (exp - 300)  # 5 minutes buffer
+         except:
+             return True  # If we can't decode, assume expired
+     ```
+  
+  4. **Handle clock skew issues:**
+     - Server and client time differences can cause premature expiration
+     - Add a buffer time when checking expiration
+     - Consider using NTP to synchronize system clocks
+     
+  5. **Understand Zyeta's JWT implementation:**
+     ```python
+     # Zyeta uses HS256 algorithm with a secret key
+     # Token must be provided in the Authorization header as "Bearer {token}"
+     # For WebSocket connections, token must be in query parameters as ?token={token}&org_id={org_id}
+     # Common errors:
+     # - Missing token: 403 "Invalid authorization"
+     # - Invalid token format: 403 "Invalid or expired token"
+     # - Missing scheme: 403 "Invalid authorization" (must use "Bearer")
+     
+     # Example of correct token usage:
+     headers = {"Authorization": f"Bearer {access_token}"}
+     response = requests.get(f"{API_URL}/resources", headers=headers)
+     ```
+</Accordion>
+
+<Accordion title="OAuth integration problems">
+  **Symptoms:**
+  - OAuth flow redirects failing
+  - "Invalid client" or "Invalid redirect URI" errors
+  - Access token exchange failures
+  
+  **Solutions:**
+  
+  1. **Verify OAuth configuration:**
+     - Double-check client ID and client secret
+     - Ensure redirect URI exactly matches the registered one
+     - Check scope parameters match required permissions
+  
+  2. **Debug OAuth flow:**
+     ```javascript
+     // Initiate OAuth flow with logging
+     function startOAuthFlow() {
+       const clientId = 'your_client_id';
+       const redirectUri = encodeURIComponent('https://your-app.com/oauth/callback');
+       const scope = encodeURIComponent('profile email');
+       const state = generateRandomState();
+       
+       // Store state to prevent CSRF
+       localStorage.setItem('oauth_state', state);
+       
+       // Log parameters for debugging
+       console.log('OAuth Parameters:', { clientId, redirectUri, scope, state });
+       
+       // Redirect to authorization endpoint
+       window.location.href = `https://oauth-provider.com/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&response_type=code&state=${state}`;
+     }
+     ```
+  
+  3. **Implement proper state validation:**
+     ```javascript
+     // In your callback handler
+     function handleOAuthCallback() {
+       const urlParams = new URLSearchParams(window.location.search);
+       const code = urlParams.get('code');
+       const state = urlParams.get('state');
+       const storedState = localStorage.getItem('oauth_state');
+       
+       if (!state || state !== storedState) {
+         console.error('OAuth state mismatch. Possible CSRF attack.');
+         return;
+       }
+       
+       // Clear stored state
+       localStorage.removeItem('oauth_state');
+       
+       // Exchange code for token
+       exchangeCodeForToken(code);
+     }
+     ```
+  
+  4. **Debug token exchange:**
+     ```python
+     import requests
+     
+     def exchange_code_for_token(code, redirect_uri, client_id, client_secret):
+         response = requests.post(
+             'https://oauth-provider.com/token',
+             data={
+                 'grant_type': 'authorization_code',
+                 'code': code,
+                 'redirect_uri': redirect_uri,
+                 'client_id': client_id,
+                 'client_secret': client_secret
+             },
+             headers={
+                 'Content-Type': 'application/x-www-form-urlencoded'
+             }
+         )
+         
+         print(f"Status: {response.status_code}")
+         print(f"Response: {response.text}")
+         
+         return response.json() if response.ok else None
+     ```
+</Accordion>
+
+## Integration Issues
+
+<Accordion title="API gateway and routing problems">
+  **Symptoms:**
+  - "No route matched with those values" errors
+  - Unexpected 404 errors on valid endpoints
+  - Routing inconsistencies between environments
+  
+  **Solutions:**
+  
+  1. **Check API gateway configuration:**
+     - Verify routes and service mappings
+     - Check for path prefix issues
+     ```
+     # Common API gateway path formats:
+     /api/v1/service-name/resource
+     /service-name/api/v1/resource
+     ```
+  
+  2. **Trace request path:**
+     ```bash
+     # Use curl with verbose output to trace
+     curl -v https://api.example.com/path/to/resource
+     
+     # Check for redirects and final destination
+     ```
+  
+  3. **Test endpoints directly vs. through gateway:**
+     - Try accessing the service directly if possible
+     - Compare behavior through API gateway vs. direct
+     ```bash
+     # Direct to service
+     curl http://service:8080/api/resource
+     
+     # Through API gateway
+     curl https://api.example.com/service/api/resource
+     ```
+  
+  4. **Check for trailing slash issues:**
+     - Some routing configurations treat paths with/without trailing slashes differently
+     - Try both variations to identify the issue
+     ```
+     /api/v1/resources
+     /api/v1/resources/
+     ```
+</Accordion>
+
+<Accordion title="Microservice communication errors">
+  **Symptoms:**
+  - Timeouts between services
+  - Incomplete data in responses
+  - Cascading failures
+  
+  **Solutions:**
+  
+  1. **Implement circuit breakers:**
+     ```python
+     # Using circuitbreaker library
+     from circuitbreaker import circuit
+     
+     @circuit(failure_threshold=5, recovery_timeout=30)
+     def call_dependent_service(data):
+         response = requests.post('http://other-service/api/endpoint', json=data)
+         response.raise_for_status()
+         return response.json()
+     ```
+  
+  2. **Add proper timeouts:**
+     ```python
+     # Set connect and read timeouts
+     try:
+         response = requests.get(
+             'http://other-service/api/endpoint',
+             timeout=(3.05, 27)  # (connect timeout, read timeout)
+         )
+     except requests.exceptions.Timeout:
+         # Handle timeout error
+         pass
+     ```
+  
+  3. **Implement retry with backoff:**
+     ```python
+     from tenacity import retry, stop_after_attempt, wait_exponential
+     
+     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+     def call_with_retry():
+         return requests.get('http://other-service/api/endpoint')
+     ```
+  
+  4. **Monitor inter-service communication:**
+     - Implement distributed tracing (Jaeger, Zipkin)
+     - Add correlation IDs to track requests across services
+     ```python
+     # Add correlation ID to outgoing requests
+     def make_request(url, correlation_id=None):
+         headers = {}
+         if correlation_id:
+             headers['X-Correlation-ID'] = correlation_id
+         return requests.get(url, headers=headers)
+     ```
+</Accordion>
+
+## Performance Issues
+
+<Accordion title="API request timeouts">
+  **Symptoms:**
+  - Requests failing with timeout errors
+  - Long response times
+  - Client disconnections
+  
+  **Solutions:**
+  
+  1. **Configure appropriate timeouts:**
+     ```python
+     # Python requests with timeouts
+     try:
+         # connect_timeout, read_timeout
+         response = requests.get(url, timeout=(3.05, 30))
+     except requests.exceptions.ReadTimeout:
+         print("The server did not send any data in the allotted time")
+     except requests.exceptions.ConnectTimeout:
+         print("Failed to establish a connection to the server")
+     ```
+  
+  2. **Break down large requests:**
+     - Split large operations into smaller batches
+     - Implement pagination for large data sets
+     ```python
+     # Paginated requests
+     all_results = []
+     page = 1
+     page_size = 100
+     
+     while True:
+         response = requests.get(
+             f"{API_URL}/resources",
+             params={"page": page, "page_size": page_size}
+         )
+         data = response.json()
+         items = data.get("items", [])
+         all_results.extend(items)
+         
+         # Check if we've received all items
+         if len(items) < page_size or not data.get("has_more", False):
+             break
+             
+         page += 1
+     ```
+  
+  3. **Consider asynchronous processing:**
+     - For long-running operations, use a job-based approach
+     ```python
+     # Submit a job
+     job_response = requests.post(f"{API_URL}/jobs", json=job_data)
+     job_id = job_response.json()["job_id"]
+     
+     # Poll for results
+     while True:
+         job_status = requests.get(f"{API_URL}/jobs/{job_id}")
+         status = job_status.json()["status"]
+         
+         if status == "completed":
+             result = requests.get(f"{API_URL}/jobs/{job_id}/result")
+             return result.json()
+         elif status == "failed":
+             raise Exception("Job failed")
+             
+         time.sleep(2)  # Polling interval
+     ```
+  
+  4. **Use server-sent events or WebSockets for long operations:**
+     - Maintain a single connection for updates
+     - Avoid repeated polling
+</Accordion>
+
+<Accordion title="Rate limiting and throttling">
+  **Symptoms:**
+  - 429 Too Many Requests errors
+  - Inconsistent API availability
+  - Batch operations partially succeeding
+  
+  **Solutions:**
+  
+  1. **Implement client-side rate limiting:**
+     ```python
+     import time
+     from functools import wraps
+     
+     class RateLimiter:
+         def __init__(self, calls_per_second):
+             self.calls_per_second = calls_per_second
+             self.last_call_time = 0
+             
+         def __call__(self, func):
+             @wraps(func)
+             def wrapper(*args, **kwargs):
+                 now = time.time()
+                 time_since_last_call = now - self.last_call_time
+                 min_interval = 1.0 / self.calls_per_second
+                 
+                 if time_since_last_call < min_interval:
+                     time.sleep(min_interval - time_since_last_call)
+                     
+                 self.last_call_time = time.time()
+                 return func(*args, **kwargs)
+             return wrapper
+     
+     # Usage
+     @RateLimiter(calls_per_second=5)
+     def call_api(endpoint):
+         return requests.get(f"{API_URL}/{endpoint}")
+     ```
+  
+  2. **Implement exponential backoff with jitter:**
+     ```python
+     import random
+     
+     def backoff_with_jitter(retry_num, base_delay=1, max_delay=60):
+         exponential_delay = min(base_delay * (2 ** retry_num), max_delay)
+         jitter = random.uniform(0, 0.3 * exponential_delay)
+         return exponential_delay + jitter
+         
+     def call_with_backoff(url, max_retries=5):
+         retries = 0
+         while retries < max_retries:
+             response = requests.get(url)
+             if response.status_code != 429:
+                 return response
+                 
+             retry_after = response.headers.get('Retry-After')
+             if retry_after and retry_after.isdigit():
+                 sleep_time = int(retry_after)
+             else:
+                 sleep_time = backoff_with_jitter(retries)
+                 
+             print(f"Rate limited. Retrying in {sleep_time:.2f} seconds...")
+             time.sleep(sleep_time)
+             retries += 1
+             
+         return response  # Return last response if all retries fail
+     ```
+  
+  3. **Batch requests appropriately:**
+     - Group related operations to reduce API calls
+     - Use bulk endpoints when available
+     ```python
+     # Instead of multiple single requests
+     # user_ids = [1, 2, 3, 4, 5]
+     # for user_id in user_ids:
+     #     requests.get(f"{API_URL}/users/{user_id}")
+     
+     # Use bulk endpoint
+     response = requests.get(f"{API_URL}/users", params={"ids": ",".join(map(str, user_ids))})
+     ```
+  
+  4. **Monitor API usage and limits:**
+     - Track rate limit headers in responses
+     - Schedule critical operations during low-usage periods
+     ```python
+     def track_rate_limits(response):
+         limit = response.headers.get('X-RateLimit-Limit')
+         remaining = response.headers.get('X-RateLimit-Remaining')
+         reset = response.headers.get('X-RateLimit-Reset')
+         
+         print(f"Rate limits - Total: {limit}, Remaining: {remaining}, Reset: {reset}")
+         
+         # If close to the limit, implement throttling
+         if limit and remaining and int(remaining) < int(limit) * 0.1:
+             print("Warning: Approaching rate limit")
+     ```
+</Accordion>
+
+## Next Steps
+
+If you've resolved your API issues, consider reviewing these related guides:
+
+- [Database Issues](/troubleshooting/database-issues)
+- [Authentication Issues](/troubleshooting/authentication-issues)
+- [Integration Issues](/troubleshooting/integration-issues)
+
+If you're still experiencing API problems, check the API documentation or contact the development team for assistance. 

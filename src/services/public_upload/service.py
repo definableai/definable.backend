@@ -5,10 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies.security import JWTBearer
-from libs.s3.basic_ops import S3Client
+from libs.s3.v1 import S3Client
+from models import PublicUploadModel
 from services.__base.acquire import Acquire
 
-from .model import PublicUploadModel
 from .schema import FileUploadResponse
 
 

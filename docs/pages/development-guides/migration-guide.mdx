@@ -1,0 +1,593 @@
+---
+title: 'Database Migration Guide'
+description: 'How to create and manage database migrations in the Zyeta backend'
+---
+
+This guide outlines the process for creating and managing database migrations in the Zyeta backend using Alembic.
+
+## Overview
+
+Zyeta uses [Alembic](https://alembic.sqlalchemy.org/) to manage database migrations. Alembic is an SQL migration tool for SQLAlchemy that provides:
+
+- Version control for database schemas
+- Ability to upgrade and downgrade between versions
+- Auto-generation of migrations based on model changes
+- A flexible environment for migration script execution
+
+The database migration system follows a numbered sequence approach, with each migration file prefixed with a sequential number (e.g., `001_create_base_tables.py`, `002_create_models_and_agents.py`).
+
+### Migration Workflow Visualization
+
+```mermaid
+flowchart TD
+    A[SQLAlchemy Models] -->|Changes| B[Generate Migration]
+    B -->|Review & Edit| C[Apply Migration]
+    C -->|Test| D[Commit to Version Control]
+    
+    E[Database Schema v1] -->|upgrade| F[Database Schema v2]
+    F -->|upgrade| G[Database Schema v3]
+    G -->|downgrade| F
+    F -->|downgrade| E
+    
+    subgraph "Migration Process"
+    A
+    B
+    C
+    D
+    end
+    
+    subgraph "Database Versioning"
+    E
+    F
+    G
+    end
+```
+
+## Setup
+
+The Alembic configuration is in the project root directory:
+
+- `alembic.ini`: Contains database connection information and Alembic settings
+- `alembic/`: Directory containing migration scripts and environment configuration:
+  - `env.py`: The Alembic environment setup
+  - `script.py.mako`: Template for generating migration files
+  - `versions/`: Directory containing migration scripts
+
+### Project Structure for Migrations
+
+```mermaid
+graph TD
+    A[Project Root] -->|Contains| B[alembic.ini]
+    A -->|Contains| C[alembic/]
+    C -->|Contains| D[env.py]
+    C -->|Contains| E[script.py.mako]
+    C -->|Contains| F[versions/]
+    F -->|Contains| G[001_create_base_tables.py]
+    F -->|Contains| H[002_create_models_and_agents.py]
+    F -->|Contains| I[...]
+    
+    J[src/] -->|Contains| K[models/]
+    K -->|Used by| D
+    K -->|Modified triggers| B
+```
+
+## Creating a New Migration
+
+### Automatic Migration Generation
+
+Alembic can automatically detect changes between your SQLAlchemy models and the current database schema to generate migrations:
+
+1. Make changes to your SQLAlchemy models in the `src/models/` directory
+2. Ensure the new model is imported in the models `__init__.py` file
+3. Run the following command to generate a migration:
+
+```bash
+# Generate migration with auto-detected changes
+alembic revision --autogenerate -m "Description of changes"
+```
+
+This will create a new file in the `alembic/versions/` directory with a format like `<revision_id>_description_of_changes.py`.
+
+### Automatic Migration Process
+
+```mermaid
+sequenceDiagram
+    participant Developer
+    participant Models as SQLAlchemy Models
+    participant Alembic
+    participant DB as Database
+    participant Migrations as Migration Files
+    
+    Developer->>Models: Modify models
+    Developer->>+Alembic: Run alembic revision --autogenerate
+    Alembic->>DB: Compare current schema
+    Alembic->>Models: Extract metadata
+    Alembic->>Migrations: Generate migration script
+    Alembic-->>-Developer: Migration created
+    Developer->>Migrations: Review and modify if needed
+    Developer->>+Alembic: Run alembic upgrade head
+    Alembic->>+DB: Apply migration
+    DB-->>-Alembic: Migration completed
+    Alembic-->>-Developer: Database updated
+```
+
+### Manual Migration Creation
+
+For more complex changes or to insert seed data, create a manual migration:
+
+```bash
+# Create a blank migration file
+alembic revision -m "Description of changes"
+```
+
+Then edit the generated file to include your migration logic in the `upgrade()` and `downgrade()` functions.
+
+## Migration File Format
+
+Each migration file follows this structure:
+
+```python
+"""Description of changes
+
+Revision ID: <revision_id>
+Revises: <previous_revision_id>
+Create Date: <timestamp>
+"""
+
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+
+# revision identifiers
+revision: str = "<revision_id>"
+down_revision: Union[str, None] = "<previous_revision_id>"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+def upgrade() -> None:
+    # Migration code that brings the database one step forward
+    # Example: op.create_table(), op.add_column(), etc.
+    pass
+
+def downgrade() -> None:
+    # Migration code that brings the database one step backward
+    # Example: op.drop_table(), op.drop_column(), etc.
+    pass
+```
+
+### Migration Dependencies
+
+```mermaid
+graph TD
+    A[001_create_base_tables.py] -->|revises| B[002_create_models_and_agents.py]
+    B -->|revises| C[003_create_prompts_and_conversations.py]
+    C -->|revises| D[004_create_messages_and_favorites.py]
+    D -->|revises| E[005_create_search_index.py]
+    E -->|revises| F[006_insert_default_roles_permissions.py]
+    F -->|revises| G[007_adding_knowledge_base.py]
+    G -->|revises| H[008_create_invitations_table.py]
+    H -->|revises| I[009_create_tools.py]
+    I -->|revises| J[010_create_upload_files.py]
+    
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style J fill:#bbf,stroke:#333,stroke-width:2px
+```
+
+### Naming Convention
+
+Following the project's convention, you should:
+
+1. Prefix your migration file with the next sequential number
+2. Add a short descriptive name
+3. For example, if the latest migration is `010_create_upload_files.py`, name yours `011_your_feature_name.py`
+
+To rename the file after generation:
+
+```bash
+mv alembic/versions/<revision_id>_description_of_changes.py alembic/versions/<revision_id>_011_your_feature_name.py
+```
+
+## Running Migrations
+
+### Upgrading the Database
+
+To apply all pending migrations:
+
+```bash
+alembic upgrade head
+```
+
+To upgrade to a specific revision:
+
+```bash
+alembic upgrade <revision_id>
+```
+
+To upgrade a relative number of steps:
+
+```bash
+alembic upgrade +1  # Upgrade one step
+```
+
+### Downgrading the Database
+
+To downgrade to a previous revision:
+
+```bash
+alembic downgrade <revision_id>
+```
+
+To downgrade a relative number of steps:
+
+```bash
+alembic downgrade -1  # Downgrade one step
+```
+
+To downgrade to the base (before any migrations):
+
+```bash
+alembic downgrade base
+```
+
+### Migration State Flow
+
+```mermaid
+stateDiagram-v2
+    [*] --> BaseMigration
+    BaseMigration --> Migration001
+    Migration001 --> Migration002
+    Migration002 --> Migration003
+    Migration003 --> [*]
+    
+    Migration003 --> Migration002: downgrade
+    Migration002 --> Migration001: downgrade
+    Migration001 --> BaseMigration: downgrade
+    
+    state BaseMigration {
+      [*] --> EmptyDB
+    }
+    
+    state Migration001 {
+      [*] --> BaseTablesCreated
+    }
+    
+    state Migration002 {
+      [*] --> ModelsAndAgentsAdded
+    }
+    
+    state Migration003 {
+      [*] --> PromptsAndConversationsAdded
+    }
+```
+
+### Checking Migration Status
+
+To see the current database revision:
+
+```bash
+alembic current
+```
+
+To see migration history:
+
+```bash
+alembic history
+```
+
+To see which migrations need to be applied:
+
+```bash
+alembic history -i
+```
+
+## Migration Examples
+
+### Creating a Table
+
+```python
+def upgrade() -> None:
+    op.create_table(
+        "your_table_name",
+        sa.Column("id", postgresql.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column("name", sa.String(255), nullable=False),
+        sa.Column("description", sa.Text(), nullable=True),
+        sa.Column("organization_id", postgresql.UUID(), nullable=False),
+        sa.Column("is_active", sa.Boolean(), server_default="true", nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
+        sa.Column("updated_at", sa.TIMESTAMP(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
+        sa.PrimaryKeyConstraint("id"),
+        sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
+    )
+    
+    # Create index on columns
+    op.create_index("ix_your_table_name_organization_id", "your_table_name", ["organization_id"])
+    
+    # Create update trigger for updated_at column
+    op.execute(f"""
+        CREATE TRIGGER update_your_table_name_updated_at
+            BEFORE UPDATE ON your_table_name
+            FOR EACH ROW
+            EXECUTE PROCEDURE update_updated_at_column();
+    """)
+
+def downgrade() -> None:
+    # Remove the trigger first
+    op.execute("DROP TRIGGER IF EXISTS update_your_table_name_updated_at ON your_table_name")
+    
+    # Then drop the table
+    op.drop_table("your_table_name")
+```
+
+### Example Table Schema
+
+```mermaid
+erDiagram
+    your_table_name {
+        UUID id PK "gen_random_uuid()"
+        String name "NOT NULL"
+        Text description "NULL"
+        UUID organization_id FK "NOT NULL"
+        Boolean is_active "DEFAULT true"
+        TIMESTAMP created_at "DEFAULT CURRENT_TIMESTAMP"
+        TIMESTAMP updated_at "DEFAULT CURRENT_TIMESTAMP"
+    }
+    
+    organizations {
+        UUID id PK
+    }
+    
+    your_table_name }|--|| organizations : "organization_id"
+```
+
+### Adding a Column
+
+```python
+def upgrade() -> None:
+    op.add_column("your_table_name", sa.Column("new_column", sa.String(100), nullable=True))
+
+def downgrade() -> None:
+    op.drop_column("your_table_name", "new_column")
+```
+
+### Column Addition Visualization
+
+```mermaid
+graph TD
+    subgraph "Before Migration"
+    A[your_table_name]
+    A --> B[id]
+    A --> C[name]
+    A --> D[description]
+    A --> E[organization_id]
+    A --> F[is_active]
+    A --> G[created_at]
+    A --> H[updated_at]
+    end
+    
+    subgraph "After Migration"
+    I[your_table_name]
+    I --> J[id]
+    I --> K[name]
+    I --> L[description]
+    I --> M[organization_id]
+    I --> N[is_active]
+    I --> O[created_at]
+    I --> P[updated_at]
+    I --> Q[new_column]
+    end
+    
+    style Q fill:#f96,stroke:#333,stroke-width:2px
+```
+
+### Modifying a Column
+
+```python
+def upgrade() -> None:
+    op.alter_column("your_table_name", "existing_column", 
+                   existing_type=sa.String(50),
+                   type_=sa.String(100),
+                   nullable=False)
+
+def downgrade() -> None:
+    op.alter_column("your_table_name", "existing_column", 
+                   existing_type=sa.String(100),
+                   type_=sa.String(50),
+                   nullable=True)
+```
+
+### Adding a Foreign Key
+
+```python
+def upgrade() -> None:
+    op.add_column("your_table_name", sa.Column("parent_id", postgresql.UUID(), nullable=True))
+    op.create_foreign_key(
+        "fk_your_table_name_parent",
+        "your_table_name", "parent_table", 
+        ["parent_id"], ["id"],
+        ondelete="CASCADE"
+    )
+
+def downgrade() -> None:
+    op.drop_constraint("fk_your_table_name_parent", "your_table_name", type_="foreignkey")
+    op.drop_column("your_table_name", "parent_id")
+```
+
+### Relationship Visualization
+
+```mermaid
+erDiagram
+    your_table_name {
+        UUID id PK
+        UUID parent_id FK "NULL"
+    }
+    
+    parent_table {
+        UUID id PK
+    }
+    
+    your_table_name }o--|| parent_table : "parent_id"
+```
+
+### Inserting Seed Data
+
+```python
+def upgrade() -> None:
+    # Generate a UUID for new record
+    new_id = str(uuid4())
+    
+    op.execute(f"""
+        INSERT INTO your_table_name (id, name, description, organization_id, created_at, updated_at)
+        VALUES (
+            '{new_id}',
+            'Default Item',
+            'This is a default item created by migration',
+            'your-org-id',
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP
+        )
+    """)
+
+def downgrade() -> None:
+    op.execute("""
+        DELETE FROM your_table_name
+        WHERE name = 'Default Item'
+    """)
+```
+
+## Best Practices
+
+### General Guidelines
+
+1. **One migration per change**: Create separate migrations for distinct changes to make them easier to understand and maintain
+2. **Test migrations**: Test both upgrade and downgrade paths before applying to production
+3. **Be concise but descriptive**: Use clear naming conventions that indicate what each migration does
+4. **Comment your code**: Add comments to complex migration logic to explain the purpose
+
+### Database Changes
+
+1. **Non-destructive changes**: Prefer adding over dropping where possible
+2. **Nullable columns**: When adding new columns to existing tables, make them nullable or provide a default value
+3. **Data migrations**: Separate schema changes from data migrations when possible
+4. **Indexes**: Add appropriate indexes for foreign keys and frequently queried columns
+5. **Updated_at triggers**: Add triggers for `updated_at` columns as demonstrated in the example migrations
+
+### Migration Decision Flow
+
+```mermaid
+flowchart TD
+    A[Need Database Change] --> B{Change Type?}
+    B -->|Schema Change| C[Create Model Change]
+    B -->|Data Change| D[Create Data Migration]
+    B -->|Both| E[Create Separate Migrations]
+    
+    C --> F{Auto-generate?}
+    F -->|Yes| G[Use --autogenerate]
+    F -->|No| H[Manual Migration]
+    
+    D --> H
+    E --> I[Schema First, Then Data]
+    
+    G --> J[Review Generated Code]
+    H --> J
+    I --> J
+    
+    J --> K[Test Migration]
+    K --> L{Tests Pass?}
+    L -->|Yes| M[Apply to Production]
+    L -->|No| N[Fix Issues]
+    N --> K
+```
+
+### SQL Execution
+
+1. **Use SQLAlchemy operations**: Prefer Alembic's operation helpers (`op.*`) over raw SQL when possible
+2. **Transaction safety**: Ensure your migrations are transaction-safe
+3. **Idempotence**: Make migrations idempotent where possible to avoid errors on reapplication
+4. **Performance**: Be mindful of migration performance on large tables; consider batch operations
+
+### Version Control
+
+1. **Commit migrations**: Always commit migration files to version control
+2. **Do not edit applied migrations**: Create new migrations rather than modifying existing ones that have been applied
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Autogeneration misses changes**: Alembic can't detect all types of changes. Always review auto-generated migrations.
+2. **Migration conflicts**: If multiple developers create migrations simultaneously, conflicts may occur. Coordinate migrations or adjust revision chains as needed.
+3. **Database connection issues**: Verify your database connection settings in `alembic.ini`.
+4. **SQLAlchemy model not detected**: Ensure your model is imported in the models `__init__.py` file.
+
+### Troubleshooting Flow
+
+```mermaid
+flowchart TD
+    A[Migration Error] --> B{Error Type?}
+    
+    B -->|Failed Migration| C[Check Migration Log]
+    B -->|Connection Error| D[Check alembic.ini]
+    B -->|Missing Changes| E[Review Generated Migration]
+    B -->|Conflict| F[Check Revision Chain]
+    
+    C --> G[Fix Code in Migration]
+    D --> H[Update Connection String]
+    E --> I[Add Missing Changes Manually]
+    F --> J[Adjust Revision Chain]
+    
+    G --> K[Re-run Migration]
+    H --> K
+    I --> K
+    J --> K
+    
+    K --> L{Success?}
+    L -->|Yes| M[Continue Development]
+    L -->|No| A
+```
+
+### Fixing a Failed Migration
+
+If a migration fails midway:
+
+1. Fix the issue in the migration script
+2. Run `alembic upgrade head` again, or specifically target the failed migration
+
+If you need to revert a partial migration:
+
+1. Manually fix the database state if necessary
+2. Mark the current revision: `alembic stamp <last_successful_revision>`
+3. Then try upgrading again
+
+## Migration Workflow Summary
+
+1. Make changes to SQLAlchemy models
+2. Generate a migration with `alembic revision --autogenerate -m "description"`
+3. Review and edit the generated migration file if necessary
+4. Rename the file to follow the sequential numbering convention
+5. Test the migration in a development environment
+6. Apply the migration with `alembic upgrade head`
+7. Commit the migration file to version control
+
+### Complete Migration Lifecycle
+
+```mermaid
+graph TD
+    A[Start: Need DB Change] --> B[Update SQLAlchemy Models]
+    B --> C[Generate Migration]
+    C --> D[Review & Edit Migration]
+    D --> E[Rename with Sequential Number]
+    E --> F[Test in Development]
+    F --> G{Tests Pass?}
+    G -->|No| H[Fix Issues]
+    H --> F
+    G -->|Yes| I[Apply to Production]
+    I --> J[Commit to Version Control]
+    J --> K[End: DB Changed]
+    
+    style A fill:#d0f0c0,stroke:#333,stroke-width:1px
+    style K fill:#d0f0c0,stroke:#333,stroke-width:1px
+    style G fill:#ffc0c0,stroke:#333,stroke-width:1px
+```
+
+By following this guide and examining existing migrations, you'll be able to create and manage database migrations effectively in the Zyeta backend.

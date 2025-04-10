@@ -1,0 +1,147 @@
+---
+title: 'Overview'
+description: 'Overview of the Zyeta API endpoints and functionality'
+---
+
+The Zyeta API is organized around REST principles, using standard HTTP verbs, returning JSON responses, and using standard HTTP status codes to indicate errors.
+
+## Base URL
+
+All API requests should be made to the following base URL:
+
+```
+https://api.zyeta.io
+```
+
+For local development, the base URL is:
+
+```
+http://localhost:8000
+```
+
+## Authentication
+
+All API endpoints require authentication. See the [Authentication Guide](/authentication) for details on how to authenticate your requests.
+
+## Response Format
+
+Responses are returned in JSON format. Successful responses typically include:
+
+```json
+{
+  "status": "success",
+  "data": {
+    // Response data here
+  }
+}
+```
+
+Error responses follow a consistent structure:
+
+```json
+{
+  "status": "error",
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human-readable error message",
+    "details": {} // Optional additional details
+  }
+}
+```
+
+## HTTP Status Codes
+
+The API uses standard HTTP status codes to indicate the success or failure of a request:
+
+| Code | Description |
+| ---- | ----------- |
+| 200  | OK - The request was successful |
+| 201  | Created - A new resource was successfully created |
+| 400  | Bad Request - The request was invalid |
+| 401  | Unauthorized - Authentication failed or not provided |
+| 403  | Forbidden - The authenticated user doesn't have permission |
+| 404  | Not Found - The requested resource doesn't exist |
+| 422  | Unprocessable Entity - Validation error |
+| 429  | Too Many Requests - Rate limit exceeded |
+| 500  | Internal Server Error - Something went wrong on the server |
+
+## Rate Limiting
+
+API requests are subject to rate limiting to ensure stability and fair usage. The current limits are:
+
+- 100 requests per minute per IP address
+- 1000 requests per hour per authenticated user
+
+Rate limit headers are included in all API responses:
+
+```
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 95
+X-RateLimit-Reset: 1620000000
+```
+
+## Pagination
+
+For endpoints that return lists of items, the API uses cursor-based pagination. Parameters:
+
+- `limit`: Number of items to return (default: 20, max: 100)
+- `cursor`: Cursor for pagination (obtained from previous responses)
+
+Paginated responses include:
+
+```json
+{
+  "status": "success",
+  "data": [
+    // Items here
+  ],
+  "pagination": {
+    "next_cursor": "next_page_cursor",
+    "has_more": true
+  }
+}
+```
+
+## API Endpoints
+
+The Zyeta API is organized into the following categories:
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="lock" href="/api-reference/auth">
+    Endpoints for authentication and user management
+  </Card>
+  <Card title="Users" icon="user" href="/api-reference/users">
+    User-related endpoints
+  </Card>
+  <Card title="Projects" icon="folder" href="/api-reference/projects">
+    Project management endpoints
+  </Card>
+  <Card title="Tasks" icon="list-check" href="/api-reference/tasks">
+    Task management endpoints
+  </Card>
+</CardGroup>
+
+## OpenAPI Specification
+
+The complete OpenAPI specification for the Zyeta API is available at:
+
+```
+https://api.zyeta.io/openapi.json
+```
+
+You can also explore the API interactively using Swagger UI:
+
+```
+https://api.zyeta.io/docs
+```
+
+## Client Libraries
+
+Official client libraries for the Zyeta API:
+
+- [Python](https://github.com/zyeta-io/zyeta-python)
+- [JavaScript](https://github.com/zyeta-io/zyeta-js)
+
+## Webhooks
+
+Zyeta supports webhooks for real-time notifications about events in your account. See the [Webhooks Guide](/webhooks) for details. 

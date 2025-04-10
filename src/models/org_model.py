@@ -1,6 +1,6 @@
 from sqlalchemy import Boolean, Enum, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import CRUD
 
@@ -14,6 +14,9 @@ class OrganizationModel(CRUD):
   slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
   settings: Mapped[dict] = mapped_column(JSONB, nullable=True, server_default="{}")
   is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+
+  # Relationships
+  invitations = relationship("InvitationModel", back_populates="organization", cascade="all, delete-orphan")
 
 
 class OrganizationMemberModel(CRUD):

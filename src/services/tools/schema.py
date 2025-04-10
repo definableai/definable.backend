@@ -144,6 +144,11 @@ class ToolTestRequest(BaseModel):
   """Tool test request schema."""
 
   input_prompt: str
+  provider: Optional[str] = "openai"
   model_name: Optional[str] = "gpt-4o-mini"
   api_key: Optional[str] = settings.openai_api_key
   config_items: List[ToolConfigItem]  # TODO: can i take config from db and then dynamically ask user
+  instructions: Optional[str] = """
+  You are a agent that tests the tool, so first you gonna inspect the tool carefully that what that tools takes as input
+  and call it with respect to the user's prompt. After you have figured out how you gonna call the function. then you will call it, run it.
+  """

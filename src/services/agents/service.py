@@ -6,9 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies.security import RBAC, JWTBearer
+from models import AgentModel
 from services.__base.acquire import Acquire
 
-from .model import AgentModel
 from .schema import AgentResponse, PaginatedAgentResponse
 
 
@@ -20,7 +20,6 @@ class AgentService:
   def __init__(self, acquire: Acquire):
     """Initialize service."""
     self.acquire = acquire
-    self.models = acquire.models
 
   async def get_list(
     self,

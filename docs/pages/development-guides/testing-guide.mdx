@@ -1,0 +1,994 @@
+---
+title: 'Testing Guide'
+description: 'Comprehensive guidelines for writing and running tests in the Zyeta backend'
+---
+
+This guide outlines the testing strategy, standards, and best practices for the Zyeta backend codebase. It serves as a blueprint for developers to ensure consistent quality and reliability through automated testing.
+
+## Overview
+
+A robust testing approach is crucial for maintaining code quality and ensuring that our services function correctly after changes. Our testing strategy comprises multiple levels:
+
+```mermaid
+flowchart TD
+    A[Testing Strategy] --> B[Unit Tests]
+    A --> C[Integration Tests]
+    A --> D[End-to-End Tests]
+    
+    B --> B1[Test individual functions/methods]
+    B --> B2[Mock dependencies]
+    B --> B3[Fast execution]
+    
+    C --> C1[Test service interactions]
+    C --> C2[Test database operations]
+    C --> C3[Limited scope mocking]
+    
+    D --> D1[Test complete workflows]
+    D --> D2[Test API endpoints]
+    D --> D3[Realistic data]
+```
+
+### Test Pyramid
+
+The test pyramid represents the ideal distribution of different test types:
+
+```mermaid
+pyramid-schema
+    title Test Pyramid
+    unit: 70
+    integration: 20
+    e2e: 10
+```
+
+This visualization demonstrates that:
+- **Unit tests** should form the majority of your test suite (fastest to run, easiest to write)
+- **Integration tests** should be fewer in number but cover critical component interactions
+- **End-to-End tests** should be the fewest but test complete user workflows
+
+## Test Directory Structure
+
+Organize tests with a clear structure that mirrors the source code:
+
+```
+zyeta.backend/
+├── src/
+│   ├── models/
+│   ├── services/
+│   └── ...
+└── tests/
+    ├── unit/
+    │   ├── models/
+    │   └── services/
+    ├── integration/
+    │   └── services/
+    ├── e2e/
+    │   └── api/
+    ├── conftest.py
+    └── fixtures/
+        ├── database.py
+        ├── models.py
+        └── services.py
+```
+
+```mermaid
+graph TD
+    A[zyeta.backend] --> B[src]
+    A --> C[tests]
+    
+    B --> B1[models]
+    B --> B2[services]
+    B --> B3[...]
+    
+    C --> C1[unit]
+    C --> C2[integration]
+    C --> C3[e2e]
+    C --> C4[conftest.py]
+    C --> C5[fixtures]
+    
+    C1 --> C1A[models]
+    C1 --> C1B[services]
+    
+    C2 --> C2A[services]
+    
+    C3 --> C3A[api]
+    
+    C5 --> C5A[database.py]
+    C5 --> C5B[models.py]
+    C5 --> C5C[services.py]
+    
+    style C1 fill:#d0e0ff,stroke:#333,stroke-width:1px
+    style C2 fill:#ffe0d0,stroke:#333,stroke-width:1px
+    style C3 fill:#d0ffe0,stroke:#333,stroke-width:1px
+```
+
+## Setting Up the Testing Environment
+
+### Prerequisites
+
+The project uses pytest for running tests. Dependencies are managed through Poetry and include:
+
+- pytest
+- pytest-asyncio (for testing async code)
+- pytest-cov (for coverage reporting)
+
+These are already included in `pyproject.toml`.
+
+### Test Configuration
+
+Create a `conftest.py` file at the root of the tests directory to define shared fixtures:
+
+```python
+import asyncio
+import os
+import pytest
+from typing import AsyncGenerator, Generator
+
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+
+from src.database import Base, get_db
+from src.config import get_settings
+
+# Test database URL - use an isolated test database
+TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/test_zyeta"
+
+@pytest.fixture(scope="session")
+def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
+    """Create an instance of the default event loop for each test session."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
+
+@pytest.fixture(scope="session")
+async def db_engine():
+    """Create a test database engine."""
+    engine = create_async_engine(TEST_DATABASE_URL)
+    
+    # Create all tables
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    
+    yield engine
+    
+    # Clean up
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    
+    await engine.dispose()
+
+@pytest.fixture
+async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:
+    """Create a test database session."""
+    async_session = sessionmaker(
+        db_engine, expire_on_commit=False, class_=AsyncSession
+    )
+    
+    async with async_session() as session:
+        # Begin transaction
+        async with session.begin():
+            yield session
+            # Rollback transaction after test completes
+            await session.rollback()
+
+@pytest.fixture
+async def override_get_db(db_session: AsyncSession):
+    """Override the get_db dependency for testing."""
+    async def _override_get_db():
+        yield db_session
+    
+    return _override_get_db
+```
+
+### Test Fixture Dependencies
+
+```mermaid
+graph TD
+    A[Test] --> B[db_session]
+    B --> C[db_engine]
+    C --> D[event_loop]
+    
+    E[API Test] --> F[client]
+    F --> G[override_get_db]
+    G --> B
+
+    H[Model Test] --> I[test_agent]
+    I --> J[test_user]
+    J --> K[test_organization]
+    K --> B
+    J --> B
+    I --> B
+    
+    style B fill:#d0e0ff,stroke:#333,stroke-width:1px
+    style C fill:#d0e0ff,stroke:#333,stroke-width:1px
+    style G fill:#ffe0d0,stroke:#333,stroke-width:1px
+    style I fill:#d0ffe0,stroke:#333,stroke-width:1px
+    style J fill:#d0ffe0,stroke:#333,stroke-width:1px
+    style K fill:#d0ffe0,stroke:#333,stroke-width:1px
+```
+
+## Unit Tests
+
+Unit tests focus on testing individual components in isolation.
+
+### Writing Unit Tests for Models
+
+```python
+# tests/unit/models/test_agent_model.py
+import pytest
+from uuid import uuid4
+
+from src.models import AgentModel
+
+@pytest.mark.asyncio
+async def test_agent_model_creation(db_session):
+    """Test creating an AgentModel instance."""
+    # Arrange
+    agent_data = {
+        "organization_id": uuid4(),
+        "user_id": uuid4(),
+        "name": "Test Agent",
+        "description": "Test agent description",
+        "model_id": uuid4(),
+        "is_active": True,
+        "settings": {"key": "value"}
+    }
+    
+    # Act
+    agent = AgentModel(**agent_data)
+    db_session.add(agent)
+    await db_session.commit()
+    await db_session.refresh(agent)
+    
+    # Assert
+    assert agent.id is not None
+    assert agent.name == "Test Agent"
+    assert agent.is_active is True
+```
+
+### Unit Test Flow
+
+```mermaid
+sequenceDiagram
+    participant Test as Test Function
+    participant Model as Model Object
+    participant Session as DB Session
+    participant DB as Test Database
+    
+    Test->>Model: Create instance with test data
+    Test->>Session: Add model to session
+    Session->>DB: Begin transaction
+    Test->>Session: Commit changes
+    Session->>DB: Execute SQL INSERT
+    DB-->>Session: Return success
+    Test->>Session: Refresh model
+    Session->>DB: Query for fresh data
+    DB-->>Session: Return updated data
+    Session-->>Model: Update attributes
+    Test->>Model: Assert expected values
+    Test->>Session: (implicit) Rollback transaction
+    Session->>DB: Rollback changes
+```
+
+### Writing Unit Tests for Services
+
+```python
+# tests/unit/services/test_agent_service.py
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
+
+from src.services.agents.service import AgentService
+from src.services.agents.schema import AgentCreate
+
+@pytest.mark.asyncio
+async def test_create_agent(db_session):
+    """Test creating an agent with AgentService."""
+    # Arrange
+    org_id = uuid4()
+    user_mock = {"id": uuid4(), "org_id": org_id}
+    agent_data = AgentCreate(
+        name="Test Agent",
+        description="Test agent description",
+        model_id=uuid4(),
+        is_active=True,
+        settings={"key": "value"}
+    )
+    
+    acquire_mock = MagicMock()
+    agent_service = AgentService(acquire_mock)
+    
+    # Act
+    result = await agent_service.create(
+        org_id=org_id,
+        data=agent_data,
+        session=db_session,
+        user=user_mock
+    )
+    
+    # Assert
+    assert result.name == "Test Agent"
+    assert result.organization_id == org_id
+```
+
+## Integration Tests
+
+Integration tests verify that different components work together correctly.
+
+### Testing Service Integration
+
+```python
+# tests/integration/services/test_agent_kb_integration.py
+import pytest
+from uuid import uuid4
+
+from src.services.agents.service import AgentService
+from src.services.kb.service import KBService
+from src.services.agents.schema import AgentCreate
+from src.services.kb.schema import KBCreate
+
+@pytest.mark.asyncio
+async def test_agent_with_kb_integration(db_session):
+    """Test integration between Agent and Knowledge Base services."""
+    # Arrange
+    org_id = uuid4()
+    user_mock = {"id": uuid4(), "org_id": org_id}
+    
+    # Create a knowledge base
+    kb_service = KBService(None)
+    kb_data = KBCreate(
+        name="Test KB",
+        description="Test KB description",
+        embedding_model="text-embedding-ada-002"
+    )
+    kb = await kb_service.create(
+        org_id=org_id,
+        data=kb_data,
+        session=db_session,
+        user=user_mock
+    )
+    
+    # Create an agent that uses the knowledge base
+    agent_service = AgentService(None)
+    agent_data = AgentCreate(
+        name="Test Agent with KB",
+        description="Agent using KB",
+        model_id=uuid4(),
+        settings={"knowledge_base_id": str(kb.id)}
+    )
+    
+    # Act
+    agent = await agent_service.create(
+        org_id=org_id,
+        data=agent_data,
+        session=db_session,
+        user=user_mock
+    )
+    
+    # Assert
+    assert agent.settings.get("knowledge_base_id") == str(kb.id)
+    # Additional assertions to verify integration
+```
+
+### Integration Test Service Interaction
+
+```mermaid
+sequenceDiagram
+    participant Test as Test Function
+    participant KBSvc as KnowledgeBase Service
+    participant AgentSvc as Agent Service
+    participant DB as Test Database
+    
+    Test->>KBSvc: Create KB (org_id, kb_data)
+    KBSvc->>DB: Store KB data
+    DB-->>KBSvc: Return KB instance
+    KBSvc-->>Test: Return KB
+    
+    Test->>AgentSvc: Create Agent with KB reference
+    AgentSvc->>DB: Store Agent data
+    DB-->>AgentSvc: Return Agent instance
+    AgentSvc-->>Test: Return Agent
+    
+    Test->>Test: Assert KB reference in Agent
+```
+
+### Testing Database Operations
+
+```python
+# tests/integration/services/test_agent_db_operations.py
+import pytest
+from uuid import uuid4
+
+from src.services.agents.service import AgentService
+from src.services.agents.schema import AgentCreate, AgentUpdate
+
+@pytest.mark.asyncio
+async def test_agent_crud_operations(db_session):
+    """Test CRUD operations for Agents."""
+    # Arrange
+    org_id = uuid4()
+    user_mock = {"id": uuid4(), "org_id": org_id}
+    agent_service = AgentService(None)
+    
+    # Act - Create
+    agent_data = AgentCreate(
+        name="Test Agent",
+        description="Initial description",
+        model_id=uuid4(),
+        settings={}
+    )
+    agent = await agent_service.create(
+        org_id=org_id,
+        data=agent_data,
+        session=db_session,
+        user=user_mock
+    )
+    
+    # Act - Read
+    retrieved_agent = await agent_service.get(
+        agent_id=agent.id,
+        session=db_session,
+        user=user_mock
+    )
+    
+    # Act - Update
+    update_data = AgentUpdate(
+        description="Updated description"
+    )
+    updated_agent = await agent_service.update(
+        agent_id=agent.id,
+        data=update_data,
+        session=db_session,
+        user=user_mock
+    )
+    
+    # Act - Delete
+    delete_result = await agent_service.delete(
+        agent_id=agent.id,
+        session=db_session,
+        user=user_mock
+    )
+    
+    # Assert
+    assert retrieved_agent.id == agent.id
+    assert updated_agent.description == "Updated description"
+    assert delete_result["success"] is True
+```
+
+### CRUD Operations Sequence
+
+```mermaid
+sequenceDiagram
+    participant Test as Test Function
+    participant Service as Agent Service
+    participant DB as Test Database
+    
+    Note over Test,DB: Create Operation
+    Test->>Service: create(agent_data)
+    Service->>DB: INSERT agent
+    DB-->>Service: Return agent id
+    Service-->>Test: Return agent instance
+    
+    Note over Test,DB: Read Operation
+    Test->>Service: get(agent_id)
+    Service->>DB: SELECT agent WHERE id=agent_id
+    DB-->>Service: Return agent data
+    Service-->>Test: Return agent instance
+    
+    Note over Test,DB: Update Operation
+    Test->>Service: update(agent_id, update_data)
+    Service->>DB: UPDATE agent SET values WHERE id=agent_id
+    DB-->>Service: Return updated agent
+    Service-->>Test: Return updated agent instance
+    
+    Note over Test,DB: Delete Operation
+    Test->>Service: delete(agent_id)
+    Service->>DB: DELETE FROM agent WHERE id=agent_id
+    DB-->>Service: Confirm deletion
+    Service-->>Test: Return success result
+```
+
+## End-to-End (E2E) Tests
+
+E2E tests verify that the entire system works as expected.
+
+### Testing API Endpoints
+
+```python
+# tests/e2e/api/test_agent_api.py
+import pytest
+from fastapi.testclient import TestClient
+from fastapi import FastAPI
+import json
+from uuid import uuid4
+
+from src.app import app
+from src.database import get_db
+from src.dependencies.security import JWTBearer, RBAC
+
+# Mock dependencies
+@pytest.fixture
+def client(override_get_db):
+    """Create a test client with overridden dependencies."""
+    app.dependency_overrides[get_db] = override_get_db
+    
+    # Mock auth dependency
+    async def override_jwt():
+        return {"user_id": str(uuid4()), "org_id": str(uuid4())}
+    
+    async def override_rbac(*args, **kwargs):
+        return {"user_id": str(uuid4()), "org_id": str(uuid4())}
+    
+    app.dependency_overrides[JWTBearer] = override_jwt
+    app.dependency_overrides[RBAC] = override_rbac
+    
+    with TestClient(app) as test_client:
+        yield test_client
+    
+    # Clear overrides
+    app.dependency_overrides.clear()
+
+def test_create_agent(client):
+    """Test creating an agent via API endpoint."""
+    # Arrange
+    org_id = str(uuid4())
+    agent_data = {
+        "name": "API Test Agent",
+        "description": "Created via API test",
+        "model_id": str(uuid4()),
+        "is_active": True,
+        "settings": {"test_key": "test_value"}
+    }
+    
+    # Act
+    response = client.post(
+        f"/api/agents/create?org_id={org_id}",
+        json=agent_data
+    )
+    
+    # Assert
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == "API Test Agent"
+    assert "id" in data
+```
+
+### E2E Test Flow
+
+```mermaid
+sequenceDiagram
+    participant Test as Test Function
+    participant Client as Test Client
+    participant App as FastAPI App
+    participant Auth as Auth Middleware 
+    participant Route as API Route
+    participant Service as Service Layer
+    participant DB as Test Database
+    
+    Test->>Client: POST /api/agents/create
+    Client->>App: HTTP POST Request
+    App->>Auth: Validate Authentication
+    Auth-->>App: Auth Successful (Mock)
+    App->>Route: Route to endpoint handler
+    Route->>Service: Call service method
+    Service->>DB: Store data
+    DB-->>Service: Return stored data
+    Service-->>Route: Return response data
+    Route-->>App: Return HTTP response
+    App-->>Client: Return HTTP 200 + JSON
+    Client-->>Test: Return Response object
+    Test->>Test: Assert response status and content
+```
+
+## Mocking
+
+Proper use of mocks is essential for isolation and controlled testing.
+
+### Mocking External Services
+
+```python
+# tests/unit/services/test_llm_service.py
+import pytest
+from unittest.mock import patch, MagicMock
+
+from src.services.llm.service import LLMService
+
+@pytest.mark.asyncio
+async def test_generate_text_with_mocked_openai():
+    """Test LLM service with mocked OpenAI client."""
+    # Arrange
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock(message=MagicMock(content="Mocked response"))]
+    
+    # Mock the OpenAI client
+    with patch("openai.AsyncClient.chat.completions.create", return_value=mock_response):
+        llm_service = LLMService(None)
+        
+        # Act
+        result = await llm_service.generate_text(
+            model="gpt-4o",
+            prompt="Hello, world!",
+            max_tokens=100
+        )
+        
+        # Assert
+        assert result == "Mocked response"
+```
+
+### Mocking Concept Visualization
+
+```mermaid
+flowchart TD
+    A[Test] --> B[Service Under Test]
+    B -->|Without Mocking| C[External API]
+    C --> D[Internet]
+    
+    A --> B2[Service Under Test]
+    B2 -->|With Mocking| E[Mock Object]
+    
+    subgraph "Real World"
+    C
+    D
+    end
+    
+    subgraph "Controlled Test Environment"
+    E
+    end
+    
+    style C fill:#f99,stroke:#933,stroke-width:1px
+    style E fill:#9f9,stroke:#393,stroke-width:1px
+```
+
+## Test Fixtures
+
+Create reusable fixtures to reduce code duplication and simplify tests.
+
+### Model Fixtures
+
+```python
+# tests/fixtures/models.py
+import pytest
+from uuid import uuid4
+
+from src.models import AgentModel, UserModel, OrganizationModel
+
+@pytest.fixture
+async def test_organization(db_session):
+    """Create a test organization."""
+    org = OrganizationModel(
+        name="Test Organization",
+        slug="test-org",
+        settings={},
+        is_active=True
+    )
+    db_session.add(org)
+    await db_session.commit()
+    await db_session.refresh(org)
+    return org
+
+@pytest.fixture
+async def test_user(db_session, test_organization):
+    """Create a test user."""
+    user = UserModel(
+        email="test@example.com",
+        password="hashed_password",
+        first_name="Test",
+        last_name="User",
+        is_active=True
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    return user
+
+@pytest.fixture
+async def test_agent(db_session, test_organization, test_user):
+    """Create a test agent."""
+    agent = AgentModel(
+        organization_id=test_organization.id,
+        user_id=test_user.id,
+        name="Test Agent",
+        description="Test agent for unit tests",
+        model_id=uuid4(),  # This would be a real model ID in a real test
+        is_active=True,
+        settings={}
+    )
+    db_session.add(agent)
+    await db_session.commit()
+    await db_session.refresh(agent)
+    return agent
+```
+
+## Test Coverage
+
+Aim for high test coverage of the codebase.
+
+### Running Coverage Reports
+
+```bash
+# Run tests with coverage
+pytest --cov=src tests/
+
+# Generate HTML coverage report
+pytest --cov=src --cov-report=html tests/
+```
+
+### Coverage Targets
+
+- **Unit Tests**: Aim for 80%+ coverage of all functions and methods
+- **Integration Tests**: Cover all major service interactions
+- **E2E Tests**: Cover all API endpoints and primary user flows
+
+```mermaid
+pie title Code Coverage Targets
+    "Unit Tests" : 80
+    "Integration Tests" : 15
+    "E2E Tests" : 5
+```
+
+## Continuous Integration
+
+Tests will be integrated into the CI/CD pipeline to ensure code quality.
+
+### CI/CD Workflow
+
+```mermaid
+flowchart TD
+    A[Developer Push/PR] --> B[GitHub Actions Trigger]
+    B --> C[Install Dependencies]
+    C --> D[Run Linting]
+    C --> E[Run Tests]
+    E --> F[Generate Coverage Report]
+    
+    D -->|Fail| G[Notify Developer]
+    E -->|Fail| G
+    
+    D -->|Pass| H[Checks Complete]
+    F -->|Pass| H
+    
+    H --> I{Is PR to dev/main?}
+    I -->|Yes| J[Review & Merge]
+    I -->|No| K[Continue Development]
+    
+    J --> L[Deploy to Server]
+    
+    style A fill:#d0e0ff,stroke:#333,stroke-width:1px
+    style G fill:#ffcccc,stroke:#333,stroke-width:1px
+    style H fill:#ccffcc,stroke:#333,stroke-width:1px
+    style L fill:#ffffcc,stroke:#333,stroke-width:1px
+```
+
+### GitHub Actions Configuration
+
+Update the `.github/workflows/pre-commit.yml` file to include testing:
+
+```yaml
+name: Tests and Linting
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: test_zyeta
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+      
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -
+          poetry config virtualenvs.create false
+      
+      - name: Install dependencies
+        run: |
+          poetry install --no-interaction
+      
+      - name: Run tests
+        run: |
+          pytest --cov=src tests/
+          
+      - name: Generate coverage report
+        run: |
+          pytest --cov=src --cov-report=xml tests/
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+      - run: pip install ruff
+      - run: pip install mypy
+      - run: pip install pre-commit
+      - run: pre-commit run --all-files
+```
+
+## Testing Strategies by Component
+
+### Models
+
+- Test model instantiation
+- Test relationships between models
+- Test constraints and defaults
+
+### Services
+
+- Test business logic
+- Test error handling
+- Test edge cases
+- Mock external dependencies
+
+### API Endpoints
+
+- Test request validation
+- Test authentication/authorization
+- Test response format
+- Test error responses
+
+### Component Testing Focus
+
+```mermaid
+mindmap
+  root((Testing))
+    Models
+      Instantiation
+      Constraints
+      Relationships
+      Defaults
+    Services
+      Business Logic
+      Error Handling
+      Edge Cases
+      External Dependencies
+    API Endpoints
+      Request Validation
+      Authentication
+      Response Format
+      Error Responses
+    Database
+      Transactions
+      Data Integrity
+      Migrations
+      Performance
+```
+
+## Best Practices
+
+### General Guidelines
+
+1. **Test pyramid**: Write more unit tests than integration tests, and more integration tests than E2E tests
+2. **Test isolation**: Each test should be independent and not rely on the state from other tests
+3. **Descriptive naming**: Use clear, descriptive names for test functions
+4. **Arrange-Act-Assert**: Structure tests with clear sections for setup, execution, and verification
+5. **Don't test implementation details**: Focus on behavior, not implementation
+
+### Test Organization Pattern
+
+```mermaid
+flowchart TD
+    A[Test Function] --> B[Arrange]
+    B --> C[Act]
+    C --> D[Assert]
+    
+    B --> B1[Set up test data]
+    B --> B2[Configure mocks]
+    B --> B3[Prepare environment]
+    
+    C --> C1[Call function/method under test]
+    
+    D --> D1[Verify expected outputs]
+    D --> D2[Verify state changes]
+    D --> D3[Verify interactions]
+    
+    style B fill:#d0e0ff,stroke:#333,stroke-width:1px
+    style C fill:#ffe0d0,stroke:#333,stroke-width:1px
+    style D fill:#d0ffe0,stroke:#333,stroke-width:1px
+```
+
+### Asynchronous Testing
+
+Since our application uses async/await, follow these practices:
+
+1. Use `pytest.mark.asyncio` decorator for async test functions
+2. Use `async` fixtures where needed
+3. Handle event loops properly
+
+```python
+@pytest.mark.asyncio
+async def test_async_function():
+    # Test async code here
+    result = await some_async_function()
+    assert result == expected_value
+```
+
+### Testing Database Operations
+
+1. Use transactions to isolate tests
+2. Roll back after each test
+3. Use a separate test database
+
+### Common Pitfalls
+
+1. **Slow tests**: Keep tests fast, especially unit tests
+2. **Flaky tests**: Avoid tests that sometimes pass and sometimes fail
+3. **Over-mocking**: Don't mock everything; test real interactions where practical
+4. **Hardcoded test data**: Use fixtures and factories for test data
+5. **Missing edge cases**: Test error paths, not just happy paths
+
+### Testing Pitfalls and Solutions
+
+```mermaid
+classDiagram
+    class TestPitfall {
+        +String name
+        +String impact
+        +String solution
+    }
+    
+    class SlowTests {
+        +name = "Slow Tests"
+        +impact = "Long CI times, developer frustration"
+        +solution = "Focus on unit tests, optimize DB setup"
+    }
+    
+    class FlakyTests {
+        +name = "Flaky Tests"
+        +impact = "False failures, lost trust in tests"
+        +solution = "Avoid external dependencies, control test environment"
+    }
+    
+    class OverMocking {
+        +name = "Over-Mocking"
+        +impact = "Tests pass but system fails in production"
+        +solution = "Use real implementations for critical paths"
+    }
+    
+    class MissingEdgeCases {
+        +name = "Missing Edge Cases"
+        +impact = "Unexpected errors in production"
+        +solution = "Test failure paths, not just happy paths"
+    }
+    
+    TestPitfall <|-- SlowTests
+    TestPitfall <|-- FlakyTests
+    TestPitfall <|-- OverMocking
+    TestPitfall <|-- MissingEdgeCases
+```
+
+## Conclusion
+
+A comprehensive testing strategy is essential for maintaining a healthy codebase. By following this guide, developers can write effective tests that ensure the reliability and quality of the Zyeta backend.
+
+Remember that tests are an investment in the future of the codebase, making it safer to refactor and extend functionality while maintaining confidence in the system's behavior.
+
+## Additional Resources
+
+- [Pytest Documentation](https://docs.pytest.org/)
+- [SQLAlchemy Testing](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html#testing)
+- [FastAPI Testing](https://fastapi.tiangolo.com/tutorial/testing/)
+- [Mocking in Python](https://docs.python.org/3/library/unittest.mock.html)

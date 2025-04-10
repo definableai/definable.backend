@@ -8,10 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies.security import JWTBearer
+from models import OrganizationMemberModel, OrganizationModel, RoleModel
 from services.__base.acquire import Acquire
 from services.roles.service import RoleService
 
-from .model import OrganizationMemberModel, OrganizationModel
 from .schema import OrganizationResponse
 
 
@@ -23,7 +23,6 @@ class OrganizationService:
   def __init__(self, acquire: Acquire):
     """Initialize service."""
     self.acquire = acquire
-    self.models = acquire.models
 
   async def post_create_org(
     self,
@@ -55,7 +54,7 @@ class OrganizationService:
     await session.flush()
 
     # only owner can create an organization, so set a default role owner
-    query = select(self.models["RoleModel"]).where(self.models["RoleModel"].name == "owner")
+    query = select(RoleModel).where(RoleModel.name == "owner")
     result = await session.execute(query)
     owner_role = result.unique().scalar_one_or_none()
     if not owner_role:

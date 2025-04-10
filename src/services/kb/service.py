@@ -15,12 +15,12 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from database import async_engine, get_db
 from dependencies.security import RBAC
-from libs.s3 import s3_client
-from libs.vectorstore import create_vectorstore
+from libs.s3.v1 import s3_client
+from libs.vectorstore.v1 import create_vectorstore
+from models import DocumentStatus, KBDocumentModel, KnowledgeBaseModel, SourceTypeModel
 from services.__base.acquire import Acquire
 
 from .loaders import DocumentProcessor
-from .model import DocumentStatus, KBDocumentModel, KnowledgeBaseModel, SourceTypeModel
 from .schema import (
   DocumentChunk,
   DocumentChunkCreate,
@@ -63,6 +63,7 @@ class KnowledgeBaseService:
   def __init__(self, acquire: Acquire):
     """Initialize service."""
     self.acquire = acquire
+    self.settings = acquire.settings
     self.ws_manager = acquire.ws_manager
     self.utils = acquire.utils
 

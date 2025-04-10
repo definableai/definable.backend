@@ -1,7 +1,7 @@
 """009_create_tools
 
 Revision ID: ba6775663b8a
-Revises: fb7256243eb1
+Revises: a8f51c3e9d12
 Create Date: 2025-03-27 21:20:27.801368
 
 """
@@ -15,7 +15,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "ba6775663b8a"
-down_revision: Union[str, None] = "fb7256243eb1"
+down_revision: Union[str, None] = "a8f51c3e9d12"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
