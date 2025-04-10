@@ -6,9 +6,9 @@ from fastapi import Depends, HTTPException, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-import jwt
 
 from database import get_db
+from dependencies.security import JWTBearer
 from models import (
   InvitationModel,
   InvitationStatus,
@@ -25,7 +25,8 @@ from .schema import InviteSignup, TokenResponse, UserLogin, UserResponse, UserSi
 class AuthService:
   """Authentication service."""
 
-  http_exposed = ["post=signup", "post=login", "get=me", "post=signup_invite", "get=signup_invite", "post=request_password_reset", "post=reset_password"]
+  http_exposed = ["post=signup", "post=login", "get=me", "post=signup_invite", "get=signup_invite", "post=request_password_reset",
+                  "post=reset_password"]
 
   def __init__(self, acquire: Acquire):
     """Initialize service."""
@@ -227,14 +228,12 @@ class AuthService:
         detail="Failed to process password reset request"
       )
 
-  async def post_reset_password(self, reset_data: PasswordResetToken, session: AsyncSession = Depends(get_db)) -> dict:
+  async def post_reset_password(self, reset_data: PasswordResetToken, session: AsyncSession = Depends(get_db),
+                                token_payload: dict = Depends(JWTBearer())) -> dict:
     """Reset password using token."""
     try:
-      # Verify token
-      payload = jwt.decode(reset_data.token, self.settings.jwt_secret, algorithms=["HS256"])
-      
       # Check if token is for password reset
-      if payload.get("type") != "password_reset":
+      if token_payload.get("type") != "password_reset":
         self.logger.warning("Invalid reset token type")
         raise HTTPException(
           status_code=status.HTTP_400_BAD_REQUEST,
@@ -242,7 +241,7 @@ class AuthService:
         )
 
       # Get user
-      user_id = payload.get("id")
+      user_id = token_payload.get("id")
       if not user_id:
         self.logger.warning("Missing user ID in reset token")
         raise HTTPException(
@@ -272,22 +271,13 @@ class AuthService:
       # Update password
       user.password = self.utils.get_password_hash(reset_data.new_password)
       await session.commit()
+
+      # Send confirmation email
+      await self.utils.send_password_reset_confirmation_email(user.email)
       self.logger.info(f"Password reset successful for user: {user.email}")
 
       return {"message": "Password has been reset successfully"}
 
-    except jwt.ExpiredSignatureError:
-      self.logger.warning("Expired reset token")
-      raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Reset token has expired"
-      )
-    except jwt.InvalidTokenError:
-      self.logger.warning("Invalid reset token")
-      raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Invalid reset token"
-      )
     except Exception as e:
       self.logger.error(f"Error in password reset: {str(e)}")
       raise HTTPException(

@@ -59,6 +59,5 @@ class PasswordResetRequest(BaseModel):
 
 class PasswordResetToken(BaseModel):
     """Password reset token schema."""
-    token: str
     new_password: str = Field(..., min_length=8)
     confirm_password: str = Field(..., min_length=8)
