@@ -1,0 +1,865 @@
+---
+title: 'Roles Service API'
+description: 'API reference for managing roles and permissions'
+---
+
+The Roles Service provides endpoints for creating, managing, and assigning roles and permissions within organizations. It implements a robust role-based access control (RBAC) system that allows fine-grained control over user permissions.
+
+## Authentication
+
+All endpoints require a valid Bearer token in the Authorization header.
+
+## Base URL
+
+```
+/api/roles
+```
+
+## Role Endpoints
+
+### Create Role
+
+Create a new role within an organization.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/roles/create?org_id=your-org-id \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Project Manager",
+    "description": "Manages projects and team assignments",
+    "hierarchy_level": 50,
+    "permission_ids": [
+      "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "8f7e6d5c-4b3a-2912-1098-7f6e5d4c3b2a"
+    ]
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/roles/create"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+params = {
+    "org_id": "your-org-id"
+}
+data = {
+    "name": "Project Manager",
+    "description": "Manages projects and team assignments",
+    "hierarchy_level": 50,
+    "permission_ids": [
+        "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "8f7e6d5c-4b3a-2912-1098-7f6e5d4c3b2a"
+    ]
+}
+
+response = requests.post(url, headers=headers, params=params, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/roles/create";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const params = {
+    org_id: "your-org-id"
+};
+const data = {
+    name: "Project Manager",
+    description: "Manages projects and team assignments",
+    hierarchy_level: 50,
+    permission_ids: [
+        "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "8f7e6d5c-4b3a-2912-1098-7f6e5d4c3b2a"
+    ]
+};
+
+axios.post(url, data, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+  "name": "Project Manager",
+  "description": "Manages projects and team assignments",
+  "hierarchy_level": 50,
+  "org_id": "your-org-id",
+  "created_at": "2023-08-01T10:00:00Z",
+  "updated_at": "2023-08-01T10:00:00Z",
+  "permissions": [
+    {
+      "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "name": "project:read",
+      "description": "Can view project details",
+      "action": "read",
+      "resource": "project"
+    },
+    {
+      "id": "8f7e6d5c-4b3a-2912-1098-7f6e5d4c3b2a",
+      "name": "project:write",
+      "description": "Can create and edit projects",
+      "action": "write",
+      "resource": "project"
+    }
+  ]
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/roles/create`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Role name |
+| `description` | string | No | Role description |
+| `hierarchy_level` | integer | Yes | Role hierarchy level (higher number = higher privileges) |
+| `permission_ids` | array | Yes | List of permission IDs to assign to the role |
+
+### List Roles
+
+Retrieve all roles for an organization.
+
+<CodeGroup>
+```bash Request
+curl -X GET {{baseUrl}}/api/roles/list?org_id=your-org-id \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/roles/list"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "org_id": "your-org-id"
+}
+
+response = requests.get(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/roles/list";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    org_id: "your-org-id"
+};
+
+axios.get(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+[
+  {
+    "id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+    "name": "Project Manager",
+    "description": "Manages projects and team assignments",
+    "hierarchy_level": 50,
+    "org_id": "your-org-id",
+    "created_at": "2023-08-01T10:00:00Z",
+    "updated_at": "2023-08-01T10:00:00Z"
+  },
+  {
+    "id": "2b3c4d5e-6f7g-8h9i-0j1k-2l3m4n5o6p7q",
+    "name": "Admin",
+    "description": "Organization administrator",
+    "hierarchy_level": 90,
+    "org_id": "your-org-id",
+    "created_at": "2023-07-15T09:30:00Z",
+    "updated_at": "2023-07-15T09:30:00Z"
+  }
+]
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/roles/list`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+
+### Get Role
+
+Retrieve details about a specific role.
+
+<CodeGroup>
+```bash Request
+curl -X GET {{baseUrl}}/api/roles/get?role_id=1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/roles/get"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "role_id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p"
+}
+
+response = requests.get(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/roles/get";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    role_id: "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p"
+};
+
+axios.get(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+  "name": "Project Manager",
+  "description": "Manages projects and team assignments",
+  "hierarchy_level": 50,
+  "org_id": "your-org-id",
+  "created_at": "2023-08-01T10:00:00Z",
+  "updated_at": "2023-08-01T10:00:00Z",
+  "permissions": [
+    {
+      "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "name": "project:read",
+      "description": "Can view project details",
+      "action": "read",
+      "resource": "project"
+    },
+    {
+      "id": "8f7e6d5c-4b3a-2912-1098-7f6e5d4c3b2a",
+      "name": "project:write",
+      "description": "Can create and edit projects",
+      "action": "write",
+      "resource": "project"
+    }
+  ]
+}
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/roles/get`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `role_id` | Yes | Role ID |
+
+### Update Role
+
+Update an existing role.
+
+<CodeGroup>
+```bash Request
+curl -X PUT {{baseUrl}}/api/roles/update?role_id=1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Senior Project Manager",
+    "description": "Manages complex projects and coordinates multiple teams",
+    "hierarchy_level": 60,
+    "permission_ids": [
+      "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "8f7e6d5c-4b3a-2912-1098-7f6e5d4c3b2a",
+      "7d6c5b4a-3f2e-1d0c-9b8a-7f6e5d4c3b2a"
+    ]
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/roles/update"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+params = {
+    "role_id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p"
+}
+data = {
+    "name": "Senior Project Manager",
+    "description": "Manages complex projects and coordinates multiple teams",
+    "hierarchy_level": 60,
+    "permission_ids": [
+        "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "8f7e6d5c-4b3a-2912-1098-7f6e5d4c3b2a",
+        "7d6c5b4a-3f2e-1d0c-9b8a-7f6e5d4c3b2a"
+    ]
+}
+
+response = requests.put(url, headers=headers, params=params, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/roles/update";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const params = {
+    role_id: "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p"
+};
+const data = {
+    name: "Senior Project Manager",
+    description: "Manages complex projects and coordinates multiple teams",
+    hierarchy_level: 60,
+    permission_ids: [
+        "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "8f7e6d5c-4b3a-2912-1098-7f6e5d4c3b2a",
+        "7d6c5b4a-3f2e-1d0c-9b8a-7f6e5d4c3b2a"
+    ]
+};
+
+axios.put(url, data, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+  "name": "Senior Project Manager",
+  "description": "Manages complex projects and coordinates multiple teams",
+  "hierarchy_level": 60,
+  "org_id": "your-org-id",
+  "created_at": "2023-08-01T10:00:00Z",
+  "updated_at": "2023-08-05T14:30:00Z",
+  "permissions": [
+    {
+      "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "name": "project:read",
+      "description": "Can view project details",
+      "action": "read",
+      "resource": "project"
+    },
+    {
+      "id": "8f7e6d5c-4b3a-2912-1098-7f6e5d4c3b2a",
+      "name": "project:write",
+      "description": "Can create and edit projects",
+      "action": "write",
+      "resource": "project"
+    },
+    {
+      "id": "7d6c5b4a-3f2e-1d0c-9b8a-7f6e5d4c3b2a",
+      "name": "team:assign",
+      "description": "Can assign team members to projects",
+      "action": "assign",
+      "resource": "team"
+    }
+  ]
+}
+```
+</CodeGroup>
+
+**Endpoint:** `PUT /api/roles/update`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `role_id` | Yes | Role ID |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | No | New role name |
+| `description` | string | No | New role description |
+| `hierarchy_level` | integer | No | New hierarchy level |
+| `permission_ids` | array | No | Updated list of permission IDs |
+
+### Delete Role
+
+Delete a role from an organization.
+
+<CodeGroup>
+```bash Request
+curl -X DELETE {{baseUrl}}/api/roles/delete?role_id=1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/roles/delete"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "role_id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p"
+}
+
+response = requests.delete(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/roles/delete";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    role_id: "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p"
+};
+
+axios.delete(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "success": true,
+  "message": "Role deleted successfully"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `DELETE /api/roles/delete`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `role_id` | Yes | Role ID |
+
+## Permission Endpoints
+
+### List All Permissions
+
+Retrieve all available permissions in the system.
+
+<CodeGroup>
+```bash Request
+curl -X GET {{baseUrl}}/api/roles/list_permissions \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/roles/list_permissions"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+
+response = requests.get(url, headers=headers)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/roles/list_permissions";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+
+axios.get(url, { headers })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+[
+  {
+    "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "name": "project:read",
+    "description": "Can view project details",
+    "action": "read",
+    "resource": "project"
+  },
+  {
+    "id": "8f7e6d5c-4b3a-2912-1098-7f6e5d4c3b2a",
+    "name": "project:write",
+    "description": "Can create and edit projects",
+    "action": "write",
+    "resource": "project"
+  },
+  {
+    "id": "7d6c5b4a-3f2e-1d0c-9b8a-7f6e5d4c3b2a",
+    "name": "team:assign",
+    "description": "Can assign team members to projects",
+    "action": "assign",
+    "resource": "team"
+  },
+  {
+    "id": "6c5b4a39-8d27-16f5-e4d3-c2b1a0f98e7d",
+    "name": "org:admin",
+    "description": "Can manage organization settings",
+    "action": "admin",
+    "resource": "org"
+  }
+]
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/roles/list_permissions`
+
+### Get Permissions for Role
+
+Retrieve all permissions assigned to a specific role.
+
+<CodeGroup>
+```bash Request
+curl -X GET {{baseUrl}}/api/roles/get_permissions?role_id=1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/roles/get_permissions"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "role_id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p"
+}
+
+response = requests.get(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/roles/get_permissions";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    role_id: "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p"
+};
+
+axios.get(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+[
+  {
+    "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "name": "project:read",
+    "description": "Can view project details",
+    "action": "read",
+    "resource": "project"
+  },
+  {
+    "id": "8f7e6d5c-4b3a-2912-1098-7f6e5d4c3b2a",
+    "name": "project:write",
+    "description": "Can create and edit projects",
+    "action": "write",
+    "resource": "project"
+  }
+]
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/roles/get_permissions`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `role_id` | Yes | Role ID |
+
+### Update Role Permissions
+
+Update the permissions assigned to a role.
+
+<CodeGroup>
+```bash Request
+curl -X PUT {{baseUrl}}/api/roles/update_permissions?role_id=1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "permission_ids": [
+      "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "8f7e6d5c-4b3a-2912-1098-7f6e5d4c3b2a",
+      "7d6c5b4a-3f2e-1d0c-9b8a-7f6e5d4c3b2a"
+    ]
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/roles/update_permissions"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+params = {
+    "role_id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p"
+}
+data = {
+    "permission_ids": [
+        "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "8f7e6d5c-4b3a-2912-1098-7f6e5d4c3b2a",
+        "7d6c5b4a-3f2e-1d0c-9b8a-7f6e5d4c3b2a"
+    ]
+}
+
+response = requests.put(url, headers=headers, params=params, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/roles/update_permissions";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const params = {
+    role_id: "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p"
+};
+const data = {
+    permission_ids: [
+        "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "8f7e6d5c-4b3a-2912-1098-7f6e5d4c3b2a",
+        "7d6c5b4a-3f2e-1d0c-9b8a-7f6e5d4c3b2a"
+    ]
+};
+
+axios.put(url, data, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+  "name": "Project Manager",
+  "permissions": [
+    {
+      "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "name": "project:read",
+      "description": "Can view project details",
+      "action": "read",
+      "resource": "project"
+    },
+    {
+      "id": "8f7e6d5c-4b3a-2912-1098-7f6e5d4c3b2a",
+      "name": "project:write",
+      "description": "Can create and edit projects",
+      "action": "write",
+      "resource": "project"
+    },
+    {
+      "id": "7d6c5b4a-3f2e-1d0c-9b8a-7f6e5d4c3b2a",
+      "name": "team:assign",
+      "description": "Can assign team members to projects",
+      "action": "assign",
+      "resource": "team"
+    }
+  ],
+  "updated_at": "2023-08-05T14:30:00Z"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `PUT /api/roles/update_permissions`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `role_id` | Yes | Role ID |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `permission_ids` | array | Yes | Array of permission IDs to assign to the role |
+
+## User Role Endpoints
+
+### Assign Role to User
+
+Assign a role to a user within an organization.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/roles/assign?org_id=your-org-id \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "5e6f7g8h-9i0j-1k2l-3m4n-5o6p7q8r9s0t",
+    "role_id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p"
+  }'
+```
+
+```json Response
+{
+  "user_id": "5e6f7g8h-9i0j-1k2l-3m4n-5o6p7q8r9s0t",
+  "role_id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+  "org_id": "your-org-id",
+  "assigned_at": "2023-08-05T15:00:00Z"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/roles/assign`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user_id` | string | Yes | User ID |
+| `role_id` | string | Yes | Role ID |
+
+### Get User's Role
+
+Retrieve a user's role within an organization.
+
+<CodeGroup>
+```bash Request
+curl -X GET {{baseUrl}}/api/roles/get_user_role?org_id=your-org-id&user_id=5e6f7g8h-9i0j-1k2l-3m4n-5o6p7q8r9s0t \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```json Response
+{
+  "user_id": "5e6f7g8h-9i0j-1k2l-3m4n-5o6p7q8r9s0t",
+  "role": {
+    "id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+    "name": "Project Manager",
+    "description": "Manages projects and team assignments",
+    "hierarchy_level": 50,
+    "org_id": "your-org-id",
+    "permissions": [
+      {
+        "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "name": "project:read",
+        "description": "Can view project details",
+        "action": "read",
+        "resource": "project"
+      },
+      {
+        "id": "8f7e6d5c-4b3a-2912-1098-7f6e5d4c3b2a",
+        "name": "project:write",
+        "description": "Can create and edit projects",
+        "action": "write",
+        "resource": "project"
+      }
+    ]
+  },
+  "org_id": "your-org-id",
+  "assigned_at": "2023-08-05T15:00:00Z"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/roles/get_user_role`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+| `user_id` | Yes | User ID |
+
+### Remove User Role
+
+Remove a user's role within an organization.
+
+<CodeGroup>
+```bash Request
+curl -X DELETE {{baseUrl}}/api/roles/remove_user_role?org_id=your-org-id&user_id=5e6f7g8h-9i0j-1k2l-3m4n-5o6p7q8r9s0t \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```json Response
+{
+  "success": true,
+  "message": "User role removed successfully"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `DELETE /api/roles/remove_user_role`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+| `user_id` | Yes | User ID |
+
+## Error Responses
+
+| Status Code | Description |
+|-------------|-------------|
+| 400 | Bad Request - Invalid input or validation error |
+| 401 | Unauthorized - Invalid or missing token |
+| 403 | Forbidden - Insufficient permissions |
+| 404 | Not Found - Role or permission doesn't exist |
+| 409 | Conflict - Role already exists with the given name |
+| 500 | Internal Server Error - Server-side error |
+
+## Implementation Notes
+
+- The Roles Service implements a hierarchical role-based access control (RBAC) system
+- Roles have hierarchy levels to determine precedence (higher number = higher privileges)
+- Permissions follow a resource:action naming convention
+- Default roles (Owner, Admin, Member) are created automatically when an organization is created
+- Users can only have one role per organization
+- Only users with appropriate permissions can manage roles (typically Owners and Admins)
+- The Owner role cannot be deleted or modified
+- Roles with higher hierarchy levels cannot be modified by users with lower hierarchy roles

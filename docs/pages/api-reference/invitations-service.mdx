@@ -1,0 +1,626 @@
+---
+title: 'Invitations Service API'
+description: 'API reference for managing organization invitations'
+---
+
+The Invitations Service provides endpoints for creating, managing, and responding to organization invitations. It enables organization administrators to invite users to join their organization with specific roles.
+
+## Authentication
+
+All endpoints require a valid Bearer token in the Authorization header.
+
+## Base URL
+
+```
+/api/invitations
+```
+
+## Endpoints
+
+### Create Invitation
+
+Create a new invitation to join an organization.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/invitations/create?org_id=your-org-id \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "newuser@example.com",
+    "role_id": "8c9d0e1f-2a3b-4c5d-6e7f-8g9h0i1j2k3l",
+    "message": "Please join our organization!"
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/invitations/create"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+params = {
+    "org_id": "your-org-id"
+}
+data = {
+    "email": "newuser@example.com",
+    "role_id": "8c9d0e1f-2a3b-4c5d-6e7f-8g9h0i1j2k3l",
+    "message": "Please join our organization!"
+}
+
+response = requests.post(url, headers=headers, params=params, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/invitations/create";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const params = {
+    org_id: "your-org-id"
+};
+const data = {
+    email: "newuser@example.com",
+    role_id: "8c9d0e1f-2a3b-4c5d-6e7f-8g9h0i1j2k3l",
+    message: "Please join our organization!"
+};
+
+axios.post(url, data, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m",
+  "email": "newuser@example.com",
+  "status": "pending",
+  "role": {
+    "id": "8c9d0e1f-2a3b-4c5d-6e7f-8g9h0i1j2k3l",
+    "name": "Member"
+  },
+  "organization": {
+    "id": "d07897e2-1ddf-4f11-9434-5fb6f2f5c20d",
+    "name": "Acme Inc"
+  },
+  "token": "inv_Ax92jKsLp8YzR4TbMn5VcWq3",
+  "created_at": "2023-08-01T10:00:00Z",
+  "expires_at": "2023-08-08T10:00:00Z"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/invitations/create`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `email` | string | Yes | Email address of the person to invite |
+| `role_id` | string | Yes | Role ID to assign to the user upon acceptance |
+| `message` | string | No | Optional personal message to include in the invitation email |
+
+**Response:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string (UUID) | Invitation ID |
+| `email` | string | Recipient's email address |
+| `status` | string | Invitation status ("pending", "accepted", "expired", "revoked") |
+| `role` | object | Role information |
+| `organization` | object | Organization information |
+| `token` | string | Invitation token (used in acceptance links) |
+| `created_at` | string (datetime) | Creation timestamp |
+| `expires_at` | string (datetime) | Expiration timestamp |
+
+### List Invitations
+
+Retrieve all invitations for an organization.
+
+<CodeGroup>
+```bash Request
+curl -X GET {{baseUrl}}/api/invitations/list?org_id=your-org-id&status=pending \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/invitations/list"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "org_id": "your-org-id",
+    "status": "pending"
+}
+
+response = requests.get(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/invitations/list";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    org_id: "your-org-id",
+    status: "pending"
+};
+
+axios.get(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+[
+  {
+    "id": "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m",
+    "email": "newuser@example.com",
+    "status": "pending",
+    "role": {
+      "id": "8c9d0e1f-2a3b-4c5d-6e7f-8g9h0i1j2k3l",
+      "name": "Member"
+    },
+    "invited_by": {
+      "id": "a1b2c3d4-e5f6-g7h8-i9j0-k1l2m3n4o5p6",
+      "name": "John Doe"
+    },
+    "created_at": "2023-08-01T10:00:00Z",
+    "expires_at": "2023-08-08T10:00:00Z"
+  },
+  {
+    "id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+    "email": "anotheruser@example.com",
+    "status": "pending",
+    "role": {
+      "id": "9d0e1f2g-3h4i-5j6k-7l8m-9n0o1p2q3r4s",
+      "name": "Admin"
+    },
+    "invited_by": {
+      "id": "a1b2c3d4-e5f6-g7h8-i9j0-k1l2m3n4o5p6",
+      "name": "John Doe"
+    },
+    "created_at": "2023-08-02T09:30:00Z",
+    "expires_at": "2023-08-09T09:30:00Z"
+  }
+]
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/invitations/list`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+| `status` | No | Filter by invitation status (pending, accepted, expired, revoked) |
+
+### Get Invitation
+
+Get details about a specific invitation.
+
+<CodeGroup>
+```bash Request
+curl -X GET {{baseUrl}}/api/invitations/get?invitation_id=5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/invitations/get"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "invitation_id": "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m"
+}
+
+response = requests.get(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/invitations/get";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    invitation_id: "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m"
+};
+
+axios.get(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m",
+  "email": "newuser@example.com",
+  "status": "pending",
+  "role": {
+    "id": "8c9d0e1f-2a3b-4c5d-6e7f-8g9h0i1j2k3l",
+    "name": "Member"
+  },
+  "organization": {
+    "id": "d07897e2-1ddf-4f11-9434-5fb6f2f5c20d",
+    "name": "Acme Inc"
+  },
+  "invited_by": {
+    "id": "a1b2c3d4-e5f6-g7h8-i9j0-k1l2m3n4o5p6",
+    "name": "John Doe"
+  },
+  "token": "inv_Ax92jKsLp8YzR4TbMn5VcWq3",
+  "message": "Please join our organization!",
+  "created_at": "2023-08-01T10:00:00Z",
+  "expires_at": "2023-08-08T10:00:00Z"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/invitations/get`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `invitation_id` | Yes | Invitation ID |
+
+### Validate Invitation
+
+Validate an invitation token (used before accepting an invitation).
+
+<CodeGroup>
+```bash Request
+curl -X GET {{baseUrl}}/api/invitations/validate?token=inv_Ax92jKsLp8YzR4TbMn5VcWq3
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/invitations/validate"
+params = {
+    "token": "inv_Ax92jKsLp8YzR4TbMn5VcWq3"
+}
+
+response = requests.get(url, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/invitations/validate";
+const params = {
+    token: "inv_Ax92jKsLp8YzR4TbMn5VcWq3"
+};
+
+axios.get(url, { params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "valid": true,
+  "invitation": {
+    "id": "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m",
+    "email": "newuser@example.com",
+    "organization": {
+      "id": "d07897e2-1ddf-4f11-9434-5fb6f2f5c20d",
+      "name": "Acme Inc"
+    },
+    "role": {
+      "id": "8c9d0e1f-2a3b-4c5d-6e7f-8g9h0i1j2k3l",
+      "name": "Member"
+    },
+    "invited_by": {
+      "id": "a1b2c3d4-e5f6-g7h8-i9j0-k1l2m3n4o5p6",
+      "name": "John Doe"
+    },
+    "created_at": "2023-08-01T10:00:00Z",
+    "expires_at": "2023-08-08T10:00:00Z"
+  }
+}
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/invitations/validate`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `token` | Yes | Invitation token |
+
+### Resend Invitation
+
+Resend an invitation email.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/invitations/resend?invitation_id=5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/invitations/resend"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "invitation_id": "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m"
+}
+
+response = requests.post(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/invitations/resend";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    invitation_id: "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m"
+};
+
+axios.post(url, {}, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "success": true,
+  "message": "Invitation resent successfully",
+  "invitation": {
+    "id": "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m",
+    "email": "newuser@example.com",
+    "status": "pending",
+    "expires_at": "2023-08-15T10:00:00Z"
+  }
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/invitations/resend`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `invitation_id` | Yes | Invitation ID |
+
+### Revoke Invitation
+
+Revoke a pending invitation.
+
+<CodeGroup>
+```bash Request
+curl -X DELETE {{baseUrl}}/api/invitations/revoke?invitation_id=5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/invitations/revoke"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "invitation_id": "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m"
+}
+
+response = requests.delete(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/invitations/revoke";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    invitation_id: "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m"
+};
+
+axios.delete(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "success": true,
+  "message": "Invitation revoked successfully"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `DELETE /api/invitations/revoke`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `invitation_id` | Yes | Invitation ID |
+
+### Bulk Create Invitations
+
+Create multiple invitations at once.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/invitations/bulk_create?org_id=your-org-id \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "invitations": [
+      {
+        "email": "user1@example.com",
+        "role_id": "8c9d0e1f-2a3b-4c5d-6e7f-8g9h0i1j2k3l"
+      },
+      {
+        "email": "user2@example.com",
+        "role_id": "9d0e1f2g-3h4i-5j6k-7l8m-9n0o1p2q3r4s"
+      }
+    ],
+    "message": "We would like to invite you to join our organization."
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/invitations/bulk_create"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+params = {
+    "org_id": "your-org-id"
+}
+data = {
+    "invitations": [
+        {
+            "email": "user1@example.com",
+            "role_id": "8c9d0e1f-2a3b-4c5d-6e7f-8g9h0i1j2k3l"
+        },
+        {
+            "email": "user2@example.com",
+            "role_id": "9d0e1f2g-3h4i-5j6k-7l8m-9n0o1p2q3r4s"
+        }
+    ],
+    "message": "We would like to invite you to join our organization."
+}
+
+response = requests.post(url, headers=headers, params=params, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/invitations/bulk_create";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const params = {
+    org_id: "your-org-id"
+};
+const data = {
+    invitations: [
+        {
+            email: "user1@example.com",
+            role_id: "8c9d0e1f-2a3b-4c5d-6e7f-8g9h0i1j2k3l"
+        },
+        {
+            email: "user2@example.com",
+            role_id: "9d0e1f2g-3h4i-5j6k-7l8m-9n0o1p2q3r4s"
+        }
+    ],
+    message: "We would like to invite you to join our organization."
+};
+
+axios.post(url, data, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "success": true,
+  "created": 2,
+  "failed": 0,
+  "invitations": [
+    {
+      "id": "5a7e8f91-2b3c-4d5e-6f7g-8h9i0j1k2l3m",
+      "email": "user1@example.com",
+      "status": "pending"
+    },
+    {
+      "id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+      "email": "user2@example.com",
+      "status": "pending"
+    }
+  ]
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/invitations/bulk_create`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `invitations` | array | Yes | Array of invitation objects (email, role_id) |
+| `message` | string | No | Optional message to include in all invitation emails |
+
+### Accept Invitation (Backend Process)
+
+Note: This endpoint is not directly exposed, as invitation acceptance is handled through the authentication service using a token.
+
+The flow for accepting an invitation is:
+
+1. User receives an invitation email with a link containing the invitation token
+2. User clicks the link, which takes them to a signup page
+3. User completes the signup form and submits it to the `/api/auth/signup_invite` endpoint
+4. Upon successful account creation, the user is automatically added to the organization with the designated role
+
+## Error Responses
+
+| Status Code | Description |
+|-------------|-------------|
+| 400 | Bad Request - Invalid input or validation error |
+| 401 | Unauthorized - Invalid or missing token |
+| 403 | Forbidden - Insufficient permissions (only admins can manage invitations) |
+| 404 | Not Found - Invitation doesn't exist |
+| 409 | Conflict - User already exists or is already a member of the organization |
+| 410 | Gone - Invitation has expired or been revoked |
+| 500 | Internal Server Error - Server-side error |
+
+## Implementation Notes
+
+- Invitations expire after 7 days by default
+- When an invitation is resent, its expiration date is extended
+- Users can only be invited to join an organization if they don't already have an account or are not already members
+- Only users with appropriate permissions (Admins and Owners) can create and manage invitations
+- Invitation tokens are secure, one-time-use tokens that become invalid after acceptance
+- Email notifications are sent automatically when invitations are created or resent

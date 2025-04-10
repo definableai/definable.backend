@@ -1,0 +1,262 @@
+---
+title: 'Directory Structure'
+description: 'Understanding the organization of the Zyeta backend codebase'
+---
+
+The Zyeta backend follows a well-organized directory structure that promotes separation of concerns and maintainability. This guide will help you navigate the codebase and understand the purpose of each directory.
+
+## Root Directory Structure
+
+```
+zyeta.backend/
+├── alembic/                # Database migration scripts
+├── docs/                   # Documentation (Mintlify)
+├── src/                    # Main source code
+├── tests/                  # Test suite 
+├── .env.local              # Environment variables template
+├── alembic.copy.ini        # Alembic configuration template
+├── pyproject.toml          # Dependencies and project metadata
+├── ruff.toml               # Ruff linter configuration
+├── mypy.ini                # Type checking configuration
+├── .pre-commit-config.yaml # Pre-commit hooks configuration
+├── .gitignore              # Git ignore patterns
+├── docker-compose.yml      # Docker deployment configuration
+└── README.md               # Project overview and setup
+```
+
+## Source Code Structure (`src/`)
+
+```
+src/
+├── app.py                  # Application entry point
+├── common/                 # Common utilities
+│   ├── __init__.py
+│   ├── cache.py            # Caching mechanisms
+│   ├── logger.py           # Logging configuration
+│   └── websocket.py        # WebSocket manager
+├── config/                 # Application configuration
+│   ├── __init__.py
+│   └── settings.py         # Environment-based settings
+├── database/               # Database connectivity
+│   ├── __init__.py
+│   ├── models.py           # Base model classes and CRUD operations
+│   ├── postgres.py         # PostgreSQL connection management
+│   └── schema.py           # Database schema utilities
+├── dependencies/           # FastAPI dependencies
+│   ├── __init__.py
+│   └── security.py         # Authentication and authorization
+├── libs/                   # External integrations and libraries
+│   ├── crawl4ai/           # Web crawling functionality
+│   ├── s3/                 # S3 storage integration
+│   ├── tools_factory/      # Tool generation utilities
+│   └── vectorstore/        # Vector embedding storage
+├── middlewares/            # Request/response middleware
+│   ├── __init__.py
+│   ├── exceptions.py       # Global exception handling
+│   └── ratelimit.py        # Rate limiting
+├── models/                 # SQLAlchemy ORM models
+│   ├── __init__.py         # Model registry
+│   ├── agent_model.py      # Agent-related models
+│   ├── auth_model.py       # Authentication models
+│   ├── conversation_model.py # Conversation models
+│   ├── invitations_model.py # Invitation models
+│   ├── kb_model.py         # Knowledge base models
+│   ├── llm_model.py        # Language model configurations
+│   ├── org_model.py        # Organization models
+│   ├── public_upload_model.py # File upload models
+│   ├── role_model.py       # Role and permission models
+│   └── tool_model.py       # Tool models
+├── schemas/                # Legacy Pydantic schemas
+├── servers/                # Sandbox servers for running code
+│   └── python_tool_tester/ # Python code execution sandbox
+├── services/               # Business logic services
+│   ├── __base/             # Base service functionality
+│   │   ├── __init__.py
+│   │   ├── acquire.py      # Dependency injection
+│   │   └── manager.py      # Service discovery and registration
+│   ├── agents/             # Agent management
+│   ├── auth/               # Authentication and user management
+│   ├── conversation/       # Conversation handling
+│   ├── invitations/        # User invitations
+│   ├── kb/                 # Knowledge base management
+│   ├── llm/                # Language model integration
+│   ├── org/                # Organization management
+│   ├── public_upload/      # File uploads
+│   ├── roles/              # Role management
+│   ├── tools/              # Tool management
+│   └── ws/                 # WebSocket services
+└── utils/                  # Utility functions
+    ├── __init__.py
+    ├── auth.py             # Authentication utilities
+    ├── formatting.py       # Text formatting
+    └── module_loader.py    # Dynamic module loading
+```
+
+## Key Directories Explained
+
+### Services (`src/services/`)
+
+The services directory contains the core business logic of the application, organized by domain. Each service typically includes:
+
+- `service.py`: The main service implementation with HTTP-exposed methods
+- `schema.py`: Pydantic models for request/response validation
+- Additional domain-specific modules as needed
+
+Services follow this pattern:
+
+```python
+class AuthService:
+  """Authentication service."""
+
+  http_exposed = ["post=signup", "post=login", "get=me"]
+
+  def __init__(self, acquire: Acquire):
+    """Initialize service."""
+    self.acquire = acquire
+    self.logger = acquire.logger
+    
+  async def post_signup(self, user_data: UserSignup) -> UserResponse:
+    """Sign up a new user."""
+    # Implementation...
+```
+
+#### Base Service (`__base/`)
+
+The `__base/` directory contains core service infrastructure:
+
+- `acquire.py`: Dependency injection container
+- `manager.py`: Service discovery and registration
+
+### Models (`src/models/`)
+
+The models directory contains SQLAlchemy ORM models representing database entities. Each file typically follows the `*_model.py` naming convention and defines one or more related models.
+
+Models follow this pattern:
+
+```python
+class UserModel(Base, CRUD):
+  """User model."""
+  
+  __tablename__ = "users"
+  
+  id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+  email = Column(String, nullable=False, unique=True)
+  password = Column(String, nullable=False)
+  is_active = Column(Boolean, default=True)
+```
+
+### Database (`src/database/`)
+
+Contains database connection management, session handling, and base model classes:
+
+- `models.py`: Base model class and CRUD operations
+- `postgres.py`: PostgreSQL connection setup
+- `__init__.py`: Exports session factories and utilities
+
+### Middlewares (`src/middlewares/`)
+
+Contains FastAPI middleware components that process requests and responses:
+
+- `exceptions.py`: Global exception handling
+- `ratelimit.py`: Rate limiting middleware
+
+### Dependencies (`src/dependencies/`)
+
+Contains FastAPI dependencies for authentication, authorization, and other cross-cutting concerns:
+
+- `security.py`: JWT bearer token authentication and RBAC
+
+### Libraries (`src/libs/`)
+
+Contains integrations with external services and reusable libraries:
+
+- `s3/`: Amazon S3 compatible storage
+- `vectorstore/`: Vector embeddings and similarity search
+- `tools_factory/`: Dynamic tool generation
+
+## Testing Structure (`tests/`)
+
+```
+tests/
+├── conftest.py             # Pytest fixtures and configuration
+├── unit/                   # Unit tests
+│   ├── services/           # Service unit tests
+│   └── utils/              # Utility function tests
+├── integration/            # Integration tests
+│   ├── api/                # API endpoint tests
+│   └── database/           # Database integration tests
+└── fixtures/               # Test data fixtures
+```
+
+## Documentation Structure (`docs/`)
+
+```
+docs/
+├── docs.json               # Mintlify configuration
+├── index.mdx               # Home page
+├── pages/                  # Documentation pages
+│   ├── architecture/       # Architecture documentation
+│   ├── getting-started/    # Getting started guides
+│   ├── features/           # Feature documentation
+│   └── api/                # API reference
+├── images/                 # Images and diagrams
+└── logo/                   # Brand assets
+```
+
+## Configuration Files
+
+### `alembic.copy.ini`
+
+Template for Alembic database migration configuration. This should be copied to `alembic.ini` and updated with your database connection details.
+
+### `.env.local`
+
+Template for environment variables. This should be copied to `.env` and populated with your configuration values.
+
+### `pyproject.toml`
+
+Contains project metadata, dependencies, and tool configurations using Poetry format.
+
+### `ruff.toml`
+
+Configuration for the Ruff linter, specifying code style and quality rules.
+
+### `mypy.ini`
+
+Configuration for Mypy type checking, ensuring strict type safety.
+
+## Working with the Codebase
+
+### Adding New Features
+
+When adding new features, you typically need to:
+
+1. Create a new model in `src/models/` if you need database entities
+2. Create a new service in `src/services/` with appropriate business logic
+3. Update any dependencies or integrations as needed
+4. Add tests in the `tests/` directory
+5. Update documentation in the `docs/` directory
+
+### Code Organization Principles
+
+Zyeta follows these principles for code organization:
+
+1. **Domain-driven organization**: Code is organized by domain (auth, org, kb, etc.)
+2. **Single responsibility**: Each module has a clear, focused purpose
+3. **Explicit dependencies**: Dependencies are injected through the `Acquire` class
+4. **Clear interfaces**: Services expose clear HTTP endpoints through the `http_exposed` property
+
+## Naming Conventions
+
+- **Service methods**: `{http_method}_{resource}`
+  - Example: `post_signup`, `get_user`, `put_update_profile`
+- **Model files**: `{entity}_model.py`
+  - Example: `user_model.py`, `organization_model.py`
+- **Schema files**: `schema.py` (within service directories)
+- **Test files**: `test_{component}.py`
+
+## Next Steps
+
+- [Services Overview](/pages/architecture/services): Learn about the key services
+- [Database Design](/pages/architecture/database): Understand the data model
+- [Development Workflow](/pages/getting-started/development-workflow): Learn the development process

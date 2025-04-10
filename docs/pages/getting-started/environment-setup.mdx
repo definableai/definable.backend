@@ -1,0 +1,264 @@
+---
+title: 'Environment Setup'
+description: 'Configuring environment variables for the Zyeta backend'
+---
+
+The Zyeta backend uses environment variables for configuration. This guide explains how to set up these variables for development and production environments.
+
+## Environment File (.env)
+
+Create a `.env` file by copying the provided `.env.local` template:
+
+```bash
+cp .env.local .env
+```
+
+<Note>
+The `.env` file contains sensitive information and should never be committed to version control. Note that it's already included in the `.gitignore` file.
+</Note>
+
+## Required Environment Variables
+
+Based on the application's settings module, the following environment variables are required:
+
+```bash
+# Application
+APP_NAME=zyeta.backend
+ENVIRONMENT=dev  # Can be dev | beta | prod
+
+# Security
+JWT_SECRET=your_jwt_secret_key
+MASTER_API_KEY=your_master_api_key
+JWT_EXPIRE_MINUTES=1400  # Default: 24 hours
+
+# Database
+DATABASE_URL=postgresql+asyncpg://postgres:mysecretpassword@localhost:5432/postgres
+
+# External Services
+OPENAI_API_KEY=your_openai_api_key
+ANTHROPIC_API_KEY=your_anthropic_api_key
+RESEND_API_KEY=your_resend_api_key
+FIRECRAWL_API_KEY=your_firecrawl_api_key
+
+# Frontend
+FRONTEND_URL=http://localhost:8000
+
+# Storage
+S3_BUCKET=zyeta-dev
+S3_ACCESS_KEY=your_s3_access_key
+S3_SECRET_KEY=your_s3_secret_key
+S3_ENDPOINT=https://s3.backendly.io
+PUBLIC_S3_BUCKET=public-assets
+
+# Payment
+STRIPE_SECRET_KEY=your_stripe_secret_key
+STRIPE_PUBLISHABLE_KEY=your_stripe_publishable_key
+STRIPE_WEBHOOK_SECRET=your_stripe_webhook_secret
+
+# Task Queue
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
+
+# Knowledge Base
+KB_SETTINGS_VERSION=1
+
+# Sandbox
+PYTHON_SANDBOX_TESTING_URL=http://localhost:3000
+```
+
+## Environment Variable Details
+
+### Application Settings
+
+- **APP_NAME**: Name of your application
+- **ENVIRONMENT**: Current environment (dev, beta, prod)
+
+### Security
+
+- **JWT_SECRET**: Secret key for signing JWT tokens
+- **MASTER_API_KEY**: Master API key for administrative access
+- **JWT_EXPIRE_MINUTES**: JWT token expiration time in minutes
+
+### Database
+
+- **DATABASE_URL**: Connection string for PostgreSQL database
+  
+  Format: `postgresql+asyncpg://user:password@host:port/database`
+
+  Examples:
+  - Local Docker: `postgresql+asyncpg://postgres:mysecretpassword@localhost:5432/postgres`
+  - Supabase: `postgresql+asyncpg://postgres:password@db.izufeytmzeanvqoyckwp.supabase.co:5432/postgres`
+
+### External Services
+
+- **OPENAI_API_KEY**: API key for OpenAI services
+- **ANTHROPIC_API_KEY**: API key for Anthropic AI services
+- **RESEND_API_KEY**: API key for Resend email service
+- **FIRECRAWL_API_KEY**: API key for Firecrawl service
+
+### Frontend
+
+- **FRONTEND_URL**: URL of the frontend application
+
+### Storage
+
+- **S3_BUCKET**: Name of the S3 bucket for storage
+- **S3_ACCESS_KEY**: Access key for S3
+- **S3_SECRET_KEY**: Secret key for S3
+- **S3_ENDPOINT**: Endpoint URL for S3 service
+- **PUBLIC_S3_BUCKET**: Name of the public S3 bucket
+
+### Payment
+
+- **STRIPE_SECRET_KEY**: Secret key for Stripe
+- **STRIPE_PUBLISHABLE_KEY**: Publishable key for Stripe
+- **STRIPE_WEBHOOK_SECRET**: Webhook secret for Stripe
+
+### Task Queue
+
+- **CELERY_BROKER_URL**: URL for Celery broker (Redis)
+- **CELERY_RESULT_BACKEND**: URL for Celery result backend (Redis)
+
+### Knowledge Base
+
+- **KB_SETTINGS_VERSION**: Version of knowledge base settings
+
+### Sandbox
+
+- **PYTHON_SANDBOX_TESTING_URL**: URL for Python sandbox testing
+
+## Alembic Configuration
+
+The project includes an `alembic.copy.ini` template that you should copy to create your own `alembic.ini`:
+
+```bash
+cp alembic.copy.ini alembic.ini
+```
+
+Then update the `sqlalchemy.url` field in `alembic.ini` to match your database connection string. Note that you need to escape percent signs (`%`) with another percent sign (`%%`):
+
+```ini
+# For local Docker PostgreSQL
+sqlalchemy.url = postgresql+asyncpg://postgres:mysecretpassword@localhost:5432/postgres
+
+# For Supabase (with percent sign in password)
+sqlalchemy.url = postgresql+asyncpg://postgres:Test%%401234@db.eewruhvfyvvvlmlpvphw.supabase.co:5432/postgres
+```
+
+## Environment-Specific Configuration
+
+### Development Environment
+
+For development, you can use local services:
+
+```bash
+ENVIRONMENT=dev
+DATABASE_URL=postgresql+asyncpg://postgres:mysecretpassword@localhost:5432/postgres
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
+PYTHON_SANDBOX_TESTING_URL=http://localhost:3000
+```
+
+### Testing Environment
+
+For testing, use separate databases and services:
+
+```bash
+ENVIRONMENT=test
+DATABASE_URL=postgresql+asyncpg://postgres:mysecretpassword@localhost:5432/zyeta_test
+```
+
+### Production Environment
+
+For production, use secure, production-grade services:
+
+```bash
+ENVIRONMENT=prod
+DATABASE_URL=postgresql+asyncpg://postgres:password@production-db-host:5432/zyeta
+PYTHON_SANDBOX_TESTING_URL=https://python-sandbox-testing.backendly.io
+```
+
+## Loading Environment Variables
+
+The application uses Python's `dotenv` package to load environment variables from the `.env` file. The settings are loaded using Pydantic's `BaseSettings` class, which provides type validation and default values.
+
+```python
+from dotenv import load_dotenv
+from pydantic_settings import BaseSettings
+
+load_dotenv()
+
+class Settings(BaseSettings):
+    # Settings defined here
+    
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+```
+
+## Accessing Settings in Code
+
+The application uses a singleton pattern for settings. Import the `settings` object to access environment variables:
+
+```python
+from config.settings import settings
+
+# Example usage
+database_url = settings.database_url
+jwt_secret = settings.jwt_secret
+```
+
+## Keeping Secrets Secure
+
+<Warning>
+Never commit sensitive information like API keys or database passwords to version control. Always use environment variables or secure secret management solutions.
+</Warning>
+
+### Recommendations for Secret Management
+
+1. **Development**: Use local `.env` files
+2. **CI/CD**: Use your CI/CD provider's secret management
+3. **Production**: Use a secret manager like AWS Secrets Manager or HashiCorp Vault
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Environment Variables Not Loading">
+    Make sure your `.env` file is in the root directory of the project. Check that the file format is correct (no spaces around equals signs).
+    
+    ```bash
+    # Correct
+    KEY=value
+    
+    # Incorrect
+    KEY = value
+    ```
+  </Accordion>
+  
+  <Accordion title="Type Validation Errors">
+    Ensure that the values in your `.env` file match the expected types in the Settings class. For example, `JWT_EXPIRE_MINUTES` should be an integer.
+  </Accordion>
+  
+  <Accordion title="Missing Required Variables">
+    If the application fails to start due to missing variables, check your `.env` file against the required variables list.
+  </Accordion>
+  
+  <Accordion title="Database Connection String Issues">
+    If using special characters in your passwords, you might need to URL encode them. For example:
+    
+    ```
+    # For a password with '@' character
+    password: Test@1234
+    URL encoded: Test%401234
+    
+    # Resulting connection string
+    DATABASE_URL=postgresql+asyncpg://postgres:Test%401234@db.example.supabase.co:5432/postgres
+    ```
+    
+    In `alembic.ini`, remember to escape percent signs with another percent sign:
+    
+    ```
+    sqlalchemy.url = postgresql+asyncpg://postgres:Test%%401234@db.example.supabase.co:5432/postgres
+    ```
+  </Accordion>
+</AccordionGroup>

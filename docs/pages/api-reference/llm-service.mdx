@@ -1,0 +1,209 @@
+---
+title: 'LLM Service API'
+description: 'API reference for managing language models'
+---
+
+The LLM Service provides endpoints for managing language model configurations, including adding, listing, and configuring models for use in conversations and other AI-powered features.
+
+## Authentication
+
+All endpoints require a valid Bearer token in the Authorization header.
+
+## Base URL
+
+```
+/api/llm
+```
+
+## Endpoints
+
+### Add Model
+
+Add a new language model configuration.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/llm/add \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "GPT-4o",
+    "provider": "openai",
+    "version": "4o",
+    "is_active": true,
+    "config": {}
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/llm/add"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+}
+data = {
+    "name": "GPT-4o",
+    "provider": "openai",
+    "version": "4o",
+    "is_active": True,
+    "config": {}
+}
+
+response = requests.post(url, headers=headers, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/llm/add";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN",
+    "Content-Type": "application/json"
+};
+const data = {
+    name: "GPT-4o",
+    provider: "openai",
+    version: "4o",
+    is_active: true,
+    config: {}
+};
+
+axios.post(url, data, { headers })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "457d4f38-e3c0-43eb-b519-a867f9f5325a",
+  "name": "GPT-4o",
+  "provider": "openai",
+  "version": "4o",
+  "is_active": true,
+  "config": {},
+  "created_at": "2023-07-25T09:30:00Z",
+  "updated_at": "2023-07-25T09:30:00Z"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/llm/add`
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Display name for the model |
+| `provider` | string | Yes | Model provider (e.g., "openai", "anthropic") |
+| `version` | string | Yes | Model version identifier |
+| `is_active` | boolean | No | Whether the model is active and available for use (default: true) |
+| `config` | object | No | Model-specific configuration settings |
+
+**Response:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string (UUID) | Model ID |
+| `name` | string | Model display name |
+| `provider` | string | Model provider |
+| `version` | string | Model version |
+| `is_active` | boolean | Active status |
+| `config` | object | Configuration settings |
+| `created_at` | string (datetime) | Creation timestamp |
+| `updated_at` | string (datetime) | Last update timestamp |
+
+### List Models
+
+Retrieve all language models configured for an organization.
+
+<CodeGroup>
+```bash Request
+curl -X GET {{baseUrl}}/api/llm/list?org_id=your-org-id \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/llm/list"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+params = {
+    "org_id": "your-org-id"
+}
+
+response = requests.get(url, headers=headers, params=params)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/llm/list";
+const headers = {
+    Authorization: "Bearer YOUR_TOKEN"
+};
+const params = {
+    org_id: "your-org-id"
+};
+
+axios.get(url, { headers, params })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+[
+  {
+    "id": "457d4f38-e3c0-43eb-b519-a867f9f5325a",
+    "name": "GPT-4o",
+    "provider": "openai",
+    "version": "4o",
+    "is_active": true,
+    "config": {},
+    "created_at": "2023-07-25T09:30:00Z",
+    "updated_at": "2023-07-25T09:30:00Z"
+  },
+  {
+    "id": "789e0f12-3g45-6h78-9i10-jk11lm12no13",
+    "name": "Claude 3 Opus",
+    "provider": "anthropic",
+    "version": "opus",
+    "is_active": true,
+    "config": {},
+    "created_at": "2023-07-24T14:45:00Z",
+    "updated_at": "2023-07-24T14:45:00Z"
+  }
+]
+```
+</CodeGroup>
+
+**Endpoint:** `GET /api/llm/list`
+
+**Query Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `org_id` | Yes | Organization ID |
+
+## Error Responses
+
+| Status Code | Description |
+|-------------|-------------|
+| 400 | Bad Request - Invalid input or validation error |
+| 401 | Unauthorized - Invalid or missing token |
+| 403 | Forbidden - Insufficient permissions |
+| 404 | Not Found - Resource doesn't exist |
+| 500 | Internal Server Error - Server-side error |
+
+## Implementation Notes
+
+- The LLM Service supports multiple providers, including OpenAI and Anthropic
+- Models can be enabled or disabled using the `is_active` flag
+- Custom configurations can be provided for each model
+- Model configurations are organization-specific
+- The service handles the underlying API integrations with model providers

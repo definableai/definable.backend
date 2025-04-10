@@ -1,0 +1,60 @@
+---
+title: 'Page Not Found'
+description: 'The requested page could not be found'
+---
+
+<div className="flex flex-col items-center justify-center text-center px-4 py-16">
+  <h1 className="text-6xl font-bold text-primary mb-4">404</h1>
+  <h2 className="text-2xl font-semibold mb-6">Page Not Found</h2>
+  
+  <p className="text-lg max-w-lg mb-8">
+    We couldn't find the page you were looking for. The page might have been removed, 
+    renamed, or is temporarily unavailable.
+  </p>
+  
+  <div className="flex flex-col sm:flex-row gap-4 mt-4">
+    <a href="/" className="px-6 py-3 bg-primary text-white rounded-md font-medium hover:bg-opacity-90 transition-all">
+      Return Home
+    </a>
+    <a href="/pages/troubleshooting/overview" className="px-6 py-3 border border-gray-300 dark:border-gray-700 rounded-md font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition-all">
+      Troubleshooting Guide
+    </a>
+  </div>
+  
+  <div className="mt-12 border-t border-gray-200 dark:border-gray-800 pt-8 w-full max-w-xl">
+    <h3 className="text-lg font-semibold mb-4">Looking for something specific?</h3>
+    
+    <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left">
+      <li>
+        <a href="/pages/getting-started/quickstart" className="text-primary hover:underline">
+          Quickstart Guide
+        </a>
+      </li>
+      <li>
+        <a href="/pages/api-reference/overview" className="text-primary hover:underline">
+          API Documentation
+        </a>
+      </li>
+      <li>
+        <a href="/pages/architecture/overview" className="text-primary hover:underline">
+          Architecture Overview
+        </a>
+      </li>
+      <li>
+        <a href="/pages/development-guides/coding-standards" className="text-primary hover:underline">
+          Development Guides
+        </a>
+      </li>
+      <li>
+        <a href="/pages/authentication/overview" className="text-primary hover:underline">
+          Authentication
+        </a>
+      </li>
+      <li>
+        <a href="/pages/troubleshooting/api-errors" className="text-primary hover:underline">
+          API Error Solutions
+        </a>
+      </li>
+    </ul>
+  </div>
+</div> 

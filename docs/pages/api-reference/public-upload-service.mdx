@@ -1,0 +1,142 @@
+---
+title: 'Public Upload Service API'
+description: 'API reference for uploading and managing public files'
+---
+
+The Public Upload Service provides endpoints for uploading files and making them publicly accessible through URLs. This service is designed for storing images, documents, and other media that need to be easily referenced and accessed by users.
+
+## Authentication
+
+The upload endpoint requires a valid Bearer token in the Authorization header.
+
+## Base URL
+
+```
+/api/public_upload
+```
+
+## Endpoints
+
+### Upload File
+
+Upload a file to make it publicly accessible.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/public_upload \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@/path/to/your/file.png"
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/public_upload"
+headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+}
+files = {
+    "file": open("/path/to/your/file.png", "rb")
+}
+
+response = requests.post(url, headers=headers, files=files)
+print(response.json())
+
+# Don't forget to close the file
+files["file"].close()
+```
+
+```javascript JavaScript
+const axios = require('axios');
+const FormData = require('form-data');
+const fs = require('fs');
+
+const url = "{{baseUrl}}/api/public_upload";
+const headers = {
+    "Authorization": "Bearer YOUR_TOKEN"
+};
+
+// Create form data
+const formData = new FormData();
+formData.append('file', fs.createReadStream('/path/to/your/file.png'));
+
+// Set the proper headers
+const config = {
+    headers: {
+        ...headers,
+        ...formData.getHeaders()
+    }
+};
+
+axios.post(url, formData, config)
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "filename": "a1b2c3d4e5f6.png",
+  "content_type": "image/png",
+  "size_bytes": 25840,
+  "public_url": "https://storage.example.com/public/a1b2c3d4e5f6.png"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/public_upload`
+
+**Form Data:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `file` | file | Yes | The file to upload |
+
+**Response:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `filename` | string | The generated filename for the uploaded file |
+| `content_type` | string | The MIME type of the uploaded file |
+| `size_bytes` | integer | The size of the file in bytes |
+| `public_url` | string | The public URL where the file can be accessed |
+
+## Supported File Types
+
+The service supports uploading the following file types:
+
+- Images: PNG, JPEG, GIF, SVG, WebP
+- Documents: PDF, TXT, DOC, DOCX, XLS, XLSX, PPT, PPTX
+- Media: MP3, MP4, WAV, AVI
+- Other: JSON, CSV, XML, ZIP
+
+## File Size Limits
+
+- Maximum file size: 10 MB per file
+- Total storage quota may apply based on your account tier
+
+## Error Responses
+
+| Status Code | Description |
+|-------------|-------------|
+| 400 | Bad Request - Invalid file type or file exceeds size limit |
+| 401 | Unauthorized - Invalid or missing token |
+| 403 | Forbidden - Insufficient permissions to upload files |
+| 413 | Payload Too Large - File size exceeds the maximum allowed limit |
+| 500 | Internal Server Error - Server-side error |
+
+## Security Considerations
+
+Files uploaded through this service are publicly accessible without authentication. Do not upload sensitive or confidential information. The service performs the following security measures:
+
+- File content scanning for malware
+- File type validation to prevent malicious file uploads
+- Randomized filenames to prevent guessing
+- CDN integration for distributed content delivery
+
+## Implementation Notes
+
+- Files are stored in a cloud storage bucket
+- Public URLs are generated automatically upon successful upload
+- Files may be cached by CDN for faster delivery
+- There are no automatic expiration policies for uploaded files
+- To remove a file, contact your system administrator
