@@ -64,7 +64,7 @@ class LLMFactory:
       session_id=str(chat_session_id),
       num_history_responses=memory_size,
     )
-    async for token in await agent.arun(message, files=files):
+    async for token in await agent.arun(message):
       yield token
 
 

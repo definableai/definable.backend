@@ -4,7 +4,6 @@ from io import BytesIO
 from typing import AsyncGenerator, Dict, List, Optional
 from uuid import UUID
 
-from agno.media import File
 from fastapi import Depends, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import and_, select
@@ -249,10 +248,10 @@ class ChatService:
     last_message = result.scalars().first()
     parent_id = last_message.id if last_message else None
 
-    # get urls of the files uploaded
-    query = select(ChatUploadModel).filter(ChatUploadModel.id.in_(message_data.file_uploads))
-    result = await session.execute(query)
-    file_uploads = result.scalars().all()
+    # # get urls of the files uploaded
+    # query = select(ChatUploadModel).filter(ChatUploadModel.id.in_(message_data.file_uploads))
+    # result = await session.execute(query)
+    # file_uploads = result.scalars().all()
 
     # if chatting with a LLM model
     if model_id:
@@ -275,20 +274,20 @@ class ChatService:
       session.add(user_message)
       await session.commit()
 
-      files = []
-      if message_data.file_uploads:
-        for file_upload in file_uploads:
-          file = File(url=file_upload.url, mime_type=file_upload.content_type)
-          files.append(file)
+      # files = []
+      # if message_data.file_uploads:
+      #   for file_upload in file_uploads:
+      #     file = File(url=file_upload.url, mime_type=file_upload.content_type)
+      #     files.append(file)
 
-      print(files)
+      # print(files)
 
       # generate a streaming response
       async def generate_response() -> AsyncGenerator[str, None]:
         full_response = ""
         buffer: list[str] = []
         async for token in self.llm_factory.chat(
-          provider=llm_model.provider, llm=llm_model.name, chat_session_id=chat_id, message=message_data.content, files=files
+          provider=llm_model.provider, llm=llm_model.name, chat_session_id=chat_id, message=message_data.content
         ):
           buffer.append(token.content)
           full_response += token.content
