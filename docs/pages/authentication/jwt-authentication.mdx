@@ -1,0 +1,211 @@
+---
+title: 'JWT Authentication'
+description: 'How JSON Web Tokens are implemented in Zyeta'
+---
+
+Zyeta uses JSON Web Tokens (JWT) as the primary authentication mechanism, providing a stateless, secure way to verify user identity across API requests.
+
+## What are JWTs?
+
+JSON Web Tokens are an open standard (RFC 7519) for securely transmitting information between parties as a JSON object. This information can be verified and trusted because it is digitally signed.
+
+In Zyeta, JWTs are used to:
+- Authenticate users after login
+- Maintain session state without server-side storage
+- Pass user identity information securely between services
+
+## JWT Structure
+
+JWTs consist of three parts separated by dots:
+
+```
+header.payload.signature
+```
+
+### Header
+Contains the token type and signing algorithm:
+
+```json
+{
+  "alg": "HS256",
+  "typ": "JWT"
+}
+```
+
+### Payload
+Contains the claims or user data:
+
+```json
+{
+  "id": "5f8e7d6c-92a4-4c3b-b3e2-f1a7b8d9c0e1",
+  "exp": 1619283492  // Expiration timestamp
+}
+```
+
+### Signature
+Ensures the token hasn't been tampered with:
+
+```
+HMACSHA256(
+  base64UrlEncode(header) + "." +
+  base64UrlEncode(payload),
+  secret
+)
+```
+
+## Implementation in Zyeta
+
+### Token Generation
+
+When a user logs in successfully, the system generates a JWT:
+
+```python
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """Create access token."""
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, settings.jwt_secret, algorithm="HS256")
+    return encoded_jwt
+```
+
+The token contains:
+- User ID (`id`)
+- Expiration time (`exp`)
+- No sensitive information like passwords
+
+### Token Validation
+
+Every protected endpoint uses the `JWTBearer` dependency for validation:
+
+```python
+class JWTBearer(HTTPBearer):
+    def __init__(self, auto_error: bool = True):
+        super().__init__(auto_error=auto_error)
+
+    async def __call__(self, request: Request) -> Optional[dict]:
+        credentials = await super().__call__(request)
+        if not credentials or credentials.scheme != "Bearer":
+            raise HTTPException(status_code=403, detail="Invalid authorization")
+        try:
+            payload = jwt.decode(
+                credentials.credentials, 
+                settings.jwt_secret, 
+                algorithms=["HS256"]
+            )
+            return payload
+        except jwt.InvalidTokenError:
+            raise HTTPException(status_code=403, detail="Invalid or expired token")
+```
+
+This middleware:
+1. Extracts the token from the Authorization header
+2. Verifies the token signature using the secret key
+3. Checks if the token has expired
+4. Returns the decoded payload containing user information
+
+## Using JWT in Requests
+
+Client applications must include the JWT in the Authorization header:
+
+```http
+GET /api/some-endpoint HTTP/1.1
+Host: api.zyeta.com
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjVmOGU3ZDZjLTkyYTQtNGMzYi1iM2UyLWYxYTdiOGQ5YzBlMSIsImV4cCI6MTYxOTI4MzQ5Mn0.8Kq1MseugX_dnLAT4ZPwTN7wxpY7zLBVyWiYw2ki8a0
+```
+
+## JWT and RBAC Integration
+
+JWTs work in conjunction with the Role-Based Access Control (RBAC) system:
+
+1. The JWT establishes user identity
+2. The RBAC middleware uses this identity to determine:
+   - The user's role in the requested organization
+   - Permissions associated with that role
+   - Whether the user can perform the requested action
+
+```python
+@app.get("/api/protected")
+async def protected_route(
+    user: dict = Depends(RBAC("resource", "action"))
+):
+    # If execution reaches here, the user is authenticated
+    # and authorized to access this endpoint
+    return {"message": "You have access", "user_id": user["id"]}
+```
+
+## JWT Configuration
+
+Zyeta's JWT implementation can be configured through environment variables:
+
+```env
+JWT_SECRET=your-secure-secret-key
+JWT_EXPIRE_MINUTES=60  # Token validity period
+```
+
+## WebSocket Authentication
+
+For WebSocket connections, JWTs are passed as query parameters:
+
+```javascript
+const socket = new WebSocket('wss://api.zyeta.com/ws?token=your-jwt-token');
+```
+
+The server validates these tokens using the same mechanism:
+
+```python
+async def __call__(self, websocket: WebSocket = None):
+    token = websocket.query_params.get("token")
+    if not token:
+        raise HTTPException(status_code=403, detail="Invalid authorization")
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+        return payload
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=403, detail="Invalid or expired token")
+```
+
+## Security Considerations
+
+Zyeta's JWT implementation follows these security best practices:
+
+- **Secret Key Protection**: The JWT secret is securely stored and never exposed
+- **Short Expiration Times**: Tokens expire quickly to limit the damage of token theft
+- **No Sensitive Data**: Tokens never contain sensitive user information
+- **HTTPS Only**: JWTs are only transmitted over encrypted connections
+- **Signature Validation**: All tokens are cryptographically verified
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Invalid Token Error">
+    This usually means:
+    - The token has expired
+    - The token was signed with a different secret
+    - The token has been tampered with
+    
+    Solution: Re-authenticate by logging in again.
+  </Accordion>
+  
+  <Accordion title="Missing Authentication">
+    Check that:
+    - The Authorization header is included
+    - The header uses the format `Bearer <token>`
+    - There are no extra spaces or characters
+  </Accordion>
+  
+  <Accordion title="Token Expired">
+    JWTs have a limited lifetime. When expired:
+    - The client needs to request a new token
+    - If using refresh tokens, use the refresh flow to get a new access token
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+- [Authentication Overview](overview): Learn about the complete authentication system
+- [Invitation Flow](invitation-flow): How users join organizations via invitations
+- [Role-Based Access Control](rbac): Understanding permission management

@@ -9,13 +9,13 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from dependencies import get_llm
-from dependencies.security import RBAC
-from libs.chats.streaming import LLMFactory
-from services.__base.acquire import Acquire
-from services.llm.model import AgentsModel, LLMModel
 
-from .model import ChatSessionModel, ConversationModel, Message_Role, MessageModel
+# from dependencies import get_llm
+from dependencies.security import RBAC
+from libs.chats.v1.streaming import LLMFactory
+from models import AgentModel, ChatSessionModel, ConversationModel, LLMModel, Message_Role, MessageModel
+from services.__base.acquire import Acquire
+
 from .schema import (
   ChatMessageCreate,
   ChatSessionCreate,
@@ -28,6 +28,8 @@ from .schema import (
   MessageWithDetailsResponse,
   PaginatedMessagesResponse,
 )
+
+llm = LLMFactory()  # TODO: this is a tempered code don't touch it
 
 
 class ConversationService:
@@ -48,7 +50,6 @@ class ConversationService:
   def __init__(self, acquire: Acquire):
     self.acquire = acquire
     self.chunk_size = 10
-    self.models = acquire.models
     self.logger = acquire.logger
 
   async def post_create(
@@ -101,30 +102,19 @@ class ConversationService:
     user: dict = Depends(RBAC("chats", "write")),
   ) -> ChatSessionResponse:
     """Create a new chat session."""
-    self.logger.info(
-        "Creating new chat session",
-        conversation_id=str(session_data.conversation_id),
-        user_id=str(user["id"])
-    )
+    self.logger.info("Creating new chat session", conversation_id=str(session_data.conversation_id), user_id=str(user["id"]))
     # Verify conversation exists and belongs to user's organization
     query = select(ConversationModel).where(ConversationModel.id == session_data.conversation_id, ConversationModel.organization_id == org_id)
     result = await session.execute(query)
     if not result.unique().scalar_one_or_none():
-      self.logger.error(
-            "Conversation not found",
-            conversation_id=str(session_data.conversation_id)
-        )
+      self.logger.error("Conversation not found", conversation_id=str(session_data.conversation_id))
       raise HTTPException(status_code=404, detail="Conversation not found")
 
     db_session = ChatSessionModel(status="active", **session_data.model_dump())
     session.add(db_session)
     await session.commit()
     await session.refresh(db_session)
-    self.logger.debug(
-            "Chat session created successfully",
-            session_id=str(db_session.id),
-            conversation_id=str(session_data.conversation_id)
-        )
+    self.logger.debug("Chat session created successfully", session_id=str(db_session.id), conversation_id=str(session_data.conversation_id))
     return ChatSessionResponse.model_validate(db_session)
 
   async def post_stream_chat(
@@ -132,17 +122,13 @@ class ConversationService:
     org_id: UUID,
     chat_data: ChatMessageCreate,
     session: AsyncSession = Depends(get_db),
-    llm: LLMFactory = Depends(get_llm),
     user: dict = Depends(RBAC("chats", "write")),
   ) -> StreamingResponse:
     """Stream chat response."""
 
     async def generate_response() -> AsyncGenerator[str, None]:
       try:
-        self.logger.info("Starting chat stream",
-                chat_session_id=str(chat_data.chat_session_id),
-                user_id=str(user["id"])
-            )
+        self.logger.info("Starting chat stream", chat_session_id=str(chat_data.chat_session_id), user_id=str(user["id"]))
         data = await self._get_chat_session(chat_data.chat_session_id, session)
         if not data:
           raise Exception("Chat session not found")
@@ -176,10 +162,7 @@ class ConversationService:
 
         yield f"data: {json.dumps({'message': 'DONE'})}\n\n"
         # Save AI response after streaming
-        self.logger.debug("Saving AI response",
-            chat_session_id=str(chat_session.id),
-            tokens=len(full_response.split(" "))
-        )
+        self.logger.debug("Saving AI response", chat_session_id=str(chat_session.id), tokens=len(full_response.split(" ")))
         ai_message = MessageModel(
           chat_session_id=chat_session.id,
           role=Message_Role.AGENT,
@@ -191,11 +174,7 @@ class ConversationService:
         await session.commit()
 
       except Exception as e:
-        self.logger.exception(
-                "Error in chat stream",
-                exc_info=e,
-                chat_session_id=str(chat_data.chat_session_id)
-            )
+        self.logger.exception("Error in chat stream", exc_info=e, chat_session_id=str(chat_data.chat_session_id))
         import traceback
 
         traceback.print_exc()
@@ -211,17 +190,13 @@ class ConversationService:
     user: dict = Depends(RBAC("chats", "read")),
   ) -> ConversationWithSessionsResponse:
     """Get conversation with all its chat sessions."""
-    self.logger.info(
-        "Fetching conversation with sessions",
-        conversation_id=str(conversation_id),
-        org_id=str(org_id)
-    )
+    self.logger.info("Fetching conversation with sessions", conversation_id=str(conversation_id), org_id=str(org_id))
     # Query conversation with chat sessions and related models/agents
     query = (
-      select(ConversationModel, ChatSessionModel, LLMModel.name.label("model_name"), AgentsModel.name.label("agent_name"))
+      select(ConversationModel, ChatSessionModel, LLMModel.name.label("model_name"), AgentModel.name.label("agent_name"))
       .outerjoin(ChatSessionModel, ConversationModel.id == ChatSessionModel.conversation_id)
       .outerjoin(LLMModel, ChatSessionModel.model_id == LLMModel.id)
-      .outerjoin(AgentsModel, ChatSessionModel.agent_id == AgentsModel.id)
+      .outerjoin(AgentModel, ChatSessionModel.agent_id == AgentModel.id)
       .where(ConversationModel.id == conversation_id, ConversationModel.organization_id == org_id)
     )
 
@@ -229,22 +204,14 @@ class ConversationService:
     rows = result.unique().all()
 
     if not rows:
-      self.logger.error(
-            "Conversation not found",
-            conversation_id=str(conversation_id),
-            org_id=str(org_id)
-        )
+      self.logger.error("Conversation not found", conversation_id=str(conversation_id), org_id=str(org_id))
       raise HTTPException(status_code=404, detail="Conversation not found")
 
     # Process results
     conversation = rows[0].ConversationModel
     chat_sessions = []
 
-    self.logger.debug(
-        "Processing conversation sessions",
-        conversation_id=str(conversation_id),
-        session_count=len(rows)
-    )
+    self.logger.debug("Processing conversation sessions", conversation_id=str(conversation_id), session_count=len(rows))
 
     for row in rows:
       if row.ChatSessionModel:
@@ -270,11 +237,7 @@ class ConversationService:
     result = await session.execute(query)
     conversations = result.scalars().all()
 
-    self.logger.debug(
-        "Retrieved conversations",
-        org_id=str(org_id),
-        count=len(conversations)
-    )
+    self.logger.debug("Retrieved conversations", org_id=str(org_id), count=len(conversations))
     return [ConversationResponse.model_validate(conv) for conv in conversations]
 
   async def get_messages(
@@ -289,11 +252,7 @@ class ConversationService:
   ) -> PaginatedMessagesResponse:
     """Get paginated messages for a conversation."""
     self.logger.info(
-        "Fetching messages",
-        conversation_id=str(conversation_id),
-        cursor=cursor.isoformat() if cursor else None,
-        offset=offset,
-        limit=limit
+      "Fetching messages", conversation_id=str(conversation_id), cursor=cursor.isoformat() if cursor else None, offset=offset, limit=limit
     )
     # Base query for total count
     count_query = (
@@ -316,8 +275,8 @@ class ConversationService:
         ChatSessionModel,
         LLMModel.id.label("model_id"),
         LLMModel.name.label("model_name"),
-        AgentsModel.id.label("agent_id"),
-        AgentsModel.name.label("agent_name"),
+        AgentModel.id.label("agent_id"),
+        AgentModel.name.label("agent_name"),
       )
       .join(ChatSessionModel, MessageModel.chat_session_id == ChatSessionModel.id)
       .join(
@@ -329,7 +288,7 @@ class ConversationService:
         ),
       )
       .outerjoin(LLMModel, ChatSessionModel.model_id == LLMModel.id)
-      .outerjoin(AgentsModel, ChatSessionModel.agent_id == AgentsModel.id)
+      .outerjoin(AgentModel, ChatSessionModel.agent_id == AgentModel.id)
       .order_by(MessageModel.created_at.desc())
     )
 
@@ -373,9 +332,5 @@ class ConversationService:
       chat_session, model_name = result.one()
       return chat_session, model_name
     except Exception as e:
-      self.logger.exception(
-        "Failed to fetch chat session",
-        exc_info=e,
-        chat_session_id=str(chat_session_id)
-      )
+      self.logger.exception("Failed to fetch chat session", exc_info=e, chat_session_id=str(chat_session_id))
       return None

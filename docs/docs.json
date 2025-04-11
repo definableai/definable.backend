@@ -1,0 +1,181 @@
+{
+  "name": "Zyeta.io",
+  "theme": "mint",
+  "logo": {
+    "light": "/logo/dark.svg",
+    "dark": "/logo/light.svg",
+    "href": "https://zyeta.io"
+  },
+  "favicon": "/logo/favicon.svg",
+  "colors": {
+    "primary": "#C084FC",
+    "light": "#DDB8FD",
+    "dark": "#9A4DFC"
+  },
+  "modeToggle": {
+    "default": "dark"
+  },
+  "backgroundImage": "/images/background.png",
+  "topbarLinks": [
+    {
+      "name": "Documentation",
+      "url": "https://zyeta.io/docs"
+    }
+  ],
+  "topbarCtaButton": {
+    "name": "Dashboard",
+    "url": "https://app.zyeta.io"
+  },
+  "tabs": [
+    {
+      "name": "API Reference",
+      "url": "api-reference"
+    },
+    {
+      "name": "Guides",
+      "url": "development-guides"
+    },
+    {
+      "name": "Troubleshooting",
+      "url": "troubleshooting"
+    }
+  ],
+  "anchors": [
+    {
+      "name": "API Reference",
+      "icon": "rectangle-terminal",
+      "url": "api-reference"
+    },
+    {
+      "name": "GitHub",
+      "icon": "github",
+      "url": "https://github.com/zyeta-io"
+    }
+  ],
+  "navigation": {
+    "groups": [
+      {
+        "group": "Introduction",
+        "pages": [
+          "pages/introduction"
+        ]
+      },
+      {
+        "group": "Getting Started",
+        "pages": [
+          "pages/getting-started/quickstart",
+          "pages/getting-started/installation",
+          "pages/getting-started/environment-setup",
+          "pages/getting-started/development-workflow"
+        ]
+      },
+      {
+        "group": "Architecture",
+        "pages": [
+          "pages/architecture/overview",
+          "pages/architecture/directory-structure",
+          "pages/architecture/middleware-architecture",
+          "pages/architecture/service-architecture",
+          "pages/architecture/database-models"
+        ]
+      },
+      {
+        "group": "Authentication",
+        "pages": [
+          "pages/authentication/overview",
+          "pages/authentication/jwt-authentication",
+          "pages/authentication/rbac-permissions",
+          "pages/authentication/invitation-flow"
+        ]
+      },
+      {
+        "group": "API Reference",
+        "pages": [
+          "pages/api-reference/overview",
+          "pages/api-reference/auth-service",
+          "pages/api-reference/agents-service",
+          "pages/api-reference/conversation-service",
+          "pages/api-reference/invitations-service",
+          "pages/api-reference/kb-service",
+          "pages/api-reference/llm-service",
+          "pages/api-reference/public-upload-service",
+          "pages/api-reference/roles-service",
+          "pages/api-reference/tools-service",
+          "pages/api-reference/ws-service"
+        ]
+      },
+      {
+        "group": "Development Guides",
+        "pages": [
+          "pages/development-guides/coding-standards",
+          "pages/development-guides/adding-new-services",
+          "pages/development-guides/adding-new-models",
+          "pages/development-guides/testing-guide",
+          "pages/development-guides/migration-guide"
+        ]
+      },
+      {
+        "group": "Troubleshooting",
+        "pages": [
+          "pages/troubleshooting/overview",
+          "pages/troubleshooting/installation-issues",
+          "pages/troubleshooting/database-issues",
+          "pages/troubleshooting/api-errors",
+          "pages/troubleshooting/authentication-issues"
+        ]
+      }
+    ]
+  },
+  "footerSocials": {
+    "github": "https://github.com/zyeta-io",
+    "linkedin": "https://www.linkedin.com/company/zyeta-io",
+    "twitter": "https://twitter.com/zyeta_io"
+  },
+  "api": {
+    "baseUrl": "https://api.zyeta.io",
+    "auth": {
+      "method": "bearer"
+    },
+    "playground": {
+      "mode": "simple"
+    },
+    "maintainOrder": true
+  },
+  "openapi": "/zyeta.json",
+  "feedback": {
+    "suggestEdit": true,
+    "raiseIssue": true,
+    "thumbsRating": true
+  },
+  "search": {
+    "prompt": "Search Zyeta documentation...",
+    "placeholderText": "Search docs...",
+    "indexingOptions": {
+      "minScore": 0.3,
+      "maxResults": 20
+    }
+  },
+  "redirects": [
+    { "source": "/docs", "destination": "/pages/introduction" },
+    { "source": "/api", "destination": "/pages/api-reference/overview" }
+  ],
+  "seo": {
+    "titleSuffix": " | Zyeta Documentation",
+    "defaultTitle": "Zyeta Backend Documentation",
+    "description": "Documentation for Zyeta Backend APIs and development workflows",
+    "canonicalUrl": "https://docs.zyeta.io"
+  },
+  "metadata": {
+    "og:image": "/logo/og-image.png",
+    "og:title": "Zyeta Documentation",
+    "og:description": "Documentation for Zyeta Backend APIs and development workflows",
+    "twitter:site": "@zyeta_io",
+    "twitter:card": "summary_large_image"
+  },
+  "codeSamples": {
+    "languages": ["curl", "python", "node"]
+  },
+  "toc": {
+    "title": "On This Page"
+  }
+}

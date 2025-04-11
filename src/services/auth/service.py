@@ -1,23 +1,24 @@
 from datetime import timedelta
-from uuid import uuid4
-import os
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi.responses import HTMLResponse
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from models import (
+  InvitationModel,
+  InvitationStatus,
+  OrganizationMemberModel,
+  OrganizationModel,
+  RoleModel,
+  UserModel,
+)
 from services.__base.acquire import Acquire
-from services.org.model import OrganizationMemberModel, OrganizationModel
-from services.invitations.model import InvitationModel
-from services.invitations.schema import InvitationStatus
 
-# from .dependencies import get_current_active_user
-from .model import UserModel
-from .schema import TokenResponse, UserLogin, UserResponse, UserSignup, InviteSignup
-from fastapi.responses import HTMLResponse
-from sqlalchemy import and_
+from .schema import InviteSignup, TokenResponse, UserLogin, UserResponse, UserSignup
 
 
 class AuthService:
@@ -30,57 +31,55 @@ class AuthService:
     self.acquire = acquire
     self.utils = acquire.utils
     self.settings = acquire.settings
-    self.models = acquire.models
     self.logger = acquire.logger
 
   async def post_signup(self, user_data: UserSignup, session: AsyncSession = Depends(get_db)) -> UserResponse:
     """Sign up a new user."""
-    # Check if user exists
-
-    self.logger.info(f"Starting user signup process for email: {user_data.email}")
-
-    query = select(UserModel).where(UserModel.email == user_data.email)
-    result = await session.execute(query)
-    if result.unique().scalar_one_or_none():
-      self.logger.error(f"Email already registered: {user_data.email}")
-      raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Email already registered",
-      )
-
-    # Create user
-    self.logger.debug("Creating new user", email=user_data.email)
-    user_dict = user_data.model_dump(exclude={"confirm_password"})
-    user_dict["password"] = self.utils.get_password_hash(user_dict["password"])
-    db_user = UserModel(**user_dict)
-    session.add(db_user)
-    await session.flush()  # Get user.id without committing
-
-    # Set up default organization with owner role
     try:
-      self.logger.debug("Setting up default organization", user_id=str(db_user.id))
+      self.logger.info(f"Starting user signup process for email: {user_data.email}")
+
+      # Check if user exists
+      query = select(UserModel).where(UserModel.email == user_data.email)
+      result = await session.execute(query)
+      if result.unique().scalar_one_or_none():
+        self.logger.error(f"Email already registered: {user_data.email}")
+        raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail="Email already registered",
+        )
+
+      # Create user
+      self.logger.debug("Creating new user", email=user_data.email)
+      user_dict = user_data.model_dump(exclude={"confirm_password"})
+      user_dict["password"] = self.utils.get_password_hash(user_dict["password"])
+      db_user = UserModel(**user_dict)
+      session.add(db_user)
+      await session.flush()
+
+      # Set up default organization with owner role
       await self._setup_default_organization(db_user, session)
+      await session.commit()
+      await session.refresh(db_user)
+
+      self.logger.info("User signup completed successfully", user_id=str(db_user.id))
+      return UserResponse(id=db_user.id, email=db_user.email, message="User created successfully")
+
+    except HTTPException:
+      # Re-raise known exceptions
+      raise
     except Exception as e:
-      print(e)
       await session.rollback()
+      self.logger.error(f"Signup failed: {str(e)}", exc_info=True)
       raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail=f"Failed to create default organization: {str(e)}",
+        detail="Failed to create user account",
       )
-
-    # Commit all changes
-    await session.commit()
-    await session.refresh(db_user)
-
-    self.logger.info("User signup completed successfully", user_id=str(db_user.id))
-    return UserResponse(id=db_user.id, email=db_user.email, message="User created successfully")
 
   async def post_signup_invite(
     self,
     user_data: InviteSignup,
     session: AsyncSession = Depends(get_db),
   ) -> UserResponse:
-
     # Validate invitation
     query = select(InvitationModel).where(
       InvitationModel.invite_token == user_data.invite_token,
@@ -202,29 +201,36 @@ class AuthService:
   ) -> HTMLResponse:
     """Display the signup form for an invitation."""
     self.logger.info(f"Displaying invite signup page for email: {email}")
-    
+
     # Get invitation
     query = select(InvitationModel).where(
-        and_(
-            InvitationModel.invite_token == token,
-            InvitationModel.invitee_email == email
-        )
+      and_(
+        InvitationModel.invite_token == token,
+        InvitationModel.invitee_email == email,
+      )
     )
     result = await session.execute(query)
     invitation = result.unique().scalar_one_or_none()
-    
+
     # Get organization name
-    org = await self.models["OrganizationModel"].read(invitation.organization_id)
+    if not invitation:
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid invitation",
+      )
+
+    # Get organization name
+    org = await OrganizationModel.read(invitation.organization_id)
     org_name = org.name if org else "Our Organization"
 
     # Return signup form for pending invitations
     template_path = Path(__file__).parent / "templates" / "signup_invite.html"
     with open(template_path, "r") as f:
-        content = f.read().format(
-            org_name=org_name,
-            email=email,
-            token=token
-        )
+      content = f.read().format(
+        org_name=org_name,
+        email=email,
+        token=token,
+      )
     return HTMLResponse(content=content, status_code=200)
 
   ### PRIVATE METHODS ###
@@ -256,7 +262,7 @@ class AuthService:
     await session.flush()
     # assign a default role to the user
     # Get OWNER role from default roles
-    query = select(self.models["RoleModel"]).where(self.models["RoleModel"].name == "owner")
+    query = select(RoleModel).where(RoleModel.name == "owner")
     result = await session.execute(query)
     owner_role = result.unique().scalar_one_or_none()
 
@@ -281,9 +287,9 @@ class AuthService:
     await session.flush()
 
     self.logger.info(
-          "Default organization setup complete",
-          user_id=str(user.id),
-          org_id=str(org.id)
-      )
+      "Default organization setup complete",
+      user_id=str(user.id),
+      org_id=str(org.id),
+    )
 
     return org

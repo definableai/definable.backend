@@ -22,9 +22,9 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_postgres import PGVector
 
 from database import async_engine
-from libs.s3 import s3_client
+from libs.s3.v1 import s3_client
+from models import KBDocumentModel
 
-from .model import KBDocumentModel
 from .schema import AllowedFileExtension
 
 

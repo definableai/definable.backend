@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies.security import RBAC
+from models import LLMModel
 from services.__base.acquire import Acquire
 
-from .model import LLMModel
 from .schema import LLMCreate, LLMResponse, LLMUpdate
 
 

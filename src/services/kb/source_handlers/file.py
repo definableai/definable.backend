@@ -3,9 +3,9 @@ from typing import Dict, Optional
 
 from pydantic import BaseModel, Field
 
-from libs.s3 import s3_client
+from libs.s3.v1 import s3_client
+from models import KBDocumentModel
 
-from ..model import KBDocumentModel
 from .base import BaseSourceHandler
 
 

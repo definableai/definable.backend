@@ -39,45 +39,82 @@ class Manager:
   def register_services(self) -> None:
     """
     Register services with the FastAPI application.
+    Recursively scans all directories under services_dir and registers any service.py files found.
     """
-    for service_name in os.listdir(self.services_dir):
-      if service_name.startswith("__"):
+    self._register_services_recursive(self.services_dir, [])
+
+  def _register_services_recursive(self, current_dir: str, path_segments: list[str]) -> None:
+    """
+    Recursively register services from directories.
+
+    Args:
+        current_dir (str): Current directory being scanned
+        path_segments (list[str]): List of path segments built up through recursion
+    """
+    for item in os.listdir(current_dir):
+      if item.startswith("__"):
         continue
-      service_path = os.path.join(self.services_dir, service_name)
-      if os.path.isdir(service_path):
-        service_module_path = f"services.{service_name}.service"
-        try:
-          service_module = importlib.import_module(service_module_path)
-          service_class = next((cls for name, cls in inspect.getmembers(service_module, inspect.isclass) if name.endswith("Service")), None)
-          if service_class:
-            # Check if '__init__' accepts 'acquire' parameter
-            init_params = inspect.signature(service_class.__init__).parameters
-            if "acquire" in init_params:
-              service_instance = service_class(acquire=self.acquire)
-            else:
-              service_instance = service_class()
-            router = APIRouter(prefix=f"{self.prefix}/{service_name}")
 
-            # Register core methods (GET, POST, PUT, DELETE)
-            for method in ["get", "post", "put", "delete"]:
-              if hasattr(service_instance, method):
-                endpoint = getattr(service_instance, method)
-                router.add_api_route(path="", endpoint=endpoint, methods=[method.upper()])
+      item_path = os.path.join(current_dir, item)
 
-            # Register exposed methods specified in http_exposed
-            if hasattr(service_instance, "http_exposed"):
-              for route in service_instance.http_exposed:
-                # register ws routes
-                self.register_ws_routes(router, service_instance, service_name)
-                http_method, sub_path = route.split("=")
-                endpoint_name = f"{http_method}_{sub_path}"
-                if hasattr(service_instance, endpoint_name):
-                  endpoint = getattr(service_instance, endpoint_name)
-                  router.add_api_route(path=f"/{sub_path}", endpoint=endpoint, methods=[http_method.upper()])
+      if os.path.isdir(item_path):
+        # Add this directory to the path segments and recurse
+        self._register_services_recursive(item_path, path_segments + [item])
+      elif item == "service.py":
+        # Found a service.py file, register it with the accumulated path
+        self._register_service_from_path(path_segments)
 
+  def _register_service_from_path(self, path_segments: list[str]) -> None:
+    """
+    Register a service from a path sequence.
+
+    Args:
+        path_segments (list[str]): List of path segments (directories) leading to the service
+    """
+    if not path_segments:
+      return
+
+    # Create module path like "services.v1.kb.service"
+    module_path = "services." + ".".join(path_segments) + ".service"
+
+    # Create API path like "/api/v1/kb"
+    api_path = f"{self.prefix}/" + "/".join(path_segments)
+
+    try:
+      service_module = importlib.import_module(module_path)
+      service_class = next((cls for name, cls in inspect.getmembers(service_module, inspect.isclass) if name.endswith("Service")), None)
+
+      if service_class:
+        # Check if '__init__' accepts 'acquire' parameter
+        init_params = inspect.signature(service_class.__init__).parameters
+        if "acquire" in init_params:
+          service_instance = service_class(acquire=self.acquire)
+        else:
+          service_instance = service_class()
+
+        router = APIRouter(prefix=api_path)
+
+        # Register core methods (GET, POST, PUT, DELETE)
+        for method in ["get", "post", "put", "delete"]:
+          if hasattr(service_instance, method):
+            endpoint = getattr(service_instance, method)
+            router.add_api_route(path="", endpoint=endpoint, methods=[method.upper()])
+
+        # Register exposed methods specified in http_exposed
+        if hasattr(service_instance, "http_exposed"):
+          for route in service_instance.http_exposed:
+            # register ws routes
+            self.register_ws_routes(router, service_instance, path_segments[-1])
+            http_method, sub_path = route.split("=")
+            endpoint_name = f"{http_method}_{sub_path}"
+            if hasattr(service_instance, endpoint_name):
+              endpoint = getattr(service_instance, endpoint_name)
+              router.add_api_route(path=f"/{sub_path}", endpoint=endpoint, methods=[http_method.upper()])
+
+        if router:
           self.app.include_router(router)
-        except ModuleNotFoundError:
-          pass
+    except ModuleNotFoundError:
+      pass
 
   def register_middlewares(self) -> None:
     """

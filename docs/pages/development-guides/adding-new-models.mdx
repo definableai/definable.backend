@@ -1,0 +1,225 @@
+---
+title: 'Adding New Models'
+description: 'Guide for extending the system with new database models'
+---
+
+This guide outlines the process for adding new database models to the Zyeta backend codebase.
+
+## Overview
+
+Models in our application represent database tables and provide a foundation for data storage and retrieval. All models use SQLAlchemy ORM and follow a consistent pattern to ensure compatibility with our CRUD operations.
+
+## Step 1: Create the Model File
+
+Create a new Python file in the `src/models` directory with a descriptive name that follows the naming convention of existing model files (e.g., `my_feature_model.py`).
+
+```python
+from uuid import UUID
+
+from sqlalchemy import Boolean, ForeignKey, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
+
+from database import CRUD, Base
+
+class MyFeatureModel(CRUD):
+    """My feature model description."""
+
+    __tablename__ = "my_features"
+
+    # Primary fields
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=True)
+    
+    # Relationships
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    
+    # Status fields
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    
+    # Configuration/settings stored as JSON
+    settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default={})
+```
+
+## Step 2: Import and Register the Model
+
+Update the `src/models/__init__.py` file to import and expose your new model:
+
+```python
+# Add your import at the appropriate place in the file
+from models.my_feature_model import MyFeatureModel
+
+# Add your model to the __all__ list
+__all__ = [
+    # ... existing models
+    "MyFeatureModel",
+]
+```
+
+## Step 3: Create a Migration
+
+Migrations are necessary to update the database schema with your new model. We use Alembic for database migrations.
+
+1. Generate a new migration:
+
+```bash
+alembic revision --autogenerate -m "Add my feature model"
+```
+
+2. Review the generated migration file in the `migrations/versions` directory to ensure it correctly creates the intended table and relationships.
+
+3. Apply the migration:
+
+```bash
+alembic upgrade head
+```
+
+## Step 4: Define Schema Validation Classes
+
+Create schema validation classes for your model in the appropriate service directory (e.g., `src/services/my_feature/schema.py`). These classes will be used for request validation and serialization.
+
+```python
+from datetime import datetime
+from typing import List, Optional
+from uuid import UUID
+
+from pydantic import BaseModel, Field
+
+
+class MyFeatureBase(BaseModel):
+    """Base schema for my feature."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    is_active: bool = True
+    settings: dict = Field(default_factory=dict)
+
+
+class MyFeatureCreate(MyFeatureBase):
+    """Create schema for my feature."""
+
+    pass
+
+
+class MyFeatureUpdate(BaseModel):
+    """Update schema for my feature."""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    settings: Optional[dict] = None
+
+
+class MyFeatureResponse(MyFeatureBase):
+    """Response schema for my feature."""
+
+    id: UUID
+    organization_id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PaginatedMyFeatureResponse(BaseModel):
+    """Paginated response schema for my feature."""
+
+    items: List[MyFeatureResponse]
+    total: int
+    has_more: bool
+```
+
+## Model Design Best Practices
+
+1. **Inheritance**: Use `CRUD` for models that need standard CRUD operations, and `Base` for association tables or models with specialized operations.
+
+2. **Field Types**:
+   - Use `String(255)` for short text fields
+   - Use `Text` for longer text content
+   - Use `JSONB` for structured data/configurations
+   - Use `UUID` for all IDs and foreign keys
+
+3. **Relationships**:
+   - Always define `ForeignKey` constraints with appropriate `ondelete` behavior
+   - Use `CASCADE` for parent-child relationships where child records should be deleted when parent is deleted
+   - Use `SET NULL` where records should be preserved but reference removed
+
+4. **Default Values**:
+   - Always provide both Python defaults and database server defaults for boolean fields
+   - Use `nullable=False` for required fields
+
+5. **Documentation**:
+   - Add docstrings to all model classes
+   - Document any non-obvious field usage
+
+## Example Models
+
+### Simple Model Example (agent_model.py)
+
+```python
+class AgentModel(CRUD):
+    """Agent model."""
+
+    __tablename__ = "agents"
+
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=True)
+    model_id: Mapped[UUID] = mapped_column(ForeignKey("models.id", ondelete="CASCADE"), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    settings: Mapped[dict] = mapped_column(JSONB, nullable=False)
+```
+
+### Association Table Example (agent_model.py)
+
+```python
+class AgentToolModel(Base):
+    """Agent tool association model."""
+
+    __tablename__ = "agent_tools"
+    __table_args__ = (UniqueConstraint("agent_id", "tool_id", name="uq_agent_tool"),)
+
+    agent_id: Mapped[UUID] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True)
+    tool_id: Mapped[UUID] = mapped_column(ForeignKey("tools.id", ondelete="CASCADE"), primary_key=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    added_at: Mapped[str] = mapped_column(String(255), nullable=False)
+```
+
+## Testing Models
+
+After creating your model, you should thoroughly test its functionality:
+
+1. **Unit Tests**:
+   - Test model instantiation
+   - Test constraints and validations
+   - Test relationship behavior
+
+2. **Integration Tests**:
+   - Test database operations (create, read, update, delete)
+   - Test model interactions with related models
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Migration errors**:
+   - Check for incorrect field types
+   - Verify foreign key relationships point to valid tables
+   - Ensure the migration runs in the correct sequence
+
+2. **Validation errors**:
+   - Ensure Pydantic schemas correctly reflect model fields
+   - Check for appropriate validators and field constraints
+
+3. **Runtime errors**:
+   - Check for missing nullable constraints
+   - Verify default values are correctly set
+
+### Getting Help
+
+If you encounter issues with model creation or migration, consult:
+- The SQLAlchemy documentation
+- The Alembic migration documentation
+- Reach out to the development team for assistance

@@ -46,6 +46,9 @@ crawl4ai = "^0.4.248"
 celery = "^5.4.0"
 firecrawl = "^1.12.0"
 pyjwt = "^2.10.1"
+agno = "^1.2.5"
+openai = "^1.69.0"
+uvicorn-worker = "^0.3.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
