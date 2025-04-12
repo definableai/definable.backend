@@ -1,9 +1,9 @@
 import asyncio
-from typing import AsyncGenerator, Sequence, Type, Union
+from typing import AsyncGenerator, List, Sequence, Type, Union
 from uuid import UUID
 
 from agno.agent import Agent, RunResponse
-from agno.media import File
+from agno.media import File, Image
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.storage.postgres import PostgresStorage
@@ -36,7 +36,7 @@ class LLMFactory:
     return self.PROVIDER_MODELS[provider]
 
   async def chat(
-    self, provider: str, llm: str, chat_session_id: str | UUID, message: str, memory_size: int = 100, files: Sequence[File] = []
+    self, provider: str, llm: str, chat_session_id: str | UUID, message: str, memory_size: int = 100, assets: Sequence[Union[File, Image]] = []
   ) -> AsyncGenerator[RunResponse, None]:
     """Stream chat responses using Agno agent.
 
@@ -48,6 +48,16 @@ class LLMFactory:
     Yields:
         Streaming response tokens
     """
+    
+    images : List[Image] = []
+    files : List[File] = []
+    
+    for asset in assets:
+      if isinstance(asset, Image):
+        images.append(asset)
+      elif isinstance(asset, File):
+        files.append(asset)
+    
     model_class = self.get_model_class(provider)
     # Create agent with storage for memory retention
     agent = Agent(
@@ -59,7 +69,7 @@ class LLMFactory:
       session_id=str(chat_session_id),
       num_history_responses=memory_size,
     )
-    async for token in await agent.arun(message, files=files or None):
+    async for token in await agent.arun(message, files=files or None, images=images or None):
       yield token
 
 
