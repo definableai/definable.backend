@@ -49,6 +49,8 @@ pyjwt = "^2.10.1"
 agno = "^1.2.5"
 openai = "^1.69.0"
 uvicorn-worker = "^0.3.0"
+speechrecognition = "^3.14.2"
+pydub = "^0.25.1"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
