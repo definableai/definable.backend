@@ -48,16 +48,16 @@ class LLMFactory:
     Yields:
         Streaming response tokens
     """
-    
-    images : List[Image] = []
-    files : List[File] = []
-    
+
+    images: List[Image] = []
+    files: List[File] = []
+
     for asset in assets:
       if isinstance(asset, Image):
         images.append(asset)
       elif isinstance(asset, File):
         files.append(asset)
-    
+
     model_class = self.get_model_class(provider)
     # Create agent with storage for memory retention
     agent = Agent(
