@@ -335,14 +335,14 @@ class KnowledgeBaseService:
         FROM langchain_pg_embedding
         WHERE collection_id = :collection_id
         AND cmetadata->>'doc_id' = :doc_id
-        ORDER BY cmetadata->>'chunk_index'
+        ORDER BY cmetadata->>'chunk_id'
         LIMIT :limit OFFSET :offset
       """)
       result = await session.execute(query, {"collection_id": kb_model.collection_id, "doc_id": str(doc_id), "limit": limit, "offset": offset})
 
       chunks = []
       for row in result:
-        chunk = DocumentChunk(id=row.id, chunk_id=row.cmetadata.get("chunk_index"), content=row.document, metadata=row.cmetadata)
+        chunk = DocumentChunk(id=row.id, chunk_id=row.cmetadata.get("chunk_id"), content=row.document, metadata=row.cmetadata)
         chunks.append(chunk)
 
       return KBDocumentChunksResponse(document_id=doc_id, title=doc_model.title, chunks=chunks, total_chunks=len(chunks))
@@ -453,7 +453,7 @@ class KnowledgeBaseService:
       await session.commit()
 
       return DocumentChunk(
-        id=updated_chunk.id, chunk_id=updated_chunk.cmetadata.get("chunk_index"), content=updated_chunk.document, metadata=updated_chunk.cmetadata
+        id=updated_chunk.id, chunk_id=updated_chunk.cmetadata.get("chunk_id"), content=updated_chunk.document, metadata=updated_chunk.cmetadata
       )
 
     except Exception as e:
@@ -559,7 +559,7 @@ class KnowledgeBaseService:
       chunks = []
       for doc, score in results:
         chunk = DocumentChunk(
-          chunk_id=int(doc.metadata.get("chunk_index", 0)),  # Convert to int with default 0
+          chunk_id=int(doc.metadata.get("chunk_id", 0)),  # Convert to int with default 0
           content=doc.page_content,
           metadata=doc.metadata,
           score=score,
@@ -628,7 +628,7 @@ class KnowledgeBaseService:
     new_chunk_index = max_index
 
     # Create metadata for the new chunk
-    metadata = {**doc_model.source_metadata, "doc_id": str(doc_id), "chunk_index": new_chunk_index}
+    metadata = {**doc_model.source_metadata, "doc_id": str(doc_id), "chunk_id": new_chunk_index}
 
     # Initialize vector store
     vectorstore = PGVector(

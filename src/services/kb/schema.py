@@ -12,22 +12,29 @@ from models import DocumentStatus
 class AllowedFileExtension(str, Enum):
   """Allowed file extensions for knowledge base documents."""
 
-  TXT = "txt"
-  MARKDOWN = "md"
-  MDX = "mdx"
+  # Basic formats
   PDF = "pdf"
+  DOCX = "docx"
+  XLSX = "xlsx"
+  PPTX = "pptx"
   HTML = "html"
   HTM = "htm"
-  XLSX = "xlsx"
-  XLS = "xls"
-  DOCX = "docx"
+  MD = "md"
+  ASCIIDOC = "asciidoc"
+  ADOC = "adoc"
   CSV = "csv"
-  EML = "eml"
-  MSG = "msg"
-  PPTX = "pptx"
-  PPT = "ppt"
+
+  # Image formats
+  JPG = "jpg"
+  JPEG = "jpeg"
+  PNG = "png"
+  TIFF = "tiff"
+  BMP = "bmp"
+
+  # XML formats
   XML = "xml"
-  EPUB = "epub"
+  NXML = "nxml"
+  USPTO = "uspto"
 
 
 def validate_file_extension(filename: str) -> str:
