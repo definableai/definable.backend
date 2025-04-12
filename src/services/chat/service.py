@@ -1,9 +1,10 @@
 import json
 from datetime import datetime, timezone
 from io import BytesIO
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import AsyncGenerator, Dict, List, Optional, Union
 from uuid import UUID
 
+from agno.media import File, Image
 from fastapi import Depends, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import and_, select
@@ -248,11 +249,6 @@ class ChatService:
     last_message = result.scalars().first()
     parent_id = last_message.id if last_message else None
 
-    # # get urls of the files uploaded
-    # query = select(ChatUploadModel).filter(ChatUploadModel.id.in_(message_data.file_uploads))
-    # result = await session.execute(query)
-    # file_uploads = result.scalars().all()
-
     # if chatting with a LLM model
     if model_id:
       # check if LLM model exists
@@ -273,21 +269,46 @@ class ChatService:
       )
       session.add(user_message)
       await session.commit()
+      await session.refresh(user_message)
 
-      # files = []
-      # if message_data.file_uploads:
-      #   for file_upload in file_uploads:
-      #     file = File(url=file_upload.url, mime_type=file_upload.content_type)
-      #     files.append(file)
+      files: List[Union[File, Image]] = []
+      if message_data.file_uploads:
+        # Fetch the file uploads from the database
+        query = select(ChatUploadModel).filter(ChatUploadModel.id.in_(message_data.file_uploads))
+        result = await session.execute(query)
+        file_uploads = result.scalars().all()
 
-      # print(files)
+        for file_upload in file_uploads:
+          # Create the appropriate File object based on mimetype
+          if file_upload.content_type.startswith("image/"):
+            files.append(Image(url=file_upload.url))
+          else:
+            files.append(File(url=file_upload.url, mime_type=file_upload.content_type))
+
+          # Create a new ChatUploadModel linking to this message
+          new_upload = ChatUploadModel(
+            message_id=user_message.id,
+            filename=file_upload.filename,
+            content_type=file_upload.content_type,
+            file_size=file_upload.file_size,
+            url=file_upload.url,
+            _metadata=file_upload._metadata,
+          )
+          session.add(new_upload)
+
+        # Commit the new file uploads
+        await session.commit()
 
       # generate a streaming response
       async def generate_response() -> AsyncGenerator[str, None]:
         full_response = ""
         buffer: list[str] = []
         async for token in self.llm_factory.chat(
-          provider=llm_model.provider, llm=llm_model.name, chat_session_id=chat_id, message=message_data.content
+          provider=llm_model.provider,
+          llm=llm_model.version,
+          chat_session_id=chat_id,
+          message=message_data.content,
+          files=files,
         ):
           buffer.append(token.content)
           full_response += token.content
