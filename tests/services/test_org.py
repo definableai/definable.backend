@@ -1,11 +1,15 @@
 import pytest
 from fastapi import HTTPException
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 import sys
 import json
 from uuid import UUID, uuid4
 from datetime import datetime
 import re
+from typing import Dict, Optional, Any
+
+# Import pydantic
+from pydantic import BaseModel, Field
 
 # Create mock modules before any imports
 sys.modules['database'] = MagicMock()
@@ -22,52 +26,49 @@ sys.modules['src.services.__base.acquire'] = MagicMock()
 sys.modules['dependencies.security'] = MagicMock()
 sys.modules['services.roles.service'] = MagicMock()
 
-# Mock models
-class MockOrganizationModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.name = kwargs.get('name', 'Test Organization')
-        self.slug = kwargs.get('slug', f"test-organization-{str(uuid4())[:8]}")
-        self.settings = kwargs.get('settings', {})
-        self.created_at = kwargs.get('created_at', datetime.now().isoformat())
-        self.updated_at = kwargs.get('updated_at', datetime.now().isoformat())
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockOrganizationMemberModel:
-    def __init__(self, **kwargs):
-        self.organization_id = kwargs.get('organization_id', uuid4())
-        self.user_id = kwargs.get('user_id', uuid4())
-        self.role_id = kwargs.get('role_id', uuid4())
-        self.status = kwargs.get('status', 'active')
-        self.created_at = kwargs.get('created_at', datetime.now().isoformat())
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockRoleModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.name = kwargs.get('name', 'member')
-        self.organization_id = kwargs.get('organization_id')
-        self.is_admin = kwargs.get('is_admin', False)
-        self.permissions = kwargs.get('permissions', {})
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockResponse:
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+# Mock models using Pydantic
+class MockOrganizationModel(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    name: str = "Test Organization"
+    slug: str = Field(default_factory=lambda: f"test-organization-{str(uuid4())[:8]}")
+    settings: Dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     
-    @classmethod
-    def model_validate(cls, data):
-        if isinstance(data, dict):
-            return cls(**data)
-        return cls(**{k: v for k, v in data.__dict__.items() if not k.startswith('_')})
+    class Config:
+        arbitrary_types_allowed = True
+
+class MockOrganizationMemberModel(BaseModel):
+    organization_id: UUID = Field(default_factory=uuid4)
+    user_id: UUID = Field(default_factory=uuid4)
+    role_id: UUID = Field(default_factory=uuid4)
+    status: str = "active"
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     
-    def model_dump(self, **kwargs):
-        exclude_unset = kwargs.get('exclude_unset', False)
-        if exclude_unset:
-            # Return only items that have been explicitly set
-            return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
-        return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+    class Config:
+        arbitrary_types_allowed = True
+
+class MockRoleModel(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    name: str = "member"
+    organization_id: Optional[UUID] = None
+    is_admin: bool = False
+    permissions: Dict[str, Any] = Field(default_factory=dict)
+    
+    class Config:
+        arbitrary_types_allowed = True
+
+class MockResponse(BaseModel):
+    id: Optional[UUID] = None
+    name: Optional[str] = None
+    slug: Optional[str] = None
+    settings: Optional[Dict[str, Any]] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    message: Optional[str] = None
+    
+    class Config:
+        arbitrary_types_allowed = True
 
 # Create a mock JSONResponse that's simpler and more predictable
 class MockJSONResponse:
@@ -197,7 +198,7 @@ def mock_org_service():
         
         await session.commit()
         
-        return MockResponse.model_validate(org)
+        return MockResponse(**org.model_dump())
     
     async def mock_add_member(organization_id, user_id, role_id, session):
         # Get the role
@@ -246,7 +247,7 @@ def mock_org_service():
         )
         session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = org
         
-        return MockResponse.model_validate(org)
+        return MockResponse(**org.model_dump())
     
     async def mock_get_org_not_found(org_id, session, user):
         session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = None
@@ -273,7 +274,7 @@ def mock_org_service():
         # Set up mock response
         session.execute.return_value.unique.return_value.scalars.return_value.all.return_value = orgs
         
-        return [MockResponse.model_validate(org) for org in orgs]
+        return [MockResponse(**org.model_dump()) for org in orgs]
     
     # Create AsyncMock objects
     create_org_mock = AsyncMock(side_effect=mock_create_org)
@@ -452,16 +453,22 @@ class TestOrganizationService:
             
             # Update fields
             update_data = org_data.model_dump(exclude_unset=True)
+            org_dict = db_org.model_dump()
+            
+            # Update the fields
             for field, value in update_data.items():
-                setattr(db_org, field, value)
+                org_dict[field] = value
             
             # Update timestamp
-            db_org.updated_at = datetime.now().isoformat()
+            org_dict["updated_at"] = datetime.now().isoformat()
+            
+            # Create updated organization
+            db_org = MockOrganizationModel(**org_dict)
             
             await session.commit()
             
             # Return updated organization
-            return MockResponse.model_validate(db_org)
+            return MockResponse(**db_org.model_dump())
             
         mock_org_service.put_update = AsyncMock(side_effect=mock_update_org)
         

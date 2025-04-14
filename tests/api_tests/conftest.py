@@ -69,19 +69,19 @@ def app():
     
     # Knowledge base routes
     @test_app.post("/api/kb/create")
-    async def create_kb(kb_data: KBData = Body(...), org_id: str = None, db: AsyncSession = Depends(get_test_db)):
+    async def create_kb(kb_data: KBData = Body(...), org_id: Optional[str] = None, db: AsyncSession = Depends(get_test_db)):
         """Mock create KB endpoint that will be patched in tests."""
         # This is just a placeholder - the actual implementation will be mocked
         return {"id": "mock-kb-id", "name": kb_data.name, "collection_id": "mock-collection-id"}
     
     @test_app.get("/api/kb/list")
-    async def list_kb(org_id: str = None, db: AsyncSession = Depends(get_test_db)):
+    async def list_kb(org_id: Optional[str] = None, db: AsyncSession = Depends(get_test_db)):
         """Mock list KB endpoint that will be patched in tests."""
         # This is just a placeholder - the actual implementation will be mocked
         return [{"id": "mock-kb-id", "name": "Mock KB"}]
     
     @test_app.post("/api/kb/search_chunks")
-    async def search_chunks(search_data: SearchData = Body(...), org_id: str = None, kb_id: str = None, db: AsyncSession = Depends(get_test_db)):
+    async def search_chunks(search_data: SearchData = Body(...), org_id: Optional[str] = None, kb_id: Optional[str] = None, db: AsyncSession = Depends(get_test_db)):
         """Mock search chunks endpoint that will be patched in tests."""
         # This is just a placeholder - the actual implementation will be mocked
         return [{"chunk_id": "mock-chunk-id", "content": "Mock content", "score": 0.95}]

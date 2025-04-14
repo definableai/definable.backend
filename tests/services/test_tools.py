@@ -1,9 +1,13 @@
 import pytest
 from fastapi import HTTPException
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 import sys
 from uuid import UUID, uuid4
 from datetime import datetime
+from typing import Optional, Any, Dict
+
+# Import pydantic
+from pydantic import BaseModel, Field
 
 # Create mock modules before any imports
 sys.modules['database'] = MagicMock()
@@ -19,46 +23,45 @@ sys.modules['src.config.settings'] = MagicMock()
 sys.modules['src.services.__base.acquire'] = MagicMock()
 sys.modules['dependencies.security'] = MagicMock()
 
-# Mock models
-class MockToolCategoryModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.name = kwargs.get('name', 'Test Category')
-        self.description = kwargs.get('description', 'Test Category Description')
-        self.org_id = kwargs.get('org_id')
-        self.is_default = kwargs.get('is_default', False)
-        self.created_at = kwargs.get('created_at', datetime.now().isoformat())
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockToolModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.name = kwargs.get('name', 'Test Tool')
-        self.description = kwargs.get('description', 'Test Tool Description')
-        self.tool_definition = kwargs.get('tool_definition', {})
-        self.category_id = kwargs.get('category_id')
-        self.org_id = kwargs.get('org_id')
-        self.created_by = kwargs.get('created_by')
-        self.created_at = kwargs.get('created_at', datetime.now().isoformat())
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockResponse:
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+# Mock models using Pydantic
+class MockToolCategoryModel(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    name: str = "Test Category"
+    description: str = "Test Category Description"
+    org_id: Optional[UUID] = None
+    is_default: bool = False
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     
-    @classmethod
-    def model_validate(cls, data):
-        if isinstance(data, dict):
-            return cls(**data)
-        return cls(**{k: v for k, v in data.__dict__.items() if not k.startswith('_')})
+    class Config:
+        arbitrary_types_allowed = True
+
+class MockToolModel(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    name: str = "Test Tool"
+    description: str = "Test Tool Description"
+    tool_definition: Dict[str, Any] = Field(default_factory=lambda: {})
+    category_id: Optional[UUID] = None
+    org_id: Optional[UUID] = None
+    created_by: Optional[UUID] = None
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     
-    def model_dump(self, **kwargs):
-        exclude_unset = kwargs.get('exclude_unset', False)
-        if exclude_unset:
-            # Return only items that have been explicitly set
-            return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
-        return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+    class Config:
+        arbitrary_types_allowed = True
+
+class MockResponse(BaseModel):
+    """Base class for mock responses"""
+    id: Optional[UUID] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    org_id: Optional[UUID] = None
+    tool_definition: Optional[Dict[str, Any]] = None
+    category_id: Optional[UUID] = None
+    created_by: Optional[UUID] = None
+    created_at: Optional[str] = None
+    is_default: Optional[bool] = None
+    
+    class Config:
+        arbitrary_types_allowed = True
 
 @pytest.fixture
 def mock_user():
@@ -153,7 +156,7 @@ def mock_tools_service():
         await session.flush()
         await session.commit()
         
-        return MockResponse.model_validate(db_category)
+        return MockResponse(**db_category.model_dump())
     
     async def mock_put_category(org_id, category_id, category_data, session, user):
         # Get category
@@ -161,14 +164,18 @@ def mock_tools_service():
         session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = db_category
         
         # Update category
-        if hasattr(category_data, "name"):
-            db_category.name = category_data.name
-        if hasattr(category_data, "description"):
-            db_category.description = category_data.description
+        category_dict = db_category.model_dump()
+        update_data = category_data.model_dump(exclude_unset=True)
+        
+        for field, value in update_data.items():
+            category_dict[field] = value
+            
+        # Create updated category
+        db_category = MockToolCategoryModel(**category_dict)
         
         await session.commit()
         
-        return MockResponse.model_validate(db_category)
+        return MockResponse(**db_category.model_dump())
     
     async def mock_delete_category(org_id, category_id, session, user):
         # Check if category exists
@@ -212,19 +219,20 @@ def mock_tools_service():
         session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = None  # Tool doesn't exist yet
         
         # Create tool
+        tool_dict = tool_data.model_dump()
+        # Remove None values
+        tool_dict = {k: v for k, v in tool_dict.items() if v is not None}
+        
         db_tool = MockToolModel(
             org_id=org_id,
-            name=tool_data.name,
-            description=tool_data.description,
-            tool_definition=tool_data.tool_definition,
-            category_id=tool_data.category_id,
-            created_by=user["id"]
+            created_by=user["id"],
+            **tool_dict
         )
         session.add(db_tool)
         await session.flush()
         await session.commit()
         
-        return MockResponse.model_validate(db_tool)
+        return MockResponse(**db_tool.model_dump())
     
     async def mock_put_tool(org_id, tool_id, tool_data, session, user):
         # Mock getting a tool directly
@@ -237,13 +245,18 @@ def mock_tools_service():
             raise HTTPException(status_code=404, detail="Tool not found")
         
         # Update tool
+        tool_dict = db_tool.model_dump()
         update_data = tool_data.model_dump(exclude_unset=True)
+        
         for field, value in update_data.items():
-            setattr(db_tool, field, value)
+            tool_dict[field] = value
+            
+        # Create updated tool
+        db_tool = MockToolModel(**tool_dict)
         
         await session.commit()
         
-        return MockResponse.model_validate(db_tool)
+        return MockResponse(**db_tool.model_dump())
     
     async def mock_delete_tool(org_id, tool_id, session, user):
         # Mock getting a tool directly

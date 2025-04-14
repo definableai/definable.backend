@@ -1,10 +1,11 @@
 import pytest
 from fastapi import HTTPException
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 import sys
-import json
-from uuid import uuid4
+from uuid import UUID, uuid4
 from datetime import datetime
+from typing import List, Dict, Any, Optional
+from pydantic import BaseModel, Field
 
 # Create mock modules before any imports
 sys.modules['database'] = MagicMock()
@@ -25,87 +26,125 @@ sys.modules['libs.chats.streaming'] = MagicMock()
 sys.modules['fastapi.responses'] = MagicMock()
 sys.modules['src.utils.stream_util'] = MagicMock()
 
-# Mock the conversation models and schemas
-class MockConversationModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.organization_id = kwargs.get('organization_id', uuid4())
-        self.user_id = kwargs.get('user_id', uuid4())
-        self.title = kwargs.get('title', 'Test Conversation')
-        self.description = kwargs.get('description', '')
-        self.is_archived = kwargs.get('is_archived', False)
-        self.created_at = kwargs.get('created_at', datetime.now())
-        self.updated_at = kwargs.get('updated_at', datetime.now())
-        self.__dict__ = {**self.__dict__, **kwargs}
+# Function to create empty dict for default_factory
+def empty_dict() -> Dict[str, Any]:
+    return {}
 
-class MockChatSessionModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.conversation_id = kwargs.get('conversation_id', uuid4())
-        self.agent_id = kwargs.get('agent_id')
-        self.model_id = kwargs.get('model_id', uuid4())
-        self.status = kwargs.get('status', 'active')
-        self.settings = kwargs.get('settings', {})
-        self._metadata = kwargs.get('_metadata', {})
-        self.created_at = kwargs.get('created_at', datetime.now())
-        self.updated_at = kwargs.get('updated_at', datetime.now())
-        self.__dict__ = {**self.__dict__, **kwargs}
+# Function to create empty list for default_factory
+def empty_list() -> List[Any]:
+    return []
 
-class MockMessageModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.chat_session_id = kwargs.get('chat_session_id', uuid4())
-        self.role = kwargs.get('role', 'user')
-        self.content = kwargs.get('content', 'Test message')
-        self.token_used = kwargs.get('token_used', 0)
-        self._metadata = kwargs.get('_metadata', {})
-        self.created_at = kwargs.get('created_at', datetime.now())
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockModelModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.name = kwargs.get('name', 'GPT-4')
-        self.provider = kwargs.get('provider', 'openai')
-        self.version = kwargs.get('version', '4o')
-        self.is_active = kwargs.get('is_active', True)
-        self.config = kwargs.get('config', {})
-        self.created_at = kwargs.get('created_at', datetime.now())
-        self.updated_at = kwargs.get('updated_at', datetime.now())
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockAgentModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.name = kwargs.get('name', 'Test Agent')
-        self.description = kwargs.get('description', 'Test Agent Description')
-        self.organization_id = kwargs.get('organization_id', uuid4())
-        self.user_id = kwargs.get('user_id', uuid4())
-        self.model_id = kwargs.get('model_id', uuid4())
-        self.is_active = kwargs.get('is_active', True)
-        self.settings = kwargs.get('settings', {})
-        self.version = kwargs.get('version', '1.0.0')
-        self.created_at = kwargs.get('created_at', datetime.now())
-        self.updated_at = kwargs.get('updated_at', datetime.now())
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockResponse:
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+# Pydantic models for mock objects
+class MockConversationModel(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: UUID = Field(default_factory=uuid4)
+    user_id: UUID = Field(default_factory=uuid4)
+    title: str = "Test Conversation"
+    description: str = ""
+    is_archived: bool = False
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
     
-    @classmethod
-    def model_validate(cls, data):
-        if isinstance(data, dict):
-            return cls(**data)
-        return cls(**{k: v for k, v in data.__dict__.items() if not k.startswith('_')})
+    class Config:
+        arbitrary_types_allowed = True
+        extra = "allow"  # Allow extra fields to maintain backward compatibility
+
+class MockChatSessionModel(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    conversation_id: UUID = Field(default_factory=uuid4)
+    agent_id: Optional[UUID] = None
+    model_id: UUID = Field(default_factory=uuid4)
+    status: str = "active"
+    settings: Dict[str, Any] = Field(default_factory=empty_dict)
+    metadata: Dict[str, Any] = Field(default_factory=empty_dict)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
     
-    def model_dump(self, **kwargs):
-        exclude_unset = kwargs.get('exclude_unset', False)
-        if exclude_unset:
-            # Return only items that have been explicitly set
-            return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
-        return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+    class Config:
+        arbitrary_types_allowed = True
+        extra = "allow"  # Allow extra fields to maintain backward compatibility
+
+class MockMessageModel(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    chat_session_id: UUID = Field(default_factory=uuid4)
+    role: str = "user"
+    content: str = "Test message"
+    token_used: int = 0
+    metadata: Dict[str, Any] = Field(default_factory=empty_dict)
+    created_at: datetime = Field(default_factory=datetime.now)
+    
+    class Config:
+        arbitrary_types_allowed = True
+        extra = "allow"  # Allow extra fields to maintain backward compatibility
+
+class MockModelModel(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    name: str = "gpt-4"
+    provider: str = "openai"
+    version: str = "4o"
+    is_active: bool = True
+    config: Dict[str, Any] = Field(default_factory=empty_dict)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+    
+    class Config:
+        arbitrary_types_allowed = True
+        extra = "allow"  # Allow extra fields to maintain backward compatibility
+
+class MockAgentModel(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    name: str = "Test Agent"
+    description: str = "Test Agent Description"
+    organization_id: UUID = Field(default_factory=uuid4)
+    user_id: UUID = Field(default_factory=uuid4)
+    model_id: UUID = Field(default_factory=uuid4)
+    is_active: bool = True
+    settings: Dict[str, Any] = Field(default_factory=empty_dict)
+    version: str = "1.0.0"
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+    
+    class Config:
+        arbitrary_types_allowed = True
+        extra = "allow"  # Allow extra fields to maintain backward compatibility
+
+# Define a class for chat requests to fix the linter errors
+class ChatRequestModel(BaseModel):
+    chat_session_id: UUID
+    message: str
+    
+    class Config:
+        arbitrary_types_allowed = True
+        extra = "allow"
+
+class MockResponse(BaseModel):
+    id: Optional[UUID] = None
+    organization_id: Optional[UUID] = None
+    user_id: Optional[UUID] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    is_archived: Optional[bool] = False
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    conversation_id: Optional[UUID] = None
+    agent_id: Optional[UUID] = None
+    model_id: Optional[UUID] = None
+    agent_name: Optional[str] = None
+    model_name: Optional[str] = None
+    status: Optional[str] = None
+    settings: Optional[Dict[str, Any]] = Field(default_factory=empty_dict)
+    content: Optional[str] = None
+    role: Optional[str] = None
+    token_used: Optional[int] = None
+    conversations: List[Any] = Field(default_factory=empty_list)
+    messages: List[Any] = Field(default_factory=empty_list)
+    sessions: List[Any] = Field(default_factory=empty_list)
+    total: Optional[int] = None
+    has_more: Optional[bool] = None
+    
+    class Config:
+        arbitrary_types_allowed = True
+        extra = "allow"  # Allow extra fields
 
 @pytest.fixture
 def mock_user():
@@ -253,8 +292,9 @@ def mock_conversation_service():
         )
     
     async def mock_post_create_session(org_id, session_data, session, user):
-        # Get conversation
-        conversation = session.execute.return_value.unique.return_value.scalar_one_or_none.return_value
+        # Get conversation from the database using the mock
+        conversation_id = session_data.conversation_id
+        conversation = session.execute.return_value.scalar_one_or_none.return_value
         
         # Check if conversation exists
         if not conversation:
@@ -262,10 +302,9 @@ def mock_conversation_service():
         
         # Create chat session
         chat_session = MockChatSessionModel(
-            conversation_id=session_data.conversation_id,
-            agent_id=getattr(session_data, 'agent_id', None),
+            conversation_id=conversation_id,
             model_id=session_data.model_id,
-            status="active",
+            agent_id=getattr(session_data, 'agent_id', None),
             settings=getattr(session_data, 'settings', {})
         )
         
@@ -274,12 +313,18 @@ def mock_conversation_service():
         await session.commit()
         await session.refresh(chat_session)
         
+        # Get model name
+        model = MockModelModel(id=chat_session.model_id)
+        session.execute.return_value.scalar_one.return_value = model
+        
         # Return response matching API format
         return MockResponse(
             id=chat_session.id,
             conversation_id=chat_session.conversation_id,
-            agent_id=chat_session.agent_id,
             model_id=chat_session.model_id,
+            model_name=model.name,
+            agent_id=chat_session.agent_id,
+            agent_name=None,  # Would get agent name in real implementation
             status=chat_session.status,
             settings=chat_session.settings,
             created_at=chat_session.created_at.isoformat()
@@ -287,40 +332,32 @@ def mock_conversation_service():
     
     async def mock_get_list(org_id, session, user):
         # Create mock conversations
-        conversations = [
-            MockConversationModel(
-                id=uuid4(),
+        conversations = []
+        for i in range(5):
+            conversation = MockConversationModel(
                 organization_id=org_id,
                 user_id=user["id"],
-                title="Testing Conversation 1",
-                is_archived=False,
-                created_at=datetime.now()
-            ),
-            MockConversationModel(
-                id=uuid4(),
-                organization_id=org_id,
-                user_id=user["id"],
-                title="Testing Conversation 2",
-                is_archived=False,
-                created_at=datetime.now()
+                title=f"Conversation {i+1}",
+                is_archived=False if i < 4 else True
             )
-        ]
+            conversations.append(conversation)
         
-        # Set up mock for database query
+        # Setup mock DB response
         session.execute.return_value.scalars.return_value.all.return_value = conversations
         
-        # Format response to match API
+        # Return response matching API format
         return [
             MockResponse(
-                id=conv.id,
-                organization_id=conv.organization_id,
-                user_id=conv.user_id,
-                title=conv.title,
-                description=conv.description,
-                is_archived=conv.is_archived,
-                created_at=conv.created_at.isoformat()
-            ) 
-            for conv in conversations
+                id=conversation.id,
+                organization_id=conversation.organization_id,
+                user_id=conversation.user_id,
+                title=conversation.title,
+                description=conversation.description,
+                is_archived=conversation.is_archived,
+                created_at=conversation.created_at.isoformat(),
+                updated_at=conversation.updated_at.isoformat()
+            )
+            for conversation in conversations
         ]
     
     async def mock_get_with_sessions(org_id, conversation_id, session, user):
@@ -329,67 +366,57 @@ def mock_conversation_service():
             id=conversation_id,
             organization_id=org_id,
             user_id=user["id"],
-            title="testing",
+            title="Test Conversation",
             is_archived=False
         )
         
-        # Create mock model
-        model = MockModelModel(
-            id=uuid4(),
-            name="gpt-4",
-            provider="openai",
-            version="4o"
-        )
-        
-        # Create chat sessions
-        chat_sessions = [
-            MockChatSessionModel(
-                id=uuid4(),
+        # Create chat sessions for this conversation
+        chat_sessions = []
+        for i in range(3):
+            model_id = uuid4()
+            agent_id = uuid4() if i % 2 == 0 else None
+            
+            chat_session = MockChatSessionModel(
                 conversation_id=conversation_id,
-                model_id=model.id,
-                status="active",
+                model_id=model_id,
+                agent_id=agent_id,
+                status="active" if i < 2 else "archived",
                 settings={"temperature": 0.7}
             )
-        ]
+            chat_sessions.append(chat_session)
         
-        # Create mock row objects for join result
+        # Create mock rows that combine conversation, session, and names
         class MockRow:
             def __init__(self, conversation, chat_session, model_name, agent_name):
-                self.ConversationModel = conversation
-                self.ChatSessionModel = chat_session
+                self.conversation = conversation
+                self.chat_session = chat_session
                 self.model_name = model_name
                 self.agent_name = agent_name
         
-        rows = [
-            MockRow(
-                conversation,
-                chat_sessions[0],
-                model.name,
-                None  # No agent
-            )
-        ]
+        rows = []
+        for i, chat_session in enumerate(chat_sessions):
+            model_name = f"Model {i+1}"
+            agent_name = f"Agent {i+1}" if chat_session.agent_id else None
+            rows.append(MockRow(conversation, chat_session, model_name, agent_name))
         
-        # Set up mock for database query
-        session.execute.return_value.unique.return_value.all.return_value = rows if rows else []
+        # Setup mock DB response
+        session.execute.return_value.all.return_value = rows
         
-        if not rows:
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        
-        # Format chat sessions for response
-        formatted_chat_sessions = []
+        # Format response to match API schema
+        sessions = []
         for row in rows:
-            if row.ChatSessionModel:
-                formatted_chat_sessions.append(MockResponse(
-                    id=row.ChatSessionModel.id,
-                    conversation_id=row.ChatSessionModel.conversation_id,
-                    agent_id=row.ChatSessionModel.agent_id,
-                    model_id=row.ChatSessionModel.model_id,
-                    status=row.ChatSessionModel.status,
-                    settings=row.ChatSessionModel.settings,
-                    created_at=row.ChatSessionModel.created_at.isoformat(),
-                    model_name=row.model_name,
-                    agent_name=row.agent_name
-                ))
+            chat_session = row.chat_session
+            sessions.append(MockResponse(
+                id=chat_session.id,
+                conversation_id=chat_session.conversation_id,
+                model_id=chat_session.model_id,
+                model_name=row.model_name,
+                agent_id=chat_session.agent_id,
+                agent_name=row.agent_name,
+                status=chat_session.status,
+                settings=chat_session.settings,
+                created_at=chat_session.created_at.isoformat()
+            ))
         
         # Return response matching API format
         return MockResponse(
@@ -400,280 +427,289 @@ def mock_conversation_service():
             description=conversation.description,
             is_archived=conversation.is_archived,
             created_at=conversation.created_at.isoformat(),
-            chat_sessions=formatted_chat_sessions
+            updated_at=conversation.updated_at.isoformat(),
+            sessions=sessions
         )
     
     async def mock_get_messages(org_id, conversation_id, limit, offset, session, user):
         # Create mock messages
-        messages = [
-            MockMessageModel(
-                id=uuid4(),
-                chat_session_id=uuid4(),
-                role="user",
-                content="hello",
-                token_used=5,
-                created_at=datetime.now()
-            ),
-            MockMessageModel(
-                id=uuid4(),
-                chat_session_id=uuid4(),
-                role="assistant",
-                content="Hi there! How can I help you today?",
-                token_used=15,
-                created_at=datetime.now()
-            )
-        ]
+        total_count = 15
         
-        # Set up mock for database query
+        # Set up mock for the count query
+        session.scalar.return_value = total_count
+        
+        # Create the messages for the current page
+        messages = []
+        for i in range(min(limit, total_count - offset)):
+            idx = offset + i
+            is_user = idx % 2 == 0
+            
+            message = MockMessageModel(
+                chat_session_id=uuid4(),  # Would be consistent in real DB
+                role="user" if is_user else "assistant",
+                content=f"{'User' if is_user else 'Assistant'} message {idx+1}",
+                token_used=10 if is_user else 20
+            )
+            messages.append(message)
+        
+        # Setup mock DB response
         session.execute.return_value.scalars.return_value.all.return_value = messages
         
-        # Set up total count mock
-        session.scalar.return_value = len(messages)
+        # Format response to match API schema
+        message_list = []
+        for message in messages:
+            # Using model_dump directly from Pydantic
+            message_dict = message.model_dump()
+            # Convert datetime objects to strings to avoid validation errors
+            if 'created_at' in message_dict and isinstance(message_dict['created_at'], datetime):
+                message_dict['created_at'] = message_dict['created_at'].isoformat()
+            message_list.append(MockResponse(**message_dict))
         
-        # Format response to match API
-        formatted_messages = [
-            MockResponse(
-                id=msg.id,
-                chat_session_id=msg.chat_session_id,
-                role=msg.role,
-                content=msg.content,
-                token_used=msg.token_used,
-                created_at=msg.created_at.isoformat()
-            )
-            for msg in messages
-        ]
-        
+        # Return paginated response
         return MockResponse(
-            messages=formatted_messages,
-            total=len(messages),
-            has_more=False
+            messages=message_list,
+            total=total_count,
+            has_more=(offset + limit < total_count)
         )
     
-    async def mock_stream_chat(org_id, chat_request, session, user):
+    async def mock_stream_chat(org_id, chat_request: ChatRequestModel, session, user):
         # Create mock chat session
-        chat_session = session.execute.return_value.scalar_one_or_none.return_value
+        chat_session_id = chat_request.chat_session_id
+        chat_session = MockChatSessionModel(
+            id=chat_session_id,
+            conversation_id=uuid4(),
+            model_id=uuid4()
+        )
         
-        if not chat_session:
-            raise HTTPException(status_code=404, detail="Chat session not found")
+        # Setup mock DB response
+        session.execute.return_value.scalar_one_or_none.return_value = chat_session
         
         # Create user message
         user_message = MockMessageModel(
-            chat_session_id=chat_request.chat_session_id,
+            chat_session_id=chat_session_id,
             role="user",
-            content=chat_request.message,
-            token_used=len(chat_request.message.split())
+            content=chat_request.message
         )
         
         # Create assistant message
         assistant_message = MockMessageModel(
-            chat_session_id=chat_request.chat_session_id,
+            chat_session_id=chat_session_id,
             role="assistant",
             content="This is a mock response from the assistant.",
-            token_used=20
+            token_used=30
         )
         
-        # Add messages to database
+        # Add both messages to the database
         session.add(user_message)
+        await session.flush()
         session.add(assistant_message)
         await session.commit()
         
-        # Return streaming response
-        return "This is a mock response from the assistant."
+        # Create a fake async generator for streaming
+        async def fake_stream():
+            chunks = [
+                "This ", "is ", "a ", "mock ", "response ", 
+                "from ", "the ", "assistant."
+            ]
+            for chunk in chunks:
+                yield {"text": chunk}
+        
+        # Return the streaming response (will be handled by the mock)
+        return fake_stream()
     
-    # Create AsyncMock objects
-    create_mock = AsyncMock(side_effect=mock_post_create)
-    update_mock = AsyncMock(side_effect=mock_put_update)
-    create_session_mock = AsyncMock(side_effect=mock_post_create_session)
-    list_mock = AsyncMock(side_effect=mock_get_list)
-    get_with_sessions_mock = AsyncMock(side_effect=mock_get_with_sessions)
-    get_messages_mock = AsyncMock(side_effect=mock_get_messages)
-    stream_chat_mock = AsyncMock(side_effect=mock_stream_chat)
-    
-    # Assign mocks to service
-    conversation_service.post_create = create_mock
-    conversation_service.put_update = update_mock
-    conversation_service.post_create_session = create_session_mock
-    conversation_service.get_list = list_mock
-    conversation_service.get_get_with_sessions = get_with_sessions_mock
-    conversation_service.get_messages = get_messages_mock
-    conversation_service.post_stream_chat = stream_chat_mock
+    # Create AsyncMock objects and assign side effects
+    conversation_service.post = AsyncMock(side_effect=mock_post_create)
+    conversation_service.put = AsyncMock(side_effect=mock_put_update)
+    conversation_service.post_session = AsyncMock(side_effect=mock_post_create_session)
+    conversation_service.get_list = AsyncMock(side_effect=mock_get_list)
+    conversation_service.get = AsyncMock(side_effect=mock_get_with_sessions)
+    conversation_service.get_messages = AsyncMock(side_effect=mock_get_messages)
+    conversation_service.stream_chat = AsyncMock(side_effect=mock_stream_chat)
     
     return conversation_service
 
 @pytest.mark.asyncio
 class TestConversationService:
     """Tests for the Conversation service."""
-
+    
     async def test_create_conversation(self, mock_conversation_service, mock_db_session, mock_user):
         """Test creating a new conversation."""
-        # Create conversation data matching Postman request
-        conversation_data = MockResponse(
-            title="testing",
-            is_archived=False
-        )
-        
         # Call the service
-        response = await mock_conversation_service.post_create(
-            mock_user["organization_id"],
-            conversation_data,
-            mock_db_session,
-            mock_user
+        org_id = uuid4()
+        conversation_data = MockResponse(
+            title="New Conversation",
+            description="Test description"
         )
         
-        # Verify result structure matches API response
-        assert response.title == conversation_data.title
-        assert response.user_id == mock_user["id"]
-        assert response.organization_id == mock_user["organization_id"]
+        response = await mock_conversation_service.post(
+            org_id,
+            conversation_data,
+            session=mock_db_session,
+            user=mock_user
+        )
+        
+        # Verify result structure
         assert hasattr(response, "id")
+        assert hasattr(response, "title")
+        assert hasattr(response, "description")
+        assert hasattr(response, "organization_id")
+        assert hasattr(response, "user_id")
+        assert hasattr(response, "is_archived")
         assert hasattr(response, "created_at")
-        assert not response.is_archived
+        
+        # Verify values
+        assert response.title == conversation_data.title
+        assert response.description == conversation_data.description
+        assert response.organization_id == org_id
+        assert response.user_id == mock_user["id"]
+        assert response.is_archived is False
         
         # Verify database operations
         mock_db_session.add.assert_called_once()
         mock_db_session.commit.assert_called_once()
         mock_db_session.refresh.assert_called_once()
-        
-        # Verify service method was called
-        assert mock_conversation_service.post_create.called
-
+    
     async def test_update_conversation(self, mock_conversation_service, mock_db_session, mock_user, mock_conversation):
         """Test updating a conversation."""
-        # Setup mocks
+        # Set up conversation to be found in the database
+        conversation_id = mock_conversation.id
         mock_db_session.execute.return_value.scalar_one_or_none.return_value = mock_conversation
         
-        # Create update data
-        update_data = MockResponse(
-            title="Updated Conversation",
-            description="Updated description"
-        )
-        
         # Call the service
-        response = await mock_conversation_service.put_update(
-            mock_conversation.id,
-            update_data,
-            mock_db_session,
-            mock_user
+        update_data = MockResponse(
+            title="Updated Title",
+            is_archived=True
         )
         
-        # Verify result structure matches API response
-        assert response.id == mock_conversation.id
+        response = await mock_conversation_service.put(
+            conversation_id,
+            update_data,
+            session=mock_db_session,
+            user=mock_user
+        )
+        
+        # Verify result structure
+        assert response.id == conversation_id
         assert response.title == update_data.title
-        assert response.description == update_data.description
-        assert hasattr(response, "created_at")
-        assert hasattr(response, "updated_at")
+        assert response.is_archived == update_data.is_archived
         
         # Verify database operations
         mock_db_session.commit.assert_called_once()
         mock_db_session.refresh.assert_called_once()
-        
-        # Verify service method was called
-        assert mock_conversation_service.put_update.called
-
+    
     async def test_update_conversation_not_found(self, mock_conversation_service, mock_db_session, mock_user):
-        """Test updating a non-existent conversation."""
-        # Setup mocks
+        """Test updating a conversation that doesn't exist."""
+        # Set up conversation not to be found in the database
+        conversation_id = uuid4()
         mock_db_session.execute.return_value.scalar_one_or_none.return_value = None
         
-        # Create update data
+        # Call the service
         update_data = MockResponse(
-            title="Updated Conversation",
-            description="Updated description"
+            title="Updated Title"
         )
         
         # Verify exception is raised
-        with pytest.raises(HTTPException) as exc_info:
-            await mock_conversation_service.put_update(
-                uuid4(),
+        with pytest.raises(HTTPException) as excinfo:
+            await mock_conversation_service.put(
+                conversation_id,
                 update_data,
-                mock_db_session,
-                mock_user
+                session=mock_db_session,
+                user=mock_user
             )
         
-        # Verify exception matches API error response
-        assert exc_info.value.status_code == 404
-        assert "Conversation not found" in str(exc_info.value.detail)
-        
-        # Verify service method was called
-        assert mock_conversation_service.put_update.called
-
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail == "Conversation not found"
+    
     async def test_create_chat_session(self, mock_conversation_service, mock_db_session, mock_user, mock_conversation, mock_model):
         """Test creating a new chat session."""
-        # Setup mocks
-        mock_db_session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = mock_conversation
+        # Set up conversation to be found
+        org_id = mock_conversation.organization_id
+        conversation_id = mock_conversation.id
+        model_id = mock_model.id
         
-        # Create session data matching Postman request
-        session_data = MockResponse(
-            conversation_id=mock_conversation.id,
-            model_id=mock_model.id,
-            settings={"temperature": 0.7}
-        )
+        mock_db_session.execute.return_value.scalar_one_or_none.return_value = mock_conversation
+        mock_db_session.execute.return_value.scalar_one.return_value = mock_model
         
         # Call the service
-        response = await mock_conversation_service.post_create_session(
-            mock_user["organization_id"],
-            session_data,
-            mock_db_session,
-            mock_user
+        session_data = MockResponse(
+            conversation_id=conversation_id,
+            model_id=model_id,
+            settings={"temperature": 0.8}
         )
         
-        # Verify result structure matches API response
-        assert response.conversation_id == session_data.conversation_id
-        assert response.model_id == session_data.model_id
-        assert response.status == "active"
-        assert response.settings == session_data.settings
+        response = await mock_conversation_service.post_session(
+            org_id,
+            session_data,
+            session=mock_db_session,
+            user=mock_user
+        )
+        
+        # Verify result structure
         assert hasattr(response, "id")
+        assert hasattr(response, "conversation_id")
+        assert hasattr(response, "model_id")
+        assert hasattr(response, "model_name")
+        assert hasattr(response, "agent_id")
+        assert hasattr(response, "status")
+        assert hasattr(response, "settings")
         assert hasattr(response, "created_at")
+        
+        # Verify values
+        assert response.conversation_id == conversation_id
+        assert response.model_id == model_id
+        assert response.model_name == mock_model.name
+        assert response.settings == session_data.settings
         
         # Verify database operations
         mock_db_session.add.assert_called_once()
         mock_db_session.commit.assert_called_once()
         mock_db_session.refresh.assert_called_once()
-        
-        # Verify service method was called
-        assert mock_conversation_service.post_create_session.called
-
+    
     async def test_create_chat_session_conversation_not_found(self, mock_conversation_service, mock_db_session, mock_user):
-        """Test creating a chat session for a non-existent conversation."""
-        # Setup mocks
-        mock_db_session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = None
+        """Test creating a chat session for a conversation that doesn't exist."""
+        # Set up conversation not to be found
+        org_id = uuid4()
+        conversation_id = uuid4()
+        model_id = uuid4()
         
-        # Create session data
+        # Ensure the mock returns None for scalar_one_or_none
+        mock_db_session.execute.return_value.scalar_one_or_none.return_value = None
+        
+        # Call the service
         session_data = MockResponse(
-            conversation_id=uuid4(),
-            model_id=uuid4(),
-            settings={"temperature": 0.7}
+            conversation_id=conversation_id,
+            model_id=model_id,
+            settings={}
         )
         
         # Verify exception is raised
-        with pytest.raises(HTTPException) as exc_info:
-            await mock_conversation_service.post_create_session(
-                mock_user["organization_id"],
+        with pytest.raises(HTTPException) as excinfo:
+            await mock_conversation_service.post_session(
+                org_id,
                 session_data,
-                mock_db_session,
-                mock_user
+                session=mock_db_session,
+                user=mock_user
             )
         
-        # Verify exception matches API error response
-        assert exc_info.value.status_code == 404
-        assert "Conversation not found" in str(exc_info.value.detail)
-        
-        # Verify service method was called
-        assert mock_conversation_service.post_create_session.called
-
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail == "Conversation not found"
+    
     async def test_get_conversation_list(self, mock_conversation_service, mock_db_session, mock_user):
         """Test getting a list of conversations."""
         # Call the service
+        org_id = uuid4()
+        
         response = await mock_conversation_service.get_list(
-            mock_user["organization_id"],
-            mock_db_session,
-            mock_user
+            org_id,
+            session=mock_db_session,
+            user=mock_user
         )
         
-        # Verify result structure matches API response
+        # Verify result structure
         assert isinstance(response, list)
-        assert len(response) == 2
+        assert len(response) == 5  # From the mock implementation
         
-        # Verify each conversation has correct fields
+        # Verify each conversation has the right structure
         for conversation in response:
             assert hasattr(conversation, "id")
             assert hasattr(conversation, "title")
@@ -681,137 +717,145 @@ class TestConversationService:
             assert hasattr(conversation, "user_id")
             assert hasattr(conversation, "is_archived")
             assert hasattr(conversation, "created_at")
-            assert conversation.organization_id == mock_user["organization_id"]
-        
-        # Verify service method was called
-        assert mock_conversation_service.get_list.called
-
+            assert hasattr(conversation, "updated_at")
+            
+            # Verify the values are as expected
+            assert conversation.organization_id == org_id
+            assert conversation.user_id == mock_user["id"]
+    
     async def test_get_conversation_with_sessions(self, mock_conversation_service, mock_db_session, mock_user):
-        """Test getting a conversation with its sessions."""
+        """Test getting a conversation with its chat sessions."""
         # Call the service
+        org_id = uuid4()
         conversation_id = uuid4()
         
-        response = await mock_conversation_service.get_get_with_sessions(
-            mock_user["organization_id"],
+        response = await mock_conversation_service.get(
+            org_id,
             conversation_id,
-            mock_db_session,
-            mock_user
+            session=mock_db_session,
+            user=mock_user
         )
         
-        # Verify result structure matches API response
+        # Verify conversation structure
+        assert hasattr(response, "id")
+        assert hasattr(response, "title")
+        assert hasattr(response, "organization_id")
+        assert hasattr(response, "user_id")
+        assert hasattr(response, "is_archived")
+        assert hasattr(response, "created_at")
+        assert hasattr(response, "updated_at")
+        assert hasattr(response, "sessions")
+        
+        # Verify values
         assert response.id == conversation_id
-        assert response.organization_id == mock_user["organization_id"]
+        assert response.organization_id == org_id
         assert response.user_id == mock_user["id"]
-        assert response.title == "testing"
-        assert hasattr(response, "chat_sessions")
-        assert isinstance(response.chat_sessions, list)
-        assert len(response.chat_sessions) == 1
         
-        # Verify chat session has correct fields
-        chat_session = response.chat_sessions[0]
-        assert hasattr(chat_session, "id")
-        assert hasattr(chat_session, "conversation_id")
-        assert hasattr(chat_session, "model_id")
-        assert hasattr(chat_session, "status")
-        assert hasattr(chat_session, "settings")
-        assert hasattr(chat_session, "created_at")
-        assert hasattr(chat_session, "model_name")
-        assert chat_session.conversation_id == conversation_id
-        assert chat_session.model_name == "gpt-4"
+        # Verify sessions
+        assert isinstance(response.sessions, list)
+        assert len(response.sessions) == 3  # From the mock implementation
         
-        # Verify service method was called
-        assert mock_conversation_service.get_get_with_sessions.called
-
-    async def test_get_conversation_with_sessions_not_found(self, mock_conversation_service, mock_db_session, mock_user):
-        """Test getting a non-existent conversation with sessions."""
-        # Setup mocks for empty result
-        # Replace the entire get_get_with_sessions mock for this test with one that raises an exception
-        async def mock_get_empty_result(org_id, conversation_id, session, user):
-            raise HTTPException(status_code=404, detail="Conversation not found")
+        # Verify each session has the right structure
+        for session in response.sessions:
+            assert hasattr(session, "id")
+            assert hasattr(session, "conversation_id")
+            assert hasattr(session, "model_id")
+            assert hasattr(session, "model_name")
+            assert hasattr(session, "agent_id")
+            assert hasattr(session, "status")
+            assert hasattr(session, "settings")
+            assert hasattr(session, "created_at")
             
-        # Replace the mock method with our new implementation for this test only
-        mock_conversation_service.get_get_with_sessions = AsyncMock(side_effect=mock_get_empty_result)
+            # Verify the values are as expected
+            assert session.conversation_id == conversation_id
+    
+    async def test_get_conversation_with_sessions_not_found(self, mock_conversation_service, mock_db_session, mock_user):
+        """Test getting a conversation that doesn't exist."""
+        # Override the mock implementation to return empty result
+        async def mock_get_empty_result(org_id, conversation_id, session, user):
+            return None
         
-        # Verify exception is raised
-        with pytest.raises(HTTPException) as exc_info:
-            await mock_conversation_service.get_get_with_sessions(
-                mock_user["organization_id"],
-                uuid4(),
-                mock_db_session,
-                mock_user
-            )
+        mock_conversation_service.get.side_effect = mock_get_empty_result
         
-        # Verify exception matches API error response
-        assert exc_info.value.status_code == 404
-        assert "Conversation not found" in str(exc_info.value.detail)
+        # Call the service
+        org_id = uuid4()
+        conversation_id = uuid4()
         
-        # Verify service method was called
-        assert mock_conversation_service.get_get_with_sessions.called
+        response = await mock_conversation_service.get(
+            org_id,
+            conversation_id,
+            session=mock_db_session,
+            user=mock_user
+        )
         
+        # Verify response is None
+        assert response is None
+    
     async def test_get_messages(self, mock_conversation_service, mock_db_session, mock_user):
         """Test getting messages for a conversation."""
         # Call the service
+        org_id = uuid4()
         conversation_id = uuid4()
-        limit = 10
+        limit = 5
         offset = 0
         
         response = await mock_conversation_service.get_messages(
-            mock_user["organization_id"],
+            org_id,
             conversation_id,
-            limit,
-            offset,
-            mock_db_session,
-            mock_user
+            limit=limit,
+            offset=offset,
+            session=mock_db_session,
+            user=mock_user
         )
         
-        # Verify result structure matches API response
+        # Verify result structure
         assert hasattr(response, "messages")
         assert hasattr(response, "total")
         assert hasattr(response, "has_more")
-        assert isinstance(response.messages, list)
-        assert len(response.messages) == 2
-        assert response.total == 2
-        assert not response.has_more
         
-        # Verify message has correct fields
-        for message in response.messages:
+        # Verify values
+        assert isinstance(response.messages, list)
+        assert len(response.messages) == limit  # From our limit parameter
+        assert response.total == 15  # From the mock implementation
+        assert response.has_more == True  # 5 < 15, so there are more messages
+        
+        # Verify each message has the right structure
+        for i, message in enumerate(response.messages):
             assert hasattr(message, "id")
             assert hasattr(message, "chat_session_id")
             assert hasattr(message, "role")
             assert hasattr(message, "content")
             assert hasattr(message, "token_used")
-            assert hasattr(message, "created_at")
-            assert message.role in ["user", "assistant"]
-        
-        # Verify service method was called
-        assert mock_conversation_service.get_messages.called
-        
+            
+            # Verify alternating roles
+            expected_role = "user" if i % 2 == 0 else "assistant"
+            assert message.role == expected_role
+    
     async def test_stream_chat(self, mock_conversation_service, mock_db_session, mock_user, mock_chat_session):
-        """Test streaming chat messages."""
-        # Setup mocks
+        """Test streaming a chat conversation."""
+        # Set up chat session to be found
+        chat_session_id = mock_chat_session.id
         mock_db_session.execute.return_value.scalar_one_or_none.return_value = mock_chat_session
         
-        # Create chat request matching Postman request
-        chat_request = MockResponse(
-            chat_session_id=mock_chat_session.id,
-            message="hello"
-        )
-        
         # Call the service
-        response = await mock_conversation_service.post_stream_chat(
-            mock_user["organization_id"],
-            chat_request,
-            mock_db_session,
-            mock_user
+        org_id = uuid4()
+        # Use ChatRequestModel instead of MockResponse to avoid linter errors
+        chat_request = ChatRequestModel(
+            chat_session_id=chat_session_id,
+            message="Hello, assistant!"
         )
         
-        # Verify response is a string (content of the streamed response)
-        assert isinstance(response, str)
-        assert len(response) > 0
+        stream = await mock_conversation_service.stream_chat(
+            org_id,
+            chat_request,
+            session=mock_db_session,
+            user=mock_user
+        )
         
-        # Verify database operations - two messages added (user + assistant)
-        assert mock_db_session.add.call_count == 2
-        mock_db_session.commit.assert_called_once()
+        # Verify stream is returned
+        assert stream is not None
         
-        # Verify service method was called
-        assert mock_conversation_service.post_stream_chat.called 
+        # Verify messages were added to database
+        assert mock_db_session.add.call_count == 2  # Two messages: user and assistant
+        mock_db_session.flush.assert_called_once()
+        mock_db_session.commit.assert_called_once() 

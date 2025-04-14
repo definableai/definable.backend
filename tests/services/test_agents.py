@@ -1,9 +1,10 @@
 import pytest
-from fastapi import HTTPException
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 import sys
-from uuid import UUID, uuid4
+from uuid import uuid4, UUID
 from datetime import datetime
+from typing import Dict, List, Any, Optional
+from pydantic import BaseModel, Field
 
 # Create mock modules before any imports
 sys.modules['database'] = MagicMock()
@@ -20,64 +21,83 @@ sys.modules['src.services.__base.acquire'] = MagicMock()
 sys.modules['dependencies.security'] = MagicMock()
 
 # Mock models
-class MockAgentModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.organization_id = kwargs.get('organization_id')
-        self.user_id = kwargs.get('user_id')
-        self.name = kwargs.get('name', 'Test Agent')
-        self.description = kwargs.get('description', 'Test Agent Description')
-        self.model_id = kwargs.get('model_id')
-        self.is_active = kwargs.get('is_active', True)
-        self.settings = kwargs.get('settings', {})
-        self.version = kwargs.get('version', '1.0.0')
-        self.created_at = kwargs.get('created_at', datetime.now())
-        self.updated_at = kwargs.get('updated_at', datetime.now())
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockAgentToolModel:
-    def __init__(self, **kwargs):
-        self.agent_id = kwargs.get('agent_id')
-        self.tool_id = kwargs.get('tool_id')
-        self.is_active = kwargs.get('is_active', True)
-        self.added_at = kwargs.get('added_at', datetime.now().isoformat())
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockToolModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.name = kwargs.get('name', 'Test Tool')
-        self.description = kwargs.get('description', 'Test Tool Description')
-        self.category_id = kwargs.get('category_id', uuid4())
-        self.is_active = kwargs.get('is_active', True)
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockAgentToolResponse:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.name = kwargs.get('name', 'Test Tool')
-        self.description = kwargs.get('description', 'Test Tool Description')
-        self.category_id = kwargs.get('category_id', uuid4())
-        self.is_active = kwargs.get('is_active', True)
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockResponse:
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+class MockAgentModel(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: Optional[UUID] = None
+    user_id: Optional[UUID] = None
+    name: str = "Test Agent"
+    description: str = "Test Agent Description"
+    model_id: Optional[UUID] = None
+    is_active: bool = True
+    settings: Dict[str, Any] = Field(default_factory=dict)
+    version: str = "1.0.0"
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
     
-    @classmethod
-    def model_validate(cls, data):
-        if isinstance(data, dict):
-            return cls(**data)
-        return cls(**{k: v for k, v in data.__dict__.items() if not k.startswith('_')})
+    model_config = {
+        "extra": "allow"
+    }
+
+class MockAgentToolModel(BaseModel):
+    agent_id: Optional[UUID] = None
+    tool_id: Optional[UUID] = None
+    is_active: bool = True
+    added_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     
-    def model_dump(self, **kwargs):
-        exclude_unset = kwargs.get('exclude_unset', False)
-        if exclude_unset:
-            # Return only items that have been explicitly set
-            return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
-        return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+    model_config = {
+        "extra": "allow"
+    }
+
+class MockToolModel(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    name: str = "Test Tool"
+    description: str = "Test Tool Description"
+    category_id: UUID = Field(default_factory=uuid4)
+    is_active: bool = True
+    
+    model_config = {
+        "extra": "allow"
+    }
+
+class MockAgentToolResponse(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    name: str = "Test Tool"
+    description: str = "Test Tool Description"
+    category_id: UUID = Field(default_factory=uuid4)
+    is_active: bool = True
+    
+    model_config = {
+        "extra": "allow"
+    }
+
+class ToolResponse(BaseModel):
+    id: Optional[UUID] = None
+    name: str = "Tool"
+    description: str = "Description"
+    category_id: Optional[UUID] = None
+    is_active: bool = True
+
+class MockResponse(BaseModel):
+    id: Optional[UUID] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    organization_id: Optional[UUID] = None
+    user_id: Optional[UUID] = None
+    model_id: Optional[UUID] = None
+    is_active: Optional[bool] = True
+    settings: Dict[str, Any] = Field(default_factory=dict)
+    version: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    tools: List[Dict[str, Any]] = Field(default_factory=list)
+    agents: Optional[List[Any]] = None
+    total: Optional[int] = None
+    has_more: Optional[bool] = None
+    
+    # Allow dynamic field assignment
+    model_config = {
+        "extra": "allow"
+    }
 
 @pytest.fixture
 def mock_user():
@@ -173,7 +193,7 @@ def mock_agents_service():
             ]
             
             # Mock the row result structure from raw SQL query
-            row = {**agent.__dict__, "tools": tools}
+            row = {**agent.model_dump(), "tools": tools}
             agents.append(row)
         
         # Set up the mock for execute.return_value.mappings().all()
@@ -183,8 +203,10 @@ def mock_agents_service():
         agent_responses = []
         for agent_dict in agents[:limit]:
             tools = agent_dict.pop("tools", [])
-            agent = MockResponse(**agent_dict, tools=tools)
-            agent_responses.append(agent)
+            # Filter out None values
+            agent_dict = {k: v for k, v in agent_dict.items() if v is not None}
+            agent_response = MockResponse(**agent_dict, tools=tools)
+            agent_responses.append(agent_response)
         
         return MockResponse(
             agents=agent_responses,
@@ -219,7 +241,7 @@ def mock_agents_service():
             ]
             
             # Mock the row result structure from raw SQL query
-            row = {**agent.__dict__, "tools": tools}
+            row = {**agent.model_dump(), "tools": tools}
             agents.append(row)
         
         # Set up the mock for execute.return_value.mappings().all()
@@ -229,8 +251,10 @@ def mock_agents_service():
         agent_responses = []
         for agent_dict in agents[:limit]:
             tools = agent_dict.pop("tools", [])
-            agent = MockResponse(**agent_dict, tools=tools)
-            agent_responses.append(agent)
+            # Filter out None values
+            agent_dict = {k: v for k, v in agent_dict.items() if v is not None}
+            agent_response = MockResponse(**agent_dict, tools=tools)
+            agent_responses.append(agent_response)
         
         return MockResponse(
             agents=agent_responses,
@@ -248,10 +272,18 @@ def mock_agents_service():
     
     async def mock_create_agent(org_id, agent_data, tool_ids=None, session=None, user=None):
         # Create agent
+        agent_data_dict = agent_data.model_dump()
+        # Remove organization_id and user_id if they exist to avoid conflict
+        agent_data_dict.pop('organization_id', None)
+        agent_data_dict.pop('user_id', None)
+        
+        # Filter out None values to allow defaults to work properly
+        agent_data_dict = {k: v for k, v in agent_data_dict.items() if v is not None}
+        
         db_agent = MockAgentModel(
             organization_id=org_id,
             user_id=user["id"] if user else uuid4(),
-            **agent_data.model_dump()
+            **agent_data_dict
         )
         session.add(db_agent)
         await session.flush()
@@ -278,8 +310,13 @@ def mock_agents_service():
         
         await session.commit()
         
+        # Filter out None values to avoid validation errors
+        agent_dict = {k: v for k, v in db_agent.model_dump().items() if v is not None}
+        # Remove tools to avoid duplicate argument
+        agent_dict.pop('tools', None)
+        
         # Return agent with tools matching AgentResponse schema
-        return MockResponse(**db_agent.__dict__, tools=tools)
+        return MockResponse(**agent_dict, tools=tools)
     
     async def mock_get_agent(org_id, agent_id, session=None, user=None):
         # Check agent exists
@@ -309,8 +346,13 @@ def mock_agents_service():
         # Mock execute result correctly for an SQL query
         session.execute.return_value.first.return_value = db_agent
         
+        # Filter out None values to avoid validation errors
+        agent_dict = {k: v for k, v in db_agent.model_dump().items() if v is not None}
+        # Remove tools to avoid duplicate argument
+        agent_dict.pop('tools', None)
+        
         # Return agent with tools matching AgentResponse schema
-        return MockResponse(**db_agent.__dict__, tools=tools)
+        return MockResponse(**agent_dict, tools=tools)
     
     async def mock_update_agent(org_id, agent_id, agent_data, tool_ids=None, session=None, user=None):
         # Check agent exists
@@ -325,6 +367,13 @@ def mock_agents_service():
         
         # Update agent fields
         update_data = agent_data.model_dump(exclude_unset=True)
+        # Remove organization_id and user_id if they exist to avoid conflict
+        update_data.pop('organization_id', None)
+        update_data.pop('user_id', None)
+        
+        # Filter out None values to allow defaults to work properly
+        update_data = {k: v for k, v in update_data.items() if v is not None}
+        
         for field, value in update_data.items():
             setattr(db_agent, field, value)
         
@@ -354,8 +403,13 @@ def mock_agents_service():
         
         await session.commit()
         
+        # Filter out None values to avoid validation errors
+        agent_dict = {k: v for k, v in db_agent.model_dump().items() if v is not None}
+        # Remove tools to avoid duplicate argument
+        agent_dict.pop('tools', None)
+        
         # Return updated agent with tools matching AgentResponse schema
-        return MockResponse(**db_agent.__dict__, tools=tools)
+        return MockResponse(**agent_dict, tools=tools)
     
     async def mock_delete_agent(org_id, agent_id, session=None, user=None):
         # Check agent exists

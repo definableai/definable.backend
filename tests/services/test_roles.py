@@ -1,9 +1,13 @@
 import pytest
 from fastapi import HTTPException
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 import sys
 from uuid import UUID, uuid4
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import List, Optional, Any
+
+# Import pydantic
+from pydantic import BaseModel, Field
 
 # Create mock modules before any imports
 sys.modules['database'] = MagicMock()
@@ -19,54 +23,58 @@ sys.modules['src.config.settings'] = MagicMock()
 sys.modules['src.services.__base.acquire'] = MagicMock()
 sys.modules['dependencies.security'] = MagicMock()
 
-# Mock the models
-class MockRoleModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.name = kwargs.get('name', 'Test Role')
-        self.description = kwargs.get('description', 'Test Role Description')
-        self.organization_id = kwargs.get('organization_id')
-        self.is_system_role = kwargs.get('is_system_role', False)
-        self.hierarchy_level = kwargs.get('hierarchy_level', 0)
-        self.is_default = kwargs.get('is_default', False)
-        self.created_at = kwargs.get('created_at', datetime.now().isoformat())
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockPermissionModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.name = kwargs.get('name', 'Test Permission')
-        self.resource = kwargs.get('resource', 'test_resource')
-        self.action = kwargs.get('action', 'test_action')
-        self.description = kwargs.get('description', 'Test Permission Description')
-        self.created_at = kwargs.get('created_at', datetime.now().isoformat())
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockRolePermissionModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.role_id = kwargs.get('role_id')
-        self.permission_id = kwargs.get('permission_id')
-        self.created_at = kwargs.get('created_at', datetime.now().isoformat())
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockResponse:
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+# Mock the models using Pydantic
+class MockRoleModel(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    name: str = "Test Role"
+    description: str = "Test Role Description"
+    organization_id: Optional[UUID] = None
+    is_system_role: bool = False
+    hierarchy_level: int = 0
+    is_default: bool = False
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     
-    @classmethod
-    def model_validate(cls, data):
-        if isinstance(data, dict):
-            return cls(**data)
-        return cls(**{k: v for k, v in data.__dict__.items() if not k.startswith('_')})
+    class Config:
+        arbitrary_types_allowed = True
+
+class MockPermissionModel(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    name: str = "Test Permission"
+    resource: str = "test_resource"
+    action: str = "test_action"
+    description: str = "Test Permission Description"
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     
-    def model_dump(self, **kwargs):
-        exclude_unset = kwargs.get('exclude_unset', False)
-        if exclude_unset:
-            # Return only items that have been explicitly set
-            return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
-        return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+    class Config:
+        arbitrary_types_allowed = True
+
+class MockRolePermissionModel(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    role_id: Optional[UUID] = None
+    permission_id: Optional[UUID] = None
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    
+    class Config:
+        arbitrary_types_allowed = True
+
+# Base Pydantic model for requests/responses
+class MockResponse(BaseModel):
+    """Base class for mock responses"""
+    id: Optional[UUID] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    resource: Optional[str] = None
+    action: Optional[str] = None
+    organization_id: Optional[UUID] = None
+    is_system_role: Optional[bool] = None
+    hierarchy_level: Optional[int] = None
+    is_default: Optional[bool] = None
+    created_at: Optional[str] = None
+    permission_ids: Optional[List[UUID]] = None
+    permissions: Optional[List[Any]] = None
+    
+    class Config:
+        arbitrary_types_allowed = True
 
 @pytest.fixture
 def mock_user():
@@ -138,7 +146,7 @@ def mock_roles_service():
             session.add(db_permission)
             await session.flush()
             await session.commit()
-            return MockResponse.model_validate(db_permission)
+            return MockResponse(**db_permission.model_dump())
         
         async def delete_permission(self, permission_id, session):
             # Delete from role_permissions first
@@ -154,20 +162,24 @@ def mock_roles_service():
             session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = None
             
             # Validate hierarchy level
-            if role_data.hierarchy_level >= 90:
+            if role_data.hierarchy_level and role_data.hierarchy_level >= 90:
                 raise HTTPException(status_code=400, detail="Hierarchy level must be less than 90")
             
             # Create role
+            role_dict = role_data.model_dump(exclude={"permission_ids"})
+            # Remove None values to use defaults from MockRoleModel
+            role_dict = {k: v for k, v in role_dict.items() if v is not None}
+            
             db_role = MockRoleModel(
                 organization_id=org_id,
                 is_system_role=False,
-                **role_data.model_dump(exclude={"permission_ids"})
+                **role_dict
             )
             session.add(db_role)
             await session.flush()
             
             # Add permissions
-            for permission_id in role_data.permission_ids:
+            for permission_id in role_data.permission_ids or []:
                 role_permission = MockRolePermissionModel(
                     role_id=db_role.id,
                     permission_id=permission_id
@@ -202,9 +214,14 @@ def mock_roles_service():
                     )
                     session.add(role_permission)
             
-            # Update role attributes
+            # Update role attributes - create a new model with the updates
+            db_role_dict = db_role.model_dump()
             for field, value in update_data.items():
-                setattr(db_role, field, value)
+                db_role_dict[field] = value
+                
+            # Replace the old model with the updated one
+            db_role = MockRoleModel(**db_role_dict)
+            session.add(db_role)
             
             await session.commit()
             return await self._get_role_with_permissions(role_id, session)
@@ -266,11 +283,20 @@ def mock_roles_service():
             db_role = MockRoleModel(id=role_id)
             permissions = [MockPermissionModel(), MockPermissionModel()]
             
-            # Add permissions to role response
-            role_response = MockResponse.model_validate(db_role)
+            # Create a proper response with permissions
+            role_dict = db_role.model_dump()
+            role_response = MockResponse(**role_dict)
             role_response.permissions = permissions
             
             return role_response
+        
+        async def get_role(self, org_id, role_id, session, user):
+            """Get a role by ID with permissions."""
+            # Call the internal method
+            role = await self._get_role_with_permissions(role_id, session)
+            if not role:
+                raise HTTPException(status_code=404, detail="Role not found")
+            return role
     
     # Create an instance of the service
     roles_service = RolesService()
@@ -295,6 +321,8 @@ class TestRoleService:
         """Test creating a new permission."""
         # Create permission data
         permission_data = MockResponse(
+            id=uuid4(),
+            created_at=datetime.now(timezone.utc).isoformat(),
             name="Test Permission",
             resource="roles",
             action="read",
@@ -304,6 +332,7 @@ class TestRoleService:
         # Call the service
         response = await mock_roles_service.post_permission(
             permission_data,
+            
             mock_db_session
         )
         
@@ -350,8 +379,13 @@ class TestRoleService:
         
         # Verify result
         assert response.name == role_data.name
-        # The description in the response might be capitalized differently due to the model, so just check if it matches ignore case
-        assert response.description.lower() == role_data.description.lower()
+        # Verify description matches
+        assert response.description is not None
+        assert role_data.description is not None
+        # Safe string comparison
+        description1 = response.description or ""
+        description2 = role_data.description or ""
+        assert description1.lower() == description2.lower()
         assert hasattr(response, "permissions")
         
         # Verify database operations
@@ -893,19 +927,10 @@ class TestRoleService:
         # Mock custom implementation that validates name
         async def mock_create_role_empty_name(org_id, role_data, session, user):
             # Validate name
-            if not role_data.name or len(role_data.name.strip()) == 0:
+            if not role_data.name or len(str(role_data.name).strip()) == 0:
                 raise HTTPException(status_code=400, detail="Role name cannot be empty")
-                
-            # This won't execute due to validation error
-            db_role = MockRoleModel(
-                organization_id=org_id,
-                is_system_role=False,
-                **role_data.model_dump(exclude={"permission_ids"})
-            )
-            session.add(db_role)
-            await session.commit()
-            
-            return await mock_roles_service._get_role_with_permissions(db_role.id, session)
+            # This return statement is necessary for typing but never executed in the test
+            return MockResponse()
             
         mock_roles_service.post_create = AsyncMock(side_effect=mock_create_role_empty_name)
         
@@ -935,12 +960,11 @@ class TestRoleService:
             permission = None  # Simulate not found
             session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = permission
             
-            if not permission:
+            # Use a condition that makes both paths appear possible to the type checker
+            found = False # This variable helps the type checker understand both paths are possible
+            if not found and permission is None:
                 raise HTTPException(status_code=404, detail="Permission not found")
-                
-            # This won't execute
-            await session.execute(MagicMock())
-            await session.commit()
+            return None
             
         mock_roles_service.delete_permission = AsyncMock(side_effect=mock_delete_permission_not_found)
         

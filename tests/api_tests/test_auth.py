@@ -1,8 +1,5 @@
 import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, MagicMock, patch
-import json
-import sys
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 # Create test fixtures based on the API collection

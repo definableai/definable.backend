@@ -1,11 +1,12 @@
 import pytest
 from fastapi import HTTPException, UploadFile, BackgroundTasks
 from io import BytesIO
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 import sys
 from uuid import UUID, uuid4
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Dict, Any, Optional, Union
+from pydantic import BaseModel, Field, ConfigDict
 
 # Create mock modules before any imports
 sys.modules['database'] = MagicMock()
@@ -20,108 +21,167 @@ sys.modules['src.config'] = MagicMock()
 sys.modules['src.config.settings'] = MagicMock()
 sys.modules['src.services.__base.acquire'] = MagicMock()
 sys.modules['dependencies.security'] = MagicMock()
-sys.modules['models'] = MagicMock()
 
-# Mock the S3 client
-sys.modules['libs'] = MagicMock()
-sys.modules['libs.s3'] = MagicMock()
-sys.modules['libs.s3.v1'] = MagicMock()
-sys.modules['libs.s3.v1.s3_client'] = MagicMock()
+# Create the models module with proper structure
+models_mock = MagicMock()
+sys.modules['models'] = models_mock
 
-# Mock the vectorstore
-sys.modules['libs.vectorstore'] = MagicMock()
-sys.modules['libs.vectorstore.v1'] = MagicMock()
-sys.modules['libs.vectorstore.v1.create_vectorstore'] = MagicMock()
+# Set up libs.vectorstore.v1 module
+vectorstore_mock = MagicMock()
+vectorstore_mock.create_vectorstore = AsyncMock(return_value=uuid4())
+sys.modules['libs.vectorstore.v1'] = vectorstore_mock
 
-# Mock langchain modules
-sys.modules['langchain_core'] = MagicMock()
-sys.modules['langchain_core.documents'] = MagicMock()
-sys.modules['langchain_openai'] = MagicMock()
-sys.modules['langchain_postgres'] = MagicMock()
+# Set up libs.s3.v1 module
+s3_mock = MagicMock()
+s3_client_mock = MagicMock()
+s3_client_mock.upload_file = AsyncMock(return_value="uploads/test.pdf")
+s3_client_mock.get_presigned_url = AsyncMock(return_value="https://example.com/uploads/test.pdf")
+s3_client_mock.delete_file = AsyncMock()
+s3_mock.s3_client = s3_client_mock
+sys.modules['libs.s3.v1'] = s3_mock
 
-# Set up an enum for document status
+# Constants for status
 class DocumentStatus:
     PENDING = "pending"
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
 
-sys.modules['models'].DocumentStatus = DocumentStatus
+# Add the enum to the mocked module
+models_mock.DocumentStatus = DocumentStatus
 
 # Mock models
-class MockKnowledgeBaseModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.name = kwargs.get('name', 'Test Knowledge Base')
-        self.collection_id = kwargs.get('collection_id', uuid4())
-        self.organization_id = kwargs.get('organization_id', uuid4())
-        self.user_id = kwargs.get('user_id', uuid4())
-        self.embedding_model = kwargs.get('embedding_model', 'openai')
-        self.settings = kwargs.get('settings', {
-            "embedding_model": "openai",
-            "max_chunk_size": 1000,
-            "chunk_overlap": 100,
-            "separator": "\n\n",
-            "version": 1
-        })
-        self.created_at = kwargs.get('created_at', datetime.now().isoformat())
-        self.updated_at = kwargs.get('updated_at', datetime.now().isoformat())
-        self.__dict__ = {**self.__dict__, **kwargs}
+class MockKnowledgeBaseModel(BaseModel):
+    id: Optional[UUID] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    user_id: Optional[UUID] = None
+    organization_id: Optional[UUID] = None
+    collection_id: Optional[UUID] = None
+    settings: Optional[Dict[str, Any]] = Field(default_factory=lambda: {})
+    embedding_model: Optional[str] = None
+    max_chunk_size: Optional[int] = None
+    chunk_overlap: Optional[int] = None
+    separator: Optional[str] = None
+    documents: Optional[List[Any]] = Field(default_factory=lambda: [])
+    chunks: Optional[List[Any]] = Field(default_factory=lambda: [])
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    knowledge_bases: Optional[List[Any]] = Field(default_factory=lambda: [])
+    
+    class Config:
+        arbitrary_types_allowed = True
+        extra = "allow"
 
-class MockKBDocumentModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.kb_id = kwargs.get('kb_id', uuid4())
-        self.title = kwargs.get('title', 'Test Document')
-        self.description = kwargs.get('description', 'Test Document Description')
-        self.source_type_id = kwargs.get('source_type_id', 1)  # 1 for file, 2 for URL
-        self.source_id = kwargs.get('source_id')
-        self.source_metadata = kwargs.get('source_metadata', {})
-        self.content = kwargs.get('content')
-        self.extraction_status = kwargs.get('extraction_status', DocumentStatus.PENDING)
-        self.indexing_status = kwargs.get('indexing_status', DocumentStatus.PENDING)
-        self.error_message = kwargs.get('error_message')
-        self.created_at = kwargs.get('created_at', datetime.now().isoformat())
-        self.updated_at = kwargs.get('updated_at', datetime.now().isoformat())
-        self.extraction_completed_at = kwargs.get('extraction_completed_at')
-        self.indexing_completed_at = kwargs.get('indexing_completed_at')
-        self.s3_key = kwargs.get('s3_key')
-        self.download_url = kwargs.get('download_url')
-        self.__dict__ = {**self.__dict__, **kwargs}
+class MockKBDocumentModel(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    kb_id: UUID = Field(default_factory=uuid4)
+    title: str = "Test Document"
+    description: str = ""
+    source_type_id: int = 1  # Default to FILE
+    source_metadata: Dict[str, Any] = Field(default_factory=lambda: {})
+    source_url: str = ""
+    s3_key: str = ""
+    extraction_status: str = DocumentStatus.PENDING
+    indexing_status: str = DocumentStatus.PENDING
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+    user_id: UUID = Field(default_factory=uuid4)
+    organization_id: UUID = Field(default_factory=uuid4)
+    source_id: Optional[UUID] = None
+    download_url: Optional[str] = None
+    content: Optional[str] = None
+    error_message: Optional[str] = None
+    extraction_completed_at: Optional[datetime] = None
+    indexing_completed_at: Optional[datetime] = None
+    
+    class Config:
+        arbitrary_types_allowed = True
+        extra = "allow"
 
 class MockSourceTypeModel:
     FILE = 1
     URL = 2
 
 # Add models to mocked modules
-sys.modules['models'].KnowledgeBaseModel = MockKnowledgeBaseModel
-sys.modules['models'].KBDocumentModel = MockKBDocumentModel
-sys.modules['models'].SourceTypeModel = MockSourceTypeModel
+models_mock.KnowledgeBaseModel = MockKnowledgeBaseModel
+models_mock.KBDocumentModel = MockKBDocumentModel
+models_mock.SourceTypeModel = MockSourceTypeModel
 
-class MockDocument:
-    def __init__(self, **kwargs):
-        self.page_content = kwargs.get('page_content', 'Test content')
-        self.metadata = kwargs.get('metadata', {})
+# Create and configure langchain_core.documents
+langchain_documents_mock = MagicMock()
+sys.modules['langchain_core'] = MagicMock()
+sys.modules['langchain_core.documents'] = langchain_documents_mock
 
-sys.modules['langchain_core.documents'].Document = MockDocument
-
-class MockResponse:
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+class MockDocument(BaseModel):
+    page_content: str = ""
+    metadata: Dict[str, Any] = Field(default_factory=lambda: {})
     
-    @classmethod
-    def model_validate(cls, data):
-        if isinstance(data, dict):
-            return cls(**data)
-        return cls(**{k: v for k, v in data.__dict__.items() if not k.startswith('_')})
+    class Config:
+        arbitrary_types_allowed = True
+        extra = "allow"
+
+langchain_documents_mock.Document = MockDocument
+
+class MockResponse(BaseModel):
+    id: Optional[UUID] = None
+    name: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    organization_id: Optional[UUID] = None
+    user_id: Optional[UUID] = None
+    collection_id: Optional[UUID] = None
+    settings: Optional[Dict[str, Any]] = None
+    created_at: Optional[Union[datetime, str]] = None
+    updated_at: Optional[Union[datetime, str]] = None
+    kb_id: Optional[UUID] = None
+    source_type_id: Optional[int] = None
+    source_url: Optional[str] = None
+    s3_key: Optional[str] = None
+    source_metadata: Optional[Dict[str, Any]] = None
+    extraction_status: Optional[str] = None
+    documents: Optional[List[Any]] = None
+    chunks: Optional[List[Any]] = None
+    total: Optional[int] = None
+    has_more: Optional[bool] = None
+    url: Optional[str] = None
+    download_url: Optional[str] = None
+    knowledge_bases: Optional[List[Any]] = None
+    chunk_id: Optional[int] = None
+    content: Optional[str] = None
+    score: Optional[float] = None
+    message: Optional[str] = None
+    # Additional fields for tests
+    chunk_ids: Optional[List[str]] = None
+    embedding_model: Optional[str] = None
+    max_chunk_size: Optional[int] = None
+    chunk_overlap: Optional[int] = None
+    separator: Optional[str] = None
+    version: Optional[int] = None
+    document_id: Optional[UUID] = None
+    total_chunks: Optional[int] = None
+    file: Optional[Any] = None
+    source_id: Optional[UUID] = None
+    operation: Optional[str] = None
+    excludeTags: Optional[List[str]] = None
+    includeTags: Optional[List[str]] = None
+    onlyMainContent: Optional[bool] = None
+    formats: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    # Crawler options
+    maxDepth: Optional[int] = None
+    limit: Optional[int] = None
+    includePaths: Optional[List[str]] = None
+    excludePaths: Optional[List[str]] = None
+    ignoreSitemap: Optional[bool] = None
+    allowBackwardLinks: Optional[bool] = None
+    scrapeOptions: Optional[Any] = None
     
-    def model_dump(self, **kwargs):
-        exclude_unset = kwargs.get('exclude_unset', False)
-        if exclude_unset:
-            # Return only items that have been explicitly set
-            return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
-        return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+    model_config = ConfigDict(extra="allow")
+    
+    def get_metadata(self) -> Dict[str, Any]:
+        """Helper method to return metadata dictionary used in tests"""
+        return self.source_metadata or {}
 
 @pytest.fixture
 def mock_user():
@@ -217,14 +277,6 @@ def mock_kb_service():
     """Create a mock KB service."""
     kb_service = MagicMock()
     
-    # Mock methods to create a vectorstore
-    sys.modules['libs.vectorstore.v1'].create_vectorstore = AsyncMock(return_value=uuid4())
-    
-    # Mock S3 client methods
-    sys.modules['libs.s3.v1'].s3_client = MagicMock()
-    sys.modules['libs.s3.v1'].s3_client.upload_file = AsyncMock(return_value="uploads/test.pdf")
-    sys.modules['libs.s3.v1'].s3_client.get_presigned_url = AsyncMock(return_value="https://example.com/uploads/test.pdf")
-    
     async def mock_create(org_id, kb_data, session, user):
         # Create a knowledge base
         collection_id = await sys.modules['libs.vectorstore.v1'].create_vectorstore(org_id, kb_data.name)
@@ -234,14 +286,14 @@ def mock_kb_service():
             user_id=user["id"],
             collection_id=collection_id,
             name=kb_data.name,
-            embedding_model=kb_data.settings.embedding_model,
+            embedding_model=kb_data.settings["embedding_model"],
             settings=kb_data.model_dump()
         )
         session.add(kb)
         await session.commit()
         await session.refresh(kb)
         
-        return MockResponse.model_validate(kb)
+        return MockResponse.model_validate(kb.model_dump())
     
     async def mock_update(org_id, kb_id, kb_data, session, user):
         # Get knowledge base
@@ -257,7 +309,7 @@ def mock_kb_service():
         await session.commit()
         await session.refresh(kb)
         
-        return MockResponse.model_validate(kb)
+        return MockResponse.model_validate(kb.model_dump())
     
     async def mock_get(org_id, kb_id, session, user):
         # Get knowledge base with documents
@@ -284,8 +336,10 @@ def mock_kb_service():
         session.execute.return_value.unique.return_value.all.return_value = [(kb, doc) for doc in documents]
         
         # Create response with documents
-        kb_dict = kb.__dict__
-        kb_response = MockResponse(**kb_dict, documents=[MockResponse.model_validate(doc) for doc in documents])
+        kb_dict = kb.model_dump()
+        if 'documents' in kb_dict:
+          kb_dict.pop('documents')
+        kb_response = MockResponse(**kb_dict, documents=[MockResponse.model_validate(doc.model_dump()) for doc in documents])
         
         return kb_response
     
@@ -303,7 +357,7 @@ def mock_kb_service():
         
         session.execute.return_value.scalars.return_value.all.return_value = kbs
         
-        return [MockResponse.model_validate(kb) for kb in kbs]
+        return [MockResponse.model_validate(kb.model_dump()) for kb in kbs]
     
     async def mock_remove(org_id, kb_id, session, user):
         # Get knowledge base
@@ -328,13 +382,13 @@ def mock_kb_service():
         
         # Upload file to S3
         file_content = await document_data.file.read()
-        await sys.modules['libs.s3.v1'].s3_client.upload_file(
-            file=BytesIO(file_content),
-            key=s3_key
+        await s3_client_mock.upload_file(
+        file=BytesIO(file_content),
+        key=s3_key
         )
         
         # Create document
-        source_metadata = document_data.get_metadata()
+        source_metadata = document_data.source_metadata
         doc = MockKBDocumentModel(
             kb_id=kb_id,
             title=document_data.title,
@@ -359,7 +413,7 @@ def mock_kb_service():
         )
         
         # Generate download URL for response
-        download_url = await sys.modules['libs.s3.v1'].s3_client.get_presigned_url(
+        download_url = await s3_client_mock.get_presigned_url(
             s3_key,
             expires_in=3600,
             operation="get_object"
@@ -367,7 +421,7 @@ def mock_kb_service():
         
         doc.download_url = download_url
         
-        return MockResponse.model_validate(doc)
+        return MockResponse.model_validate(doc.model_dump())
     
     async def mock_add_url_document(org_id, kb_id, document_data, background_tasks, session, user):
         # Get knowledge base
@@ -376,7 +430,7 @@ def mock_kb_service():
             raise HTTPException(status_code=404, detail="Knowledge base not found")
         
         # Create document
-        source_metadata = document_data.get_metadata()
+        source_metadata = document_data.source_metadata
         doc = MockKBDocumentModel(
             kb_id=kb_id,
             title=document_data.title,
@@ -399,7 +453,7 @@ def mock_kb_service():
             session
         )
         
-        return MockResponse.model_validate(doc)
+        return MockResponse.model_validate(doc.model_dump())
     
     async def mock_get_document_chunks(org_id, kb_id, doc_id, limit, offset, session, user):
         # Get document
@@ -535,13 +589,13 @@ class TestKBService:
         org_id = uuid4()
         kb_data = MockResponse(
             name="New Knowledge Base",
-            settings=MockResponse(
-                embedding_model="openai",
-                max_chunk_size=1000,
-                chunk_overlap=100,
-                separator="\n\n",
-                version=1
-            )
+            settings={
+                "embedding_model": "openai",
+                "max_chunk_size": 1000,
+                "chunk_overlap": 100,
+                "separator": "\n\n",
+                "version": 1
+            }
         )
         
         # Call the service
@@ -723,7 +777,7 @@ class TestKBService:
             description="Test file document description",
             file=mock_upload_file,
             source_id=None,
-            get_metadata=lambda: {
+            source_metadata={
                 "file_type": "pdf",
                 "original_filename": "test.pdf",
                 "size": 1024,
@@ -773,13 +827,13 @@ class TestKBService:
             url="https://example.com",
             operation="scrape",
             source_id=None,
-            settings=MockResponse(
-                excludeTags=[""],
-                includeTags=[""],
-                onlyMainContent=True,
-                formats=["text"]
-            ),
-            get_metadata=lambda: {
+            settings={
+                "excludeTags": [""],
+                "includeTags": [""],
+                "onlyMainContent": True,
+                "formats": ["text"]
+            },
+            source_metadata={
                 "url": "https://example.com",
                 "operation": "scrape",
                 "settings": {
@@ -980,7 +1034,7 @@ class TestKBService:
             description="Test file document description",
             file=mock_upload_file,
             source_id=None,
-            get_metadata=lambda: {
+            source_metadata={
                 "file_type": "pdf",
                 "original_filename": "test.pdf",
                 "size": 1024,
@@ -1023,13 +1077,13 @@ class TestKBService:
             url="https://example.com",
             operation="scrape",
             source_id=None,
-            settings=MockResponse(
-                excludeTags=[""],
-                includeTags=[""],
-                onlyMainContent=True,
-                formats=["text"]
-            ),
-            get_metadata=lambda: {
+            settings={
+                "excludeTags": [""],
+                "includeTags": [""],
+                "onlyMainContent": True,
+                "formats": ["text"]
+            },
+            source_metadata={
                 "url": "https://example.com",
                 "operation": "scrape",
                 "settings": {
@@ -1172,21 +1226,21 @@ class TestKBService:
             url="https://example.com",
             operation="crawl",
             source_id=None,
-            settings=MockResponse(
-                maxDepth=2,
-                limit=50,
-                includePaths=["/docs", "/blog"],
-                excludePaths=["/private"],
-                ignoreSitemap=False,
-                allowBackwardLinks=True,
-                scrapeOptions=MockResponse(
-                    excludeTags=["nav", "footer"],
-                    includeTags=[],
-                    onlyMainContent=True,
-                    formats=["text", "html"]
-                )
-            ),
-            get_metadata=lambda: {
+            settings={
+                "maxDepth": 2,
+                "limit": 50,
+                "includePaths": ["/docs", "/blog"],
+                "excludePaths": ["/private"],
+                "ignoreSitemap": False,
+                "allowBackwardLinks": True,
+                "scrapeOptions": {
+                    "excludeTags": ["nav", "footer"],
+                    "includeTags": [],
+                    "onlyMainContent": True,
+                    "formats": ["text", "html"]
+                }
+            },
+            source_metadata={
                 "url": "https://example.com",
                 "operation": "crawl",
                 "settings": {
@@ -1214,7 +1268,7 @@ class TestKBService:
                 raise HTTPException(status_code=404, detail="Knowledge base not found")
             
             # Create document
-            source_metadata = document_data.get_metadata()
+            source_metadata = document_data.source_metadata
             doc = MockKBDocumentModel(
                 kb_id=kb_id,
                 title=document_data.title,
@@ -1237,7 +1291,7 @@ class TestKBService:
                 session
             )
             
-            return MockResponse.model_validate(doc)
+            return MockResponse.model_validate(doc.model_dump())
             
         mock_kb_service.post_add_url_document = AsyncMock(side_effect=mock_add_url_document_crawl)
         
@@ -1279,53 +1333,42 @@ class TestKBService:
     
     async def test_update_document_chunk(self, mock_kb_service, mock_db_session, mock_user):
         """Test updating a document chunk."""
-        # Setup data
+        # Setup test data
         org_id = uuid4()
         kb_id = uuid4()
         doc_chunk_data = MockResponse(
-            chunk_id="1",
+            chunk_id=123,
             content="Updated chunk content"
         )
         
-        # Implement update document chunk method
         async def mock_update_document_chunk(org_id, kb_id, doc_chunk_data, session, user):
             # Verify KB exists
             kb = await mock_kb_service._get_kb(kb_id, org_id, session)
             if not kb:
                 raise HTTPException(status_code=404, detail="Knowledge base not found")
             
-            # Get the chunks from the database (mocked)
-            session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = MockResponse(
+            # Create updated chunk response
+            return MockResponse(
                 id=uuid4(),
-                chunk_id=1,
-                content="Original content",
-                metadata={"source": "Test Document", "chunk": 1}
-            )
-            
-            # Update the chunk
-            updated_chunk = MockResponse(
-                id=uuid4(),
-                chunk_id=int(doc_chunk_data.chunk_id),
+                chunk_id=doc_chunk_data.chunk_id,
                 content=doc_chunk_data.content,
-                metadata={"source": "Test Document", "chunk": int(doc_chunk_data.chunk_id)}
+                metadata={"chunk_index": doc_chunk_data.chunk_id, "doc_id": str(uuid4())}
             )
-            
-            # Return the updated chunk
-            return updated_chunk
-            
+        
+        # Replace the method with our test implementation
         mock_kb_service.put_update_document_chunk = AsyncMock(side_effect=mock_update_document_chunk)
         
-        # Call the service
+        # Call service
         response = await mock_kb_service.put_update_document_chunk(
-            org_id,
-            kb_id,
-            doc_chunk_data,
+            org_id=org_id,
+            kb_id=kb_id,
+            doc_chunk_data=doc_chunk_data,
             session=mock_db_session,
             user=mock_user
         )
         
         # Verify result
-        assert response.chunk_id == int(doc_chunk_data.chunk_id)
+        assert response.chunk_id == doc_chunk_data.chunk_id  # Compare directly without conversion
         assert response.content == doc_chunk_data.content
         assert hasattr(response, "metadata")
         
@@ -1338,7 +1381,7 @@ class TestKBService:
         org_id = uuid4()
         kb_id = uuid4()
         doc_chunk_data = MockResponse(
-            chunk_id="999",
+            chunk_id=999,
             content="Updated chunk content"
         )
         
@@ -1423,7 +1466,7 @@ class TestKBService:
             doc.content = "This is the content of the document."
             doc.download_url = "https://example.com/uploads/document.pdf"
             
-            return MockResponse.model_validate(doc)
+            return MockResponse.model_validate(doc.model_dump())
             
         mock_kb_service.get_get_document_content = AsyncMock(side_effect=mock_get_document_content)
         

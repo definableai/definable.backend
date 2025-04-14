@@ -1,11 +1,14 @@
 import pytest
-from fastapi import UploadFile
+from fastapi import UploadFile, HTTPException
 from io import BytesIO
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 import sys
 from uuid import UUID, uuid4
 from datetime import datetime
-from fastapi import HTTPException
+from typing import Optional
+
+# Import pydantic
+from pydantic import BaseModel, Field
 
 # Create mock modules before any imports
 sys.modules['database'] = MagicMock()
@@ -21,11 +24,6 @@ sys.modules['src.config.settings'] = MagicMock()
 sys.modules['src.services.__base.acquire'] = MagicMock()
 sys.modules['dependencies.security'] = MagicMock()
 
-# Create the proper module structure for libs.s3.v1
-sys.modules['libs'] = MagicMock()
-sys.modules['libs.s3'] = MagicMock()
-sys.modules['libs.s3.v1'] = MagicMock()
-
 # Create a mock S3Client class
 class MockS3Client:
     def __init__(self, bucket="test-bucket"):
@@ -35,36 +33,37 @@ class MockS3Client:
         # Simulate S3 upload and return a URL
         return f"https://example.com/{key}"
 
-# Add the S3Client to the mocked module
-sys.modules['libs.s3.v1'].S3Client = MockS3Client
+# Create the proper module structure for libs.s3.v1
+libs_s3_v1 = MagicMock()
+# Add S3Client attribute to the mock
+libs_s3_v1.S3Client = MockS3Client
+# Assign the configured mock to sys.modules
+sys.modules['libs'] = MagicMock()
+sys.modules['libs.s3'] = MagicMock()
+sys.modules['libs.s3.v1'] = libs_s3_v1
 
-# Mock models
-class MockPublicUploadModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.filename = kwargs.get('filename', 'test.jpg')
-        self.content_type = kwargs.get('content_type', 'image/jpeg')
-        self.url = kwargs.get('url', 'https://example.com/uploads/test.jpg')
-        self.created_at = kwargs.get('created_at', datetime.now().isoformat())
-        self.__dict__ = {**self.__dict__, **kwargs}
+# Mock models using Pydantic
+class MockPublicUploadModel(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    filename: str = "test.jpg"
+    content_type: str = "image/jpeg"
+    url: str = "https://example.com/uploads/test.jpg"
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    
+    class Config:
+        arbitrary_types_allowed = True
 
-class MockResponse:
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+class MockResponse(BaseModel):
+    """Base class for mock responses"""
+    id: Optional[UUID] = None
+    filename: Optional[str] = None
+    content_type: Optional[str] = None
+    url: Optional[str] = None
+    created_at: Optional[str] = None
+    error: Optional[str] = None
     
-    @classmethod
-    def model_validate(cls, data):
-        if isinstance(data, dict):
-            return cls(**data)
-        return cls(**{k: v for k, v in data.__dict__.items() if not k.startswith('_')})
-    
-    def model_dump(self, **kwargs):
-        exclude_unset = kwargs.get('exclude_unset', False)
-        if exclude_unset:
-            # Return only items that have been explicitly set
-            return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
-        return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+    class Config:
+        arbitrary_types_allowed = True
 
 @pytest.fixture
 def mock_user():
@@ -254,7 +253,7 @@ class TestPublicUploadService:
                 await session.commit()
                 return MockResponse(url="https://example.com/uploads/test.jpg")
             except Exception as e:
-                return {"error": str(e)}
+                return MockResponse(error=str(e))
             finally:
                 # Restore the original function for cleanup
                 mock_public_upload_service.s3_client.upload_file = original_upload_file
@@ -270,15 +269,15 @@ class TestPublicUploadService:
         )
         
         # Verify result
-        assert "error" in response
-        assert "S3 upload failed" in response["error"]
+        assert response.error is not None
+        assert "S3 upload failed" in response.error
         
         # Verify database operations weren't called
         mock_db_session.add.assert_not_called()
         mock_db_session.commit.assert_not_called()
         
         # The service should have been called correctly
-        assert mock_public_upload_service.post.called 
+        assert mock_public_upload_service.post.called
 
     async def test_upload_file_bad_request(self, mock_public_upload_service, mock_db_session, mock_user, mock_upload_file):
         """Test handling bad upload request."""

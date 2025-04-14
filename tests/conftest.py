@@ -5,7 +5,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from dotenv import load_dotenv
 
 # Add the project root directory to Python path
@@ -32,31 +32,26 @@ mock_async_session = AsyncMock()
 mock_Base = MagicMock()
 mock_CRUD = MagicMock()
 
-# Add mocks for both import paths (database and src.database)
-sys.modules['database'] = MagicMock()
-sys.modules['database.postgres'] = MagicMock()
-sys.modules['database.models'] = MagicMock()
-sys.modules['src.database'] = MagicMock()
-sys.modules['src.database.postgres'] = MagicMock()
-sys.modules['src.database.models'] = MagicMock()
+# Create module mocks with attributes
+database_mock = MagicMock()
+database_mock.get_db = mock_get_db
+database_mock.Base = mock_Base
+database_mock.CRUD = mock_CRUD
+database_mock.async_session = mock_async_session
 
-# Set up the necessary attributes and functions
-sys.modules['database'].get_db = mock_get_db
-sys.modules['src.database'].get_db = mock_get_db
-sys.modules['database'].Base = mock_Base
-sys.modules['src.database'].Base = mock_Base
-sys.modules['database'].CRUD = mock_CRUD
-sys.modules['src.database'].CRUD = mock_CRUD
-sys.modules['database'].async_session = mock_async_session
-sys.modules['src.database'].async_session = mock_async_session
+src_database_mock = MagicMock()
+src_database_mock.get_db = mock_get_db
+src_database_mock.Base = mock_Base
+src_database_mock.CRUD = mock_CRUD
+src_database_mock.async_session = mock_async_session
 
-# Patch config.settings
-with patch.dict('sys.modules', {
-    'config': MagicMock(),
-    'config.settings': MagicMock(),
-}):
-    # Patch the settings module
-    sys.modules['config.settings'].settings = mock_settings
+config_settings_mock = MagicMock()
+config_settings_mock.settings = mock_settings
+
+# Assign to sys.modules
+sys.modules['database'] = database_mock
+sys.modules['src.database'] = src_database_mock
+sys.modules['config.settings'] = config_settings_mock
 
 @pytest.fixture
 def app():

@@ -1,9 +1,6 @@
 import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 import io
-import json
-import sys
 from uuid import uuid4
 
 @pytest.fixture

@@ -1,6 +1,5 @@
 import json
 import os
-from pathlib import Path
 
 """
 Utility script to generate API tests based on a Postman collection.

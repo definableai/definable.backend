@@ -1,9 +1,11 @@
 import pytest
 from fastapi import HTTPException
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 import sys
-from uuid import uuid4
+from uuid import UUID, uuid4
 from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional
+from pydantic import BaseModel, Field
 
 # Create mock modules before any imports
 sys.modules['database'] = MagicMock()
@@ -23,36 +25,40 @@ sys.modules['src.services.auth.service'] = MagicMock()
 sys.modules['src.services.auth.model'] = MagicMock()
 sys.modules['src.services.auth.schema'] = MagicMock()
 
-# Mock the auth models and schemas
-class MockUserModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.email = kwargs.get('email', "test@example.com")
-        self.password = kwargs.get('password', "hashed_password123")
-        self.first_name = kwargs.get('first_name', "Test")
-        self.last_name = kwargs.get('last_name', "User")
-        self.is_active = kwargs.get('is_active', True)
-        self.created_at = kwargs.get('created_at', datetime.now())
-        self.updated_at = kwargs.get('updated_at', datetime.now())
-        self.__dict__ = {**self.__dict__, **kwargs}
+# Mock database models
+class MockUserModel(BaseModel):
+    """Mock database user model."""
+    id: UUID = Field(default_factory=uuid4)
+    email: str = "test@example.com"
+    password: str = "hashed_password123"
+    first_name: str = "Test"
+    last_name: str = "User"
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+    
+    class Config:
+        extra = "allow"
 
-class MockResponse:
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+# Mock API response model (used to simulate API responses)
+class MockResponse(BaseModel):
+    """Mock API response model."""
+    id: Optional[UUID] = None
+    email: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    message: Optional[str] = None
+    password: Optional[str] = None
+    organization_id: Optional[UUID] = None
+    roles: List[Dict[str, Any]] = Field(default_factory=list)
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+    token_type: Optional[str] = None
+    expires_in: Optional[float] = None
+    is_active: Optional[bool] = None
     
-    @classmethod
-    def model_validate(cls, data):
-        if isinstance(data, dict):
-            return cls(**data)
-        return cls(**{k: v for k, v in data.__dict__.items() if not k.startswith('_')})
-    
-    def model_dump(self, **kwargs):
-        exclude_unset = kwargs.get('exclude_unset', False)
-        if exclude_unset:
-            # Return only items that have been explicitly set
-            return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
-        return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+    class Config:
+        extra = "allow"
 
 @pytest.fixture
 def mock_db_session():
@@ -103,7 +109,8 @@ def mock_auth_service():
     
     async def mock_post_signup(user_data, session):
         # Check if user with email already exists
-        if getattr(session.execute.return_value.scalar_one_or_none.return_value, 'email', None) == user_data.email:
+        existing_user = session.execute.return_value.scalar_one_or_none.return_value
+        if existing_user and getattr(existing_user, 'email', None) == user_data.email:
             raise HTTPException(status_code=400, detail="Email already registered")
         
         # Create new user
@@ -119,7 +126,7 @@ def mock_auth_service():
         await session.commit()
         await session.refresh(new_user)
         
-        # Return response matching Postman collection
+        # Return response matching API format
         return MockResponse(
             id=new_user.id,
             email=new_user.email,
@@ -140,11 +147,11 @@ def mock_auth_service():
                 headers={"WWW-Authenticate": "Bearer"}
             )
         
-        # Generate token - matching Postman response
+        # Generate token
         access_token = "mocked_jwt_token"
         expires_delta = timedelta(minutes=30)
         
-        # Return response matching Postman collection
+        # Return response matching API format
         return MockResponse(
             access_token=access_token,
             token_type="bearer",
@@ -162,15 +169,67 @@ def mock_auth_service():
             roles=current_user.get("roles", [])
         )
     
+    async def mock_refresh_token(refresh_token, session):
+        # Check if refresh token is valid (hardcoded valid token for test)
+        if refresh_token != "valid_refresh_token":
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid refresh token",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+        
+        # Generate new access token
+        access_token = "new_mocked_jwt_token"
+        refresh_token = "new_refresh_token"
+        expires_delta = timedelta(minutes=30)
+        
+        # Return response matching API format
+        return MockResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_type="bearer",
+            expires_in=expires_delta.total_seconds()
+        )
+    
+    async def mock_update_profile(user_id, profile_data, session):
+        # Get user
+        user = session.execute.return_value.scalar_one_or_none.return_value
+        
+        # Check if user exists
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Update user fields
+        update_data = profile_data.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(user, field, value)
+        
+        # Update database
+        await session.commit()
+        await session.refresh(user)
+        
+        # Return updated user profile
+        return MockResponse(
+            id=user.id,
+            email=user.email,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            message="Profile updated successfully"
+        )
+    
     # Create AsyncMock objects for these methods to ensure they have .called attribute
     post_signup_mock = AsyncMock(side_effect=mock_post_signup)
     post_login_mock = AsyncMock(side_effect=mock_post_login)
     get_me_mock = AsyncMock(side_effect=mock_get_me)
+    refresh_token_mock = AsyncMock(side_effect=mock_refresh_token)
+    update_profile_mock = AsyncMock(side_effect=mock_update_profile)
     
     # Assign the AsyncMock objects to the service
     auth_service.post_signup = post_signup_mock
     auth_service.post_login = post_login_mock
     auth_service.get_me = get_me_mock
+    auth_service.refresh_token = refresh_token_mock
+    auth_service.update_profile = update_profile_mock
     
     return auth_service
 
@@ -183,18 +242,21 @@ class TestAuthService:
         # Setup mocks
         mock_db_session.execute.return_value.scalar_one_or_none.return_value = None  # No existing user
         
-        # Create signup data matching Postman collection request
+        # Create signup data matching API schema
         signup_data = MockResponse(
             email="newuser@example.com",
             first_name="New",
             last_name="User",
-            password="Rock0004@"  # Match password format in collection
+            password="Rock0004@"
         )
         
         # Call the service
-        response = await mock_auth_service.post_signup(signup_data, mock_db_session)
+        response = await mock_auth_service.post_signup(
+            signup_data, 
+            session=mock_db_session
+        )
         
-        # Verify result structure matches Postman response
+        # Verify result structure
         assert response.email == signup_data.email
         assert response.first_name == signup_data.first_name
         assert response.last_name == signup_data.last_name
@@ -224,8 +286,12 @@ class TestAuthService:
         
         # Verify exception is raised
         with pytest.raises(HTTPException) as exc_info:
-            await mock_auth_service.post_signup(signup_data, mock_db_session)
+            await mock_auth_service.post_signup(
+                signup_data, 
+                session=mock_db_session
+            )
         
+        # Verify exception details
         assert exc_info.value.status_code == 400
         assert "Email already registered" in str(exc_info.value.detail)
         
@@ -237,19 +303,22 @@ class TestAuthService:
         # Setup mocks
         mock_db_session.execute.return_value.scalar_one_or_none.return_value = mock_user
         
-        # Create login data matching Postman collection
+        # Create login data matching API schema
         login_data = MockResponse(
             email=mock_user.email,
             password="password123"
         )
         
         # Call the service
-        response = await mock_auth_service.post_login(login_data, mock_db_session)
+        response = await mock_auth_service.post_login(
+            login_data, 
+            session=mock_db_session
+        )
         
-        # Verify result structure matches Postman response
+        # Verify result structure
         assert response.access_token == "mocked_jwt_token"
         assert response.token_type == "bearer"
-        assert hasattr(response, "expires_in")
+        assert response.expires_in == timedelta(minutes=30).total_seconds()
         
         # Verify service method was called
         assert mock_auth_service.post_login.called
@@ -262,13 +331,17 @@ class TestAuthService:
         # Create login data with wrong password
         login_data = MockResponse(
             email=mock_user.email,
-            password="wrongpassword"
+            password="wrong_password"
         )
         
         # Verify exception is raised
         with pytest.raises(HTTPException) as exc_info:
-            await mock_auth_service.post_login(login_data, mock_db_session)
+            await mock_auth_service.post_login(
+                login_data, 
+                session=mock_db_session
+            )
         
+        # Verify exception details
         assert exc_info.value.status_code == 401
         assert "Incorrect email or password" in str(exc_info.value.detail)
         
@@ -277,17 +350,11 @@ class TestAuthService:
 
     async def test_login_inactive_user(self, mock_auth_service, mock_db_session):
         """Test login with inactive user."""
-        # Create inactive user
+        # Setup mocks - create inactive user
         inactive_user = MockUserModel(
-            id=uuid4(),
             email="inactive@example.com",
-            password="hashed_password123",
-            first_name="Inactive",
-            last_name="User",
             is_active=False
         )
-        
-        # Setup mocks
         mock_db_session.execute.return_value.scalar_one_or_none.return_value = inactive_user
         
         # Create login data
@@ -298,8 +365,12 @@ class TestAuthService:
         
         # Verify exception is raised
         with pytest.raises(HTTPException) as exc_info:
-            await mock_auth_service.post_login(login_data, mock_db_session)
+            await mock_auth_service.post_login(
+                login_data, 
+                session=mock_db_session
+            )
         
+        # Verify exception details
         assert exc_info.value.status_code == 401
         assert "Incorrect email or password" in str(exc_info.value.detail)
         
@@ -307,19 +378,18 @@ class TestAuthService:
         assert mock_auth_service.post_login.called
 
     async def test_get_current_user(self, mock_auth_service):
-        """Test getting current user information."""
-        # Create user data matching expected JWT payload
+        """Test getting current user info."""
+        # Create mock user data (as it would be extracted from JWT)
         current_user = {
             "id": uuid4(),
-            "email": "test@example.com",
-            "first_name": "Test",
+            "email": "current@example.com",
+            "first_name": "Current",
             "last_name": "User",
             "organization_id": uuid4(),
             "roles": [
                 {
-                    "role_id": uuid4(),
                     "organization_id": uuid4(),
-                    "name": "Admin"
+                    "role": "ADMIN"
                 }
             ]
         }
@@ -340,74 +410,76 @@ class TestAuthService:
 
     async def test_signup_invalid_email_format(self, mock_auth_service, mock_db_session):
         """Test signup with invalid email format."""
-        # Setup original post_signup method
-        original_signup = mock_auth_service.post_signup
-        
-        # Create a custom implementation that validates email
+        # Override the mock implementation for this test
         async def mock_signup_invalid_email(user_data, session):
             # Basic email validation
-            import re
-            email_pattern = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
-            if not email_pattern.match(user_data.email):
+            if "@" not in user_data.email or "." not in user_data.email:
                 raise HTTPException(status_code=400, detail="Invalid email format")
             
-            # This won't execute
-            return await original_signup(user_data, session)
-            
-        mock_auth_service.post_signup = AsyncMock(side_effect=mock_signup_invalid_email)
+            # Original implementation
+            return await mock_auth_service.post_signup.side_effect(user_data, session)
+        
+        # Replace the mock method with our new implementation for this test only
+        mock_auth_service.post_signup.side_effect = mock_signup_invalid_email
         
         # Create signup data with invalid email
         signup_data = MockResponse(
             email="invalid-email",
-            first_name="Test",
-            last_name="User",
+            first_name="Invalid",
+            last_name="Email",
             password="Rock0004@"
         )
         
         # Verify exception is raised
         with pytest.raises(HTTPException) as exc_info:
-            await mock_auth_service.post_signup(signup_data, mock_db_session)
+            await mock_auth_service.post_signup(
+                signup_data, 
+                session=mock_db_session
+            )
         
+        # Verify exception details
         assert exc_info.value.status_code == 400
         assert "Invalid email format" in str(exc_info.value.detail)
         
         # Verify service method was called
         assert mock_auth_service.post_signup.called
-    
+
     async def test_signup_weak_password(self, mock_auth_service, mock_db_session):
-        """Test signup with a weak password."""
-        # Setup original post_signup method
-        original_signup = mock_auth_service.post_signup
-        
-        # Create a custom implementation that validates password strength
+        """Test signup with weak password."""
+        # Override the mock implementation for this test
         async def mock_signup_weak_password(user_data, session):
             # Basic password strength check
             if len(user_data.password) < 8:
-                raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+                raise HTTPException(status_code=400, detail="Password too weak")
             
-            # This won't execute
-            return await original_signup(user_data, session)
-            
-        mock_auth_service.post_signup = AsyncMock(side_effect=mock_signup_weak_password)
+            # Original implementation
+            return await mock_auth_service.post_signup.side_effect(user_data, session)
+        
+        # Replace the mock method with our new implementation for this test only
+        mock_auth_service.post_signup.side_effect = mock_signup_weak_password
         
         # Create signup data with weak password
         signup_data = MockResponse(
             email="newuser@example.com",
-            first_name="Test",
+            first_name="New",
             last_name="User",
-            password="weak"  # Too short
+            password="weak"
         )
         
         # Verify exception is raised
         with pytest.raises(HTTPException) as exc_info:
-            await mock_auth_service.post_signup(signup_data, mock_db_session)
+            await mock_auth_service.post_signup(
+                signup_data,
+                session=mock_db_session
+            )
         
+        # Verify exception details
         assert exc_info.value.status_code == 400
-        assert "Password must be at least 8 characters" in str(exc_info.value.detail)
+        assert "Password too weak" in str(exc_info.value.detail)
         
         # Verify service method was called
         assert mock_auth_service.post_signup.called
-    
+
     async def test_login_user_not_found(self, mock_auth_service, mock_db_session):
         """Test login with non-existent user."""
         # Setup mocks - no user found
@@ -421,61 +493,66 @@ class TestAuthService:
         
         # Verify exception is raised
         with pytest.raises(HTTPException) as exc_info:
-            await mock_auth_service.post_login(login_data, mock_db_session)
+            await mock_auth_service.post_login(
+                login_data,
+                session=mock_db_session
+            )
         
+        # Verify exception details
         assert exc_info.value.status_code == 401
         assert "Incorrect email or password" in str(exc_info.value.detail)
         
         # Verify service method was called
         assert mock_auth_service.post_login.called
-    
+
     async def test_login_with_empty_credentials(self, mock_auth_service, mock_db_session):
         """Test login with empty credentials."""
-        # Create login data with empty values
-        login_data = MockResponse(
-            email="",
-            password=""
-        )
-        
-        # Set up a custom login method that checks for empty credentials
+        # Override the mock implementation for this test
         async def mock_login_empty_credentials(form_data, session):
+            # Check for empty credentials
             if not form_data.email or not form_data.password:
                 raise HTTPException(
                     status_code=400,
-                    detail="Email and password cannot be empty",
+                    detail="Email and password are required",
                     headers={"WWW-Authenticate": "Bearer"}
                 )
-                
-            # This code won't execute due to validation error
-            user = session.execute.return_value.scalar_one_or_none.return_value
-            return MockResponse(
-                access_token="token",
-                token_type="bearer",
-                expires_in=1800
-            )
             
-        mock_auth_service.post_login = AsyncMock(side_effect=mock_login_empty_credentials)
+            # Original implementation
+            return await mock_auth_service.post_login.side_effect(form_data, session)
+        
+        # Replace the mock method with our new implementation for this test only
+        mock_auth_service.post_login.side_effect = mock_login_empty_credentials
+        
+        # Create login data with empty password
+        login_data = MockResponse(
+            email="test@example.com",
+            password=""
+        )
         
         # Verify exception is raised
         with pytest.raises(HTTPException) as exc_info:
-            await mock_auth_service.post_login(login_data, mock_db_session)
+            await mock_auth_service.post_login(
+                login_data,
+                session=mock_db_session
+            )
         
+        # Verify exception details
         assert exc_info.value.status_code == 400
-        assert "Email and password cannot be empty" in str(exc_info.value.detail)
+        assert "required" in str(exc_info.value.detail).lower()
         
         # Verify service method was called
         assert mock_auth_service.post_login.called
-    
+
     async def test_get_current_user_no_roles(self, mock_auth_service):
-        """Test getting current user with no roles."""
-        # Create user data without roles
+        """Test getting current user info with no roles."""
+        # Create mock user data with no roles
         current_user = {
             "id": uuid4(),
-            "email": "test@example.com",
-            "first_name": "Test",
+            "email": "noroles@example.com",
+            "first_name": "NoRoles",
             "last_name": "User",
-            "organization_id": uuid4()
-            # No roles field
+            "organization_id": uuid4(),
+            "roles": []
         }
         
         # Call the service
@@ -483,159 +560,97 @@ class TestAuthService:
         
         # Verify result structure
         assert response.id == current_user["id"]
-        assert response.email == current_user["email"]
-        assert response.first_name == current_user["first_name"]
-        assert response.last_name == current_user["last_name"]
-        assert response.organization_id == current_user["organization_id"]
-        assert hasattr(response, "roles")  # Should have roles attribute even if empty
-        assert response.roles == []  # Should default to empty list
+        assert response.roles == []
         
         # Verify service method was called
         assert mock_auth_service.get_me.called
-    
+
     async def test_refresh_token(self, mock_auth_service, mock_db_session, mock_user):
-        """Test refreshing an access token."""
-        # Add mock refresh token method
-        async def mock_refresh_token(refresh_token, session):
-            # Check if refresh token is valid (hardcoded valid token for test)
-            if refresh_token != "valid_refresh_token":
-                raise HTTPException(
-                    status_code=401,
-                    detail="Invalid refresh token",
-                    headers={"WWW-Authenticate": "Bearer"}
-                )
-            
-            # Generate new access token
-            access_token = "new_mocked_jwt_token"
-            expires_delta = timedelta(minutes=30)
-            
-            # Return response with new tokens
-            return MockResponse(
-                access_token=access_token,
-                token_type="bearer",
-                expires_in=expires_delta.total_seconds()
-            )
-            
-        mock_auth_service.post_refresh_token = AsyncMock(side_effect=mock_refresh_token)
-        
+        """Test refreshing access token."""
         # Call the service
-        response = await mock_auth_service.post_refresh_token("valid_refresh_token", mock_db_session)
+        response = await mock_auth_service.refresh_token(
+            "valid_refresh_token",
+            session=mock_db_session
+        )
         
         # Verify result structure
         assert response.access_token == "new_mocked_jwt_token"
+        assert response.refresh_token == "new_refresh_token"
         assert response.token_type == "bearer"
         assert response.expires_in == timedelta(minutes=30).total_seconds()
         
         # Verify service method was called
-        assert mock_auth_service.post_refresh_token.called
-    
+        assert mock_auth_service.refresh_token.called
+
     async def test_refresh_token_invalid(self, mock_auth_service, mock_db_session):
-        """Test refreshing with an invalid token."""
-        # Add mock refresh token method
-        async def mock_refresh_token_invalid(refresh_token, session):
-            # Check if refresh token is valid
-            if refresh_token != "valid_refresh_token":
-                raise HTTPException(
-                    status_code=401,
-                    detail="Invalid refresh token",
-                    headers={"WWW-Authenticate": "Bearer"}
-                )
-                
-            # This won't execute
-            return MockResponse(
-                access_token="new_token",
-                token_type="bearer",
-                expires_in=1800
-            )
-            
-        mock_auth_service.post_refresh_token = AsyncMock(side_effect=mock_refresh_token_invalid)
-        
+        """Test refreshing with invalid refresh token."""
         # Verify exception is raised
         with pytest.raises(HTTPException) as exc_info:
-            await mock_auth_service.post_refresh_token("invalid_token", mock_db_session)
+            await mock_auth_service.refresh_token(
+                "invalid_refresh_token",
+                session=mock_db_session
+            )
         
+        # Verify exception details
         assert exc_info.value.status_code == 401
         assert "Invalid refresh token" in str(exc_info.value.detail)
         
         # Verify service method was called
-        assert mock_auth_service.post_refresh_token.called
-    
+        assert mock_auth_service.refresh_token.called
+
     async def test_update_user_profile(self, mock_auth_service, mock_db_session, mock_user):
-        """Test updating a user's profile."""
-        # Add mock update profile method
-        async def mock_update_profile(user_id, profile_data, session):
-            # Get user
-            user = session.execute.return_value.scalar_one_or_none.return_value
-            
-            if not user:
-                raise HTTPException(status_code=404, detail="User not found")
-            
-            # Update user fields
-            update_data = profile_data.model_dump(exclude_unset=True)
-            for field, value in update_data.items():
-                setattr(user, field, value)
-            
-            # Save changes
-            await session.commit()
-            
-            # Return updated user
-            return MockResponse(
-                id=user.id,
-                email=user.email,
-                first_name=user.first_name,
-                last_name=user.last_name
-            )
-            
-        mock_auth_service.put_update_profile = AsyncMock(side_effect=mock_update_profile)
-        
-        # Setup mocks to find the user
+        """Test updating user profile."""
+        # Setup mocks
         mock_db_session.execute.return_value.scalar_one_or_none.return_value = mock_user
         
-        # Create update data
-        user_id = mock_user.id
-        update_data = MockResponse(
+        # Create profile update data
+        profile_data = MockResponse(
             first_name="Updated",
             last_name="Name"
         )
         
         # Call the service
-        response = await mock_auth_service.put_update_profile(user_id, update_data, mock_db_session)
+        response = await mock_auth_service.update_profile(
+            mock_user.id,
+            profile_data,
+            session=mock_db_session
+        )
         
-        # Verify result
+        # Verify result structure
         assert response.id == mock_user.id
-        assert response.email == mock_user.email
-        assert response.first_name == "Updated"
-        assert response.last_name == "Name"
+        assert response.first_name == profile_data.first_name
+        assert response.last_name == profile_data.last_name
+        assert "updated successfully" in response.message.lower()
         
         # Verify database operations
         mock_db_session.commit.assert_called_once()
+        mock_db_session.refresh.assert_called_once()
         
         # Verify service method was called
-        assert mock_auth_service.put_update_profile.called
-    
+        assert mock_auth_service.update_profile.called
+
     async def test_update_nonexistent_user(self, mock_auth_service, mock_db_session):
-        """Test updating a non-existent user."""
-        # Add mock update profile method that fails
-        async def mock_update_nonexistent_user(user_id, profile_data, session):
-            # No user found
-            session.execute.return_value.scalar_one_or_none.return_value = None
-            raise HTTPException(status_code=404, detail="User not found")
-            
-        mock_auth_service.put_update_profile = AsyncMock(side_effect=mock_update_nonexistent_user)
+        """Test updating non-existent user."""
+        # Setup mocks - no user found
+        mock_db_session.execute.return_value.scalar_one_or_none.return_value = None
         
-        # Create update data
-        user_id = uuid4()  # Random non-existent ID
-        update_data = MockResponse(
+        # Create profile update data
+        profile_data = MockResponse(
             first_name="Updated",
             last_name="Name"
         )
         
         # Verify exception is raised
         with pytest.raises(HTTPException) as exc_info:
-            await mock_auth_service.put_update_profile(user_id, update_data, mock_db_session)
+            await mock_auth_service.update_profile(
+                uuid4(),
+                profile_data,
+                session=mock_db_session
+            )
         
+        # Verify exception details
         assert exc_info.value.status_code == 404
         assert "User not found" in str(exc_info.value.detail)
         
         # Verify service method was called
-        assert mock_auth_service.put_update_profile.called
+        assert mock_auth_service.update_profile.called

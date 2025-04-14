@@ -1,9 +1,11 @@
 import pytest
 from fastapi import HTTPException
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 import sys
-from uuid import UUID, uuid4
+from uuid import uuid4, UUID
 from datetime import datetime, timedelta, timezone
+from typing import Optional, List, Any
+from pydantic import BaseModel, Field
 
 # Create mock modules before any imports
 sys.modules['database'] = MagicMock()
@@ -28,68 +30,82 @@ class InvitationStatus:
     REJECTED = 2
     EXPIRED = 3
 
-# Mock models
-class MockInvitationModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.organization_id = kwargs.get('organization_id', uuid4())
-        self.role_id = kwargs.get('role_id', uuid4())
-        self.invitee_email = kwargs.get('invitee_email', 'test@example.com')
-        self.invited_by = kwargs.get('invited_by', uuid4())
-        self.status = kwargs.get('status', InvitationStatus.PENDING)
-        self.expiry_time = kwargs.get('expiry_time', datetime.now(timezone.utc) + timedelta(hours=48))
-        self.invite_token = kwargs.get('invite_token', 'mock_token')
-        self.created_at = kwargs.get('created_at', datetime.now(timezone.utc))
-        self.updated_at = kwargs.get('updated_at', datetime.now(timezone.utc))
-        self.role_name = kwargs.get('role_name')
-        self.role_description = kwargs.get('role_description')
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockRoleModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.name = kwargs.get('name', 'Test Role')
-        self.description = kwargs.get('description', 'Test Role Description')
-        self.organization_id = kwargs.get('organization_id', uuid4())
-        self.is_admin = kwargs.get('is_admin', False)
-        self.created_at = kwargs.get('created_at', datetime.now(timezone.utc))
-        self.updated_at = kwargs.get('updated_at', datetime.now(timezone.utc))
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockOrganizationModel:
-    def __init__(self, **kwargs):
-        self.id = kwargs.get('id', uuid4())
-        self.name = kwargs.get('name', 'Test Organization')
-        self.created_at = kwargs.get('created_at', datetime.now(timezone.utc))
-        self.updated_at = kwargs.get('updated_at', datetime.now(timezone.utc))
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockOrganizationMemberModel:
-    def __init__(self, **kwargs):
-        self.user_id = kwargs.get('user_id', uuid4())
-        self.organization_id = kwargs.get('organization_id', uuid4())
-        self.role_id = kwargs.get('role_id', uuid4())
-        self.created_at = kwargs.get('created_at', datetime.now(timezone.utc))
-        self.updated_at = kwargs.get('updated_at', datetime.now(timezone.utc))
-        self.__dict__ = {**self.__dict__, **kwargs}
-
-class MockResponse:
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+# Mock models using Pydantic to match schema.py
+class MockInvitationModel(BaseModel):
+    """Mock invitation model for database."""
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: UUID = Field(default_factory=uuid4)
+    role_id: UUID = Field(default_factory=uuid4)
+    invitee_email: str = "test@example.com"
+    invited_by: UUID = Field(default_factory=uuid4)
+    status: int = InvitationStatus.PENDING
+    expiry_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc) + timedelta(hours=48))
+    invite_token: str = "mock_token"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    role_name: Optional[str] = None
+    role_description: Optional[str] = None
     
-    @classmethod
-    def model_validate(cls, data):
-        if isinstance(data, dict):
-            return cls(**data)
-        return cls(**{k: v for k, v in data.__dict__.items() if not k.startswith('_')})
+    model_config = {
+        "arbitrary_types_allowed": True,
+        "extra": "allow"
+    }
+
+class MockRoleModel(BaseModel):
+    """Mock role model for database."""
+    id: UUID = Field(default_factory=uuid4)
+    name: str = "Test Role"
+    description: str = "Test Role Description"
+    organization_id: UUID = Field(default_factory=uuid4)
+    is_admin: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
-    def model_dump(self, **kwargs):
-        exclude_unset = kwargs.get('exclude_unset', False)
-        if exclude_unset:
-            # Return only items that have been explicitly set
-            return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
-        return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+    model_config = {
+        "arbitrary_types_allowed": True,
+        "extra": "allow"
+    }
+
+class MockOrganizationModel(BaseModel):
+    """Mock organization model for database."""
+    id: UUID = Field(default_factory=uuid4)
+    name: str = "Test Organization"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    model_config = {
+        "arbitrary_types_allowed": True,
+        "extra": "allow"
+    }
+
+# Mock API response model matching API.json patterns
+class MockResponse(BaseModel):
+    """Mock API response model."""
+    id: Optional[UUID] = None
+    organization_id: Optional[UUID] = None
+    role_id: Optional[UUID] = None
+    role_name: Optional[str] = None
+    role_description: Optional[str] = None
+    invitee_email: Optional[str] = None
+    invited_by: Optional[UUID] = None
+    status: Optional[int] = None
+    status_name: Optional[str] = None
+    expiry_time: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    message: Optional[str] = None
+    invitation_id: Optional[UUID] = None
+    email: Optional[str] = None
+    token: Optional[str] = None
+    items: Optional[List[Any]] = None
+    total: Optional[int] = None
+    page: Optional[int] = None
+    size: Optional[int] = None
+    
+    model_config = {
+        "arbitrary_types_allowed": True,
+        "extra": "allow"
+    }
 
 @pytest.fixture
 def mock_user():
@@ -672,8 +688,8 @@ class TestInvitationService:
         # Configure mock to return an existing invitation
         existing_invitation = MockInvitationModel(
             organization_id=org_id,
-            role_id=invitation_data.role_id,
-            invitee_email=invitation_data.invitee_email,
+            role_id=invitation_data.role_id or uuid4(),  # Use default if None
+            invitee_email=str(invitation_data.invitee_email or "existing@example.com"),  # Ensure str type
             invited_by=uuid4(),
             status=InvitationStatus.PENDING
         )
@@ -705,8 +721,8 @@ class TestInvitationService:
         
         # Configure mock to return a non-pending invitation
         non_pending_invitation = MockInvitationModel(
-            invitee_email=action_request.email,
-            invite_token=action_request.token,
+            invitee_email=str(action_request.email or "invited@example.com"),  # Ensure str type
+            invite_token=str(action_request.token or "test_token"),  # Ensure str type
             status=InvitationStatus.ACCEPTED  # Already ACCEPTED
         )
         
