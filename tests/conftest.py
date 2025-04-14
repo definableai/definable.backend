@@ -13,7 +13,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 # Load test environment variables
-env_test_path = '.env.test'
+env_test_path = ".env.test"
 load_dotenv(dotenv_path=env_test_path)
 
 # Create module-wide mocks for database
@@ -49,32 +49,36 @@ config_settings_mock = MagicMock()
 config_settings_mock.settings = mock_settings
 
 # Assign to sys.modules
-sys.modules['database'] = database_mock
-sys.modules['src.database'] = src_database_mock
-sys.modules['config.settings'] = config_settings_mock
+sys.modules["database"] = database_mock
+sys.modules["src.database"] = src_database_mock
+sys.modules["config.settings"] = config_settings_mock
+
 
 @pytest.fixture
 def app():
-    """Create a FastAPI application instance."""
-    return FastAPI()
+  """Create a FastAPI application instance."""
+  return FastAPI()
+
 
 @pytest.fixture
 def client(app):
-    """Create a TestClient instance."""
-    return TestClient(app)
+  """Create a TestClient instance."""
+  return TestClient(app)
+
 
 @pytest.fixture
 def mock_db_session():
-    """Create a mock database session."""
-    session = AsyncMock(spec=AsyncSession)
-    session.execute = AsyncMock()
-    session.add = MagicMock()
-    session.commit = AsyncMock()
-    session.refresh = AsyncMock()
-    session.rollback = AsyncMock()
-    return session
+  """Create a mock database session."""
+  session = AsyncMock(spec=AsyncSession)
+  session.execute = AsyncMock()
+  session.add = MagicMock()
+  session.commit = AsyncMock()
+  session.refresh = AsyncMock()
+  session.rollback = AsyncMock()
+  return session
+
 
 @pytest.fixture
 def auth_headers():
-    """Return headers with a valid test token."""
-    return {"Authorization": "Bearer test_token_for_testing_only"}
+  """Return headers with a valid test token."""
+  return {"Authorization": "Bearer test_token_for_testing_only"}
