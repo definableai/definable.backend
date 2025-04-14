@@ -1,8 +1,8 @@
 import json
-from datetime import datetime, timezone
-from io import BytesIO
 import os
 import tempfile
+from datetime import datetime, timezone
+from io import BytesIO
 from typing import AsyncGenerator, Dict, List, Optional, Union
 from uuid import UUID
 
@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies.security import RBAC, JWTBearer
-from libs.chats.v1 import LLMFactory
+from libs.chats.v1 import LLMFactory, generate_prompts_stream
 from libs.s3.v1 import S3Client
 from libs.speech.v1 import transcribe
 from models import ChatModel, ChatUploadModel, LLMModel, MessageModel
@@ -31,6 +31,7 @@ from .schema import (
   MessageCreate,
   MessageResponse,
   MessageRole,
+  TextInput,
 )
 
 
@@ -45,6 +46,8 @@ class ChatService:
     "post=bulk_delete_sessions",
     "post=upload_file",
     "post=transcribe",
+    "post=generate_prompts",
+    "get=prompt",
   ]
 
   def __init__(self, acquire: Acquire):
@@ -460,7 +463,8 @@ class ChatService:
         # Use tempfile module instead of hardcoded path
         # Create temporary file with proper extension
         temp_dir = tempfile.gettempdir()
-        file_name = file.filename.replace(" ", "_")  # Replace spaces with underscores
+        file_name = file.filename or "temp_audio_file"
+        file_name = file_name.replace(" ", "_")  # Replace spaces with underscores
         temp_path = os.path.join(temp_dir, file_name)
 
         try:
@@ -489,3 +493,25 @@ class ChatService:
       error_type = type(e).__name__
 
       raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error transcribing audio: {error_type}: {error_message}")
+
+  async def get_prompt(
+    self,
+    data: TextInput,
+    user: dict = Depends(JWTBearer()),
+  ) -> StreamingResponse:
+    """Generate prompts for a given text with streaming response."""
+    try:
+
+      async def content_generator():
+        try:
+          async for token in generate_prompts_stream(data.text, data.prompt_type, data.num_prompts, data.model):
+            yield f"data: {json.dumps({'content': token})}\n\n"
+
+          # Send a DONE message when complete
+          yield f"data: {json.dumps({'content': 'DONE'})}\n\n"
+        except Exception as e:
+          yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+      return StreamingResponse(content_generator(), media_type="text/event-stream")
+    except Exception as e:
+      raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error generating prompts: {str(e)}")
