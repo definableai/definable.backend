@@ -32,6 +32,8 @@ class Settings(BaseSettings):
   anthropic_api_key: str
   public_s3_bucket: str
   python_sandbox_testing_url: str
+  deepseek_api_key: str
+  prompt_buffer_size: int
 
   class Config:
     """Config class."""
