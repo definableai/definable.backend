@@ -35,24 +35,24 @@ class TestRolesAPI:
                 "permissions": []
             }
             mock_post.return_value = mock_response
-            
+
             # Make the API request
             response = client.post(
                 f"/api/roles/create?org_id={org_id}",
                 headers=auth_headers,
                 json=test_role_data
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert result["id"] == role_id
             assert result["name"] == test_role_data["name"]
             assert result["organization_id"] == org_id
-            
+
             # Verify the client post was called with the correct arguments
             mock_post.assert_called_once()
-    
+
     async def test_list_permissions(self, client, mock_db_session, auth_headers):
         """Test listing permissions endpoint."""
         # Mock the response from the client get call directly
@@ -76,13 +76,13 @@ class TestRolesAPI:
                 }
             ]
             mock_get.return_value = mock_response
-            
+
             # Make the API request
             response = client.get(
                 "/api/roles/list_permissions",
                 headers=auth_headers
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
@@ -90,6 +90,6 @@ class TestRolesAPI:
             assert len(result) == 2
             assert result[0]["id"] == permission_id
             assert result[0]["resource"] == "organization"
-            
+
             # Verify the client get was called with the correct arguments
-            mock_get.assert_called_once() 
+            mock_get.assert_called_once()

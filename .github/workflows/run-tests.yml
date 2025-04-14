@@ -2,9 +2,9 @@ name: Run Tests
 
 on:
   pull_request:
-    branches: [main, dev]
+    branches: [dev]
   push:
-    branches: [main, dev]
+    branches: [dev]
 
 jobs:
   test:
@@ -48,7 +48,6 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
           pip install pytest pytest-asyncio pytest-cov
 
       - name: Create .env.test file
@@ -93,4 +92,4 @@ jobs:
         uses: codecov/codecov-action@v3
         with:
           file: ./coverage.xml
-          fail_ci_if_error: false 
+          fail_ci_if_error: false

@@ -78,24 +78,24 @@ class TestToolsAPI:
                 "organization_id": org_id
             }
             mock_post.return_value = mock_response
-            
+
             # Make the API request
             response = client.post(
                 f"/api/tools/create_category?org_id={org_id}",
                 headers=auth_headers,
                 json=test_category_data
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert result["id"] == category_id
             assert result["name"] == test_category_data["name"]
             assert result["organization_id"] == org_id
-            
+
             # Verify the client post was called with the correct arguments
             mock_post.assert_called_once()
-    
+
     async def test_list_categories(self, client, mock_db_session, auth_headers):
         """Test listing tool categories endpoint."""
         # Mock the response from the client get call directly
@@ -113,23 +113,23 @@ class TestToolsAPI:
                 }
             ]
             mock_get.return_value = mock_response
-            
+
             # Make the API request
             response = client.get(
                 "/api/tools/list_categories",
                 headers=auth_headers
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert isinstance(result, list)
             assert len(result) == 1
             assert result[0]["id"] == category_id
-            
+
             # Verify the client get was called with the correct arguments
             mock_get.assert_called_once()
-    
+
     async def test_create_tool(self, client, mock_db_session, auth_headers, test_tool_data, org_id):
         """Test creating a tool endpoint."""
         # Mock the response from the client post call directly
@@ -148,24 +148,24 @@ class TestToolsAPI:
                 "organization_id": org_id
             }
             mock_post.return_value = mock_response
-            
+
             # Make the API request
             response = client.post(
                 f"/api/tools?org_id={org_id}",
                 headers=auth_headers,
                 json=test_tool_data
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert result["id"] == tool_id
             assert result["name"] == test_tool_data["name"]
             assert result["organization_id"] == org_id
-            
+
             # Verify the client post was called with the correct arguments
             mock_post.assert_called_once()
-    
+
     async def test_list_all_tools(self, client, mock_db_session, auth_headers):
         """Test listing all tools endpoint."""
         # Mock the response from the client get call directly
@@ -186,23 +186,23 @@ class TestToolsAPI:
                 }
             ]
             mock_get.return_value = mock_response
-            
+
             # Make the API request
             response = client.get(
                 "/api/tools/list_all",
                 headers=auth_headers
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert isinstance(result, list)
             assert len(result) == 1
             assert result[0]["id"] == tool_id
-            
+
             # Verify the client get was called with the correct arguments
             mock_get.assert_called_once()
-    
+
     async def test_test_tool(self, client, mock_db_session, auth_headers):
         """Test the test_tool endpoint."""
         # Mock the response from the client post call directly
@@ -222,7 +222,7 @@ class TestToolsAPI:
                 "api_key": "test_llm_api_key",
                 "instructions": "Test instructions"
             }
-            
+
             # Configure the mock to return a result
             mock_response = MagicMock()
             mock_response.status_code = 200
@@ -231,19 +231,19 @@ class TestToolsAPI:
                 "time_taken": 1.23
             }
             mock_post.return_value = mock_response
-            
+
             # Make the API request
             response = client.post(
                 f"/api/tools/test_tool?tool_id={tool_id}",
                 headers=auth_headers,
                 json=test_request_data
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert "result" in result
             assert "time_taken" in result
-            
+
             # Verify the client post was called with the correct arguments
-            mock_post.assert_called_once() 
+            mock_post.assert_called_once()

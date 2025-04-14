@@ -77,4 +77,4 @@ def mock_db_session():
 @pytest.fixture
 def auth_headers():
     """Return headers with a valid test token."""
-    return {"Authorization": "Bearer test_token_for_testing_only"} 
+    return {"Authorization": "Bearer test_token_for_testing_only"}

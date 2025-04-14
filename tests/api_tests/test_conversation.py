@@ -47,24 +47,24 @@ class TestConversationAPI:
                 "updated_at": "2023-07-01T12:00:00Z"
             }
             mock_post.return_value = mock_response
-            
+
             # Make the API request
             response = client.post(
                 f"/api/conversation/create?org_id={org_id}",
                 headers=auth_headers,
                 json=test_conversation_data
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert result["id"] == conversation_id
             assert result["title"] == test_conversation_data["title"]
             assert result["organization_id"] == org_id
-            
+
             # Verify the client post was called with the correct arguments
             mock_post.assert_called_once()
-    
+
     async def test_list_conversations(self, client, mock_db_session, auth_headers, org_id):
         """Test listing conversations endpoint."""
         # Mock the response from the client get call directly
@@ -84,23 +84,23 @@ class TestConversationAPI:
                 }
             ]
             mock_get.return_value = mock_response
-            
+
             # Make the API request
             response = client.get(
                 f"/api/conversation/list?org_id={org_id}",
                 headers=auth_headers
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert isinstance(result, list)
             assert len(result) == 1
             assert result[0]["id"] == conversation_id
-            
+
             # Verify the client get was called with the correct arguments
             mock_get.assert_called_once()
-    
+
     async def test_create_chat_session(self, client, mock_db_session, auth_headers, test_chat_session_data, org_id):
         """Test creating a chat session endpoint."""
         # Mock the response from the client post call directly
@@ -117,24 +117,24 @@ class TestConversationAPI:
                 "created_at": "2023-07-01T12:00:00Z"
             }
             mock_post.return_value = mock_response
-            
+
             # Make the API request
             response = client.post(
                 f"/api/conversation/create_session?org_id={org_id}",
                 headers=auth_headers,
                 json=test_chat_session_data
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert result["id"] == session_id
             assert result["conversation_id"] == test_chat_session_data["conversation_id"]
             assert result["model_id"] == test_chat_session_data["model_id"]
-            
+
             # Verify the client post was called with the correct arguments
             mock_post.assert_called_once()
-    
+
     async def test_stream_chat(self, client, mock_db_session, auth_headers, test_message_data, org_id):
         """Test streaming chat endpoint."""
         # Mock the response from the client post call directly
@@ -150,25 +150,25 @@ class TestConversationAPI:
                 b'data: [DONE]\n\n'
             ]
             mock_post.return_value = mock_response
-            
+
             # Make the API request
             response = client.post(
                 f"/api/conversation/stream_chat?org_id={org_id}",
                 headers=auth_headers,
                 json=test_message_data
             )
-            
+
             # Verify the response status code
             assert response.status_code == 200
-            
+
             # Verify the client post was called with the correct arguments
             mock_post.assert_called_once()
-    
+
     async def test_get_messages(self, client, mock_db_session, auth_headers, org_id):
         """Test getting messages endpoint."""
         # Create test data
         conversation_id = str(uuid4())
-        
+
         # Mock the response from the client get call directly
         with patch.object(client, 'get', autospec=True) as mock_get:
             # Configure the mock to return a list of messages
@@ -192,13 +192,13 @@ class TestConversationAPI:
                 }
             ]
             mock_get.return_value = mock_response
-            
+
             # Make the API request
             response = client.get(
                 f"/api/conversation/messages?org_id={org_id}&conversation_id={conversation_id}&limit=10&offset=0",
                 headers=auth_headers
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
@@ -207,6 +207,6 @@ class TestConversationAPI:
             assert result[0]["id"] == message_id
             assert result[0]["role"] == "user"
             assert result[1]["role"] == "assistant"
-            
+
             # Verify the client get was called with the correct arguments
-            mock_get.assert_called_once() 
+            mock_get.assert_called_once()

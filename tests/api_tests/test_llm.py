@@ -34,24 +34,24 @@ class TestLLMAPI:
                 "config": test_llm_model_data["config"]
             }
             mock_post.return_value = mock_response
-            
+
             # Make the API request
             response = client.post(
                 "/api/llm/add",
                 headers=auth_headers,
                 json=test_llm_model_data
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert result["id"] == model_id
             assert result["name"] == test_llm_model_data["name"]
             assert result["provider"] == test_llm_model_data["provider"]
-            
+
             # Verify the client post was called with the correct arguments
             mock_post.assert_called_once()
-    
+
     async def test_list_models(self, client, mock_db_session, auth_headers):
         """Test listing models endpoint."""
         # Mock the response from the client get call directly
@@ -71,19 +71,19 @@ class TestLLMAPI:
                 }
             ]
             mock_get.return_value = mock_response
-            
+
             # Make the API request
             response = client.get(
                 "/api/llm/list?org_id=test-org-id",
                 headers=auth_headers
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert isinstance(result, list)
             assert len(result) == 1
             assert result[0]["id"] == model_id
-            
+
             # Verify the client get was called with the correct arguments
-            mock_get.assert_called_once() 
+            mock_get.assert_called_once()

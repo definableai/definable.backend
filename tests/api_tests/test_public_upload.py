@@ -30,26 +30,26 @@ class TestPublicUploadAPI:
                 "url": file_url
             }
             mock_post.return_value = mock_response
-            
+
             # Create files dict for multipart/form-data request
             files = {"file": test_file_data["file"]}
-            
+
             # Make the API request
             response = client.post(
                 "/api/public_upload",
                 headers=auth_headers,
                 files=files
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert "url" in result
             assert result["url"] == file_url
-            
+
             # Verify the client post was called with the correct arguments
             mock_post.assert_called_once()
-    
+
     async def test_upload_file_without_auth(self, client, mock_db_session, test_file_data):
         """Test uploading a file endpoint without authentication."""
         # Mock the response from the client post call directly
@@ -63,21 +63,21 @@ class TestPublicUploadAPI:
                 "url": file_url
             }
             mock_post.return_value = mock_response
-            
+
             # Create files dict for multipart/form-data request
             files = {"file": test_file_data["file"]}
-            
+
             # Make the API request without auth headers
             response = client.post(
                 "/api/public_upload",
                 files=files
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert "url" in result
             assert result["url"] == file_url
-            
+
             # Verify the client post was called with the correct arguments
-            mock_post.assert_called_once() 
+            mock_post.assert_called_once()

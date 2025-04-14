@@ -37,13 +37,13 @@ class TestInvitationsAPI:
                 "size": 10
             }
             mock_get.return_value = mock_response
-            
+
             # Make the API request
             response = client.get(
                 f"/api/invitations?org_id={org_id}&page=1&size=10",
                 headers=auth_headers
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
@@ -52,10 +52,10 @@ class TestInvitationsAPI:
             assert result["items"][0]["id"] == invitation_id
             assert result["items"][0]["organization_id"] == org_id
             assert result["total"] == 1
-            
+
             # Verify the client get was called with the correct arguments
             mock_get.assert_called_once()
-    
+
     async def test_get_invitation(self, client, mock_db_session, auth_headers, org_id):
         """Test getting a specific invitation."""
         # Mock the response from the client get call directly
@@ -79,13 +79,13 @@ class TestInvitationsAPI:
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
             mock_get.return_value = mock_response
-            
+
             # Make the API request
             response = client.get(
                 f"/api/invitations/{invitation_id}?org_id={org_id}",
                 headers=auth_headers
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
@@ -93,10 +93,10 @@ class TestInvitationsAPI:
             assert result["organization_id"] == org_id
             assert result["role_id"] == role_id
             assert result["invitee_email"] == "invite@example.com"
-            
+
             # Verify the client get was called with the correct arguments
             mock_get.assert_called_once()
-    
+
     async def test_send_invitation(self, client, mock_db_session, auth_headers, org_id):
         """Test sending a new invitation."""
         # Mock the response from the client post call directly
@@ -109,7 +109,7 @@ class TestInvitationsAPI:
                 "invitee_email": "newinvite@example.com",
                 "expiry_time": None  # Let the service set the default
             }
-            
+
             # Configure the mock to return a response
             mock_response = MagicMock()
             mock_response.status_code = 201
@@ -128,14 +128,14 @@ class TestInvitationsAPI:
                 "message": "Invitation sent successfully"
             }
             mock_post.return_value = mock_response
-            
+
             # Make the API request
             response = client.post(
                 f"/api/invitations/send?org_id={org_id}",
                 headers=auth_headers,
                 json=invitation_data
             )
-            
+
             # Verify response
             assert response.status_code == 201
             result = response.json()
@@ -145,10 +145,10 @@ class TestInvitationsAPI:
             assert result["invitee_email"] == "newinvite@example.com"
             assert "message" in result
             assert "successfully" in result["message"].lower()
-            
+
             # Verify the client post was called with the correct arguments
             mock_post.assert_called_once()
-    
+
     async def test_resend_invitation(self, client, mock_db_session, auth_headers, org_id):
         """Test resending an invitation."""
         # Mock the response from the client post call directly
@@ -159,7 +159,7 @@ class TestInvitationsAPI:
             resend_data = {
                 "invitation_id": invitation_id
             }
-            
+
             # Configure the mock to return a response
             mock_response = MagicMock()
             mock_response.status_code = 200
@@ -178,24 +178,24 @@ class TestInvitationsAPI:
                 "message": "Invitation resent successfully"
             }
             mock_post.return_value = mock_response
-            
+
             # Make the API request
             response = client.post(
                 f"/api/invitations/resend?org_id={org_id}",
                 headers=auth_headers,
                 json=resend_data
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert result["organization_id"] == org_id
             assert "message" in result
             assert "successfully" in result["message"].lower()
-            
+
             # Verify the client post was called with the correct arguments
             mock_post.assert_called_once()
-    
+
     async def test_accept_invitation(self, client, mock_db_session):
         """Test accepting an invitation."""
         # Mock the response from the client post call directly
@@ -207,7 +207,7 @@ class TestInvitationsAPI:
                 "token": "test_token",
                 "email": "invite@example.com"
             }
-            
+
             # Configure the mock to return a response
             mock_response = MagicMock()
             mock_response.status_code = 200
@@ -223,13 +223,13 @@ class TestInvitationsAPI:
                 }
             }
             mock_post.return_value = mock_response
-            
+
             # Make the API request - no auth headers needed for this endpoint
             response = client.post(
                 "/api/invitations/accept",
                 json=action_data
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
@@ -238,10 +238,10 @@ class TestInvitationsAPI:
             assert result["organization"]["id"] == org_id
             assert "role" in result
             assert result["role"]["id"] == role_id
-            
+
             # Verify the client post was called with the correct arguments
             mock_post.assert_called_once()
-    
+
     async def test_reject_invitation(self, client, mock_db_session):
         """Test rejecting an invitation."""
         # Mock the response from the client post call directly
@@ -251,7 +251,7 @@ class TestInvitationsAPI:
                 "token": "test_token",
                 "email": "invite@example.com"
             }
-            
+
             # Configure the mock to return a response
             mock_response = MagicMock()
             mock_response.status_code = 200
@@ -259,17 +259,17 @@ class TestInvitationsAPI:
                 "message": "Invitation rejected successfully"
             }
             mock_post.return_value = mock_response
-            
+
             # Make the API request - no auth headers needed for this endpoint
             response = client.post(
                 "/api/invitations/reject",
                 json=action_data
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert result["message"] == "Invitation rejected successfully"
-            
+
             # Verify the client post was called with the correct arguments
-            mock_post.assert_called_once() 
+            mock_post.assert_called_once()

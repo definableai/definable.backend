@@ -34,12 +34,12 @@ def app():
     """Create a simplified test FastAPI application with mock routes."""
     # Create a new FastAPI app for testing
     test_app = FastAPI(title="Test API")
-    
+
     # Setup mock database dependency
     async def get_test_db():
         # This will be overridden by the mock_db_session fixture
         yield AsyncMock()
-    
+
     # Add mock routes that match the real API patterns
     # Auth routes
     @test_app.post("/api/auth/signup")
@@ -47,45 +47,45 @@ def app():
         """Mock signup endpoint that will be patched in tests."""
         # This is just a placeholder - the actual implementation will be mocked
         return {"id": "mock-id", "email": user_data.email}
-    
+
     @test_app.post("/api/auth/login")
     async def login(login_data: LoginData, db: AsyncSession = Depends(get_test_db)):
         """Mock login endpoint that will be patched in tests."""
         # This is just a placeholder - the actual implementation will be mocked
         return {"access_token": "mock-token", "token_type": "bearer"}
-    
+
     # Organization routes
     @test_app.get("/api/org/list")
     async def list_orgs(db: AsyncSession = Depends(get_test_db)):
         """Mock list organizations endpoint that will be patched in tests."""
         # This is just a placeholder - the actual implementation will be mocked
         return [{"id": "mock-org-id", "name": "Mock Org"}]
-    
+
     @test_app.post("/api/org/create_org")
     async def create_org(name: str, db: AsyncSession = Depends(get_test_db)):
         """Mock create organization endpoint that will be patched in tests."""
         # This is just a placeholder - the actual implementation will be mocked
         return {"id": "mock-org-id", "name": name}
-    
+
     # Knowledge base routes
     @test_app.post("/api/kb/create")
     async def create_kb(kb_data: KBData = Body(...), org_id: Optional[str] = None, db: AsyncSession = Depends(get_test_db)):
         """Mock create KB endpoint that will be patched in tests."""
         # This is just a placeholder - the actual implementation will be mocked
         return {"id": "mock-kb-id", "name": kb_data.name, "collection_id": "mock-collection-id"}
-    
+
     @test_app.get("/api/kb/list")
     async def list_kb(org_id: Optional[str] = None, db: AsyncSession = Depends(get_test_db)):
         """Mock list KB endpoint that will be patched in tests."""
         # This is just a placeholder - the actual implementation will be mocked
         return [{"id": "mock-kb-id", "name": "Mock KB"}]
-    
+
     @test_app.post("/api/kb/search_chunks")
     async def search_chunks(search_data: SearchData = Body(...), org_id: Optional[str] = None, kb_id: Optional[str] = None, db: AsyncSession = Depends(get_test_db)):
         """Mock search chunks endpoint that will be patched in tests."""
         # This is just a placeholder - the actual implementation will be mocked
         return [{"chunk_id": "mock-chunk-id", "content": "Mock content", "score": 0.95}]
-    
+
     return test_app
 
 @pytest.fixture
@@ -98,7 +98,7 @@ def mock_db_session():
     """Create a mock database session."""
     session = AsyncMock(spec=AsyncSession)
     session.execute = AsyncMock()
-    
+
     # Setup unique(), scalars(), first(), etc. to allow chaining
     execute_result = AsyncMock()
     execute_result.unique.return_value = execute_result
@@ -108,15 +108,15 @@ def mock_db_session():
     execute_result.first.return_value = None
     execute_result.all.return_value = []
     execute_result.mappings.return_value = execute_result
-    
+
     session.execute.return_value = execute_result
-    
+
     session.add = MagicMock()
     session.commit = AsyncMock()
     session.refresh = AsyncMock()
     session.flush = AsyncMock()
     session.delete = AsyncMock()
-    
+
     return session
 
 # Mock the service modules to avoid import errors in test files
@@ -143,7 +143,7 @@ def mock_modules():
         'services.kb': MagicMock(),
         'services.kb.service': MagicMock(),
     }
-    
+
     # Add all mocks to sys.modules
     with patch.dict(sys.modules, mocks):
         yield mocks
@@ -172,4 +172,4 @@ def current_user():
         "first_name": "Test",
         "last_name": "User",
         "is_active": True
-    } 
+    }

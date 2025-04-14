@@ -45,24 +45,24 @@ class TestKnowledgeBaseAPI:
                 "organization_id": str(uuid4())
             }
             mock_post.return_value = mock_response
-            
+
             # Make the API request
             response = client.post(
                 "/api/kb/create?org_id=test-org-id",
                 headers=auth_headers,
                 json=test_kb_data
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert result["id"] == kb_id
             assert result["name"] == test_kb_data["name"]
             assert result["collection_id"] == collection_id
-            
+
             # Verify the client post was called with the correct arguments
             mock_post.assert_called_once()
-    
+
     async def test_list_kb(self, client, mock_db_session, auth_headers):
         """Test listing knowledge bases endpoint."""
         # Mock the response from the client get call directly
@@ -83,23 +83,23 @@ class TestKnowledgeBaseAPI:
                 }
             ]
             mock_get.return_value = mock_response
-            
+
             # Make the API request
             response = client.get(
                 "/api/kb/list?org_id=test-org-id",
                 headers=auth_headers
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert isinstance(result, list)
             assert len(result) == 1
             assert result[0]["id"] == kb_id
-            
+
             # Verify the client get was called with the correct arguments
             mock_get.assert_called_once()
-    
+
     async def test_search_chunks(self, client, mock_db_session, auth_headers, test_search_data):
         """Test searching chunks endpoint."""
         # Mock the response from the client post call directly
@@ -119,14 +119,14 @@ class TestKnowledgeBaseAPI:
                 }
             ]
             mock_post.return_value = mock_response
-            
+
             # Make the API request
             response = client.post(
                 "/api/kb/search_chunks?org_id=test-org-id&kb_id=test-kb-id",
                 headers=auth_headers,
                 json=test_search_data
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
@@ -134,6 +134,6 @@ class TestKnowledgeBaseAPI:
             assert len(result) == 1
             assert result[0]["chunk_id"] == chunk_id
             assert result[0]["score"] == 0.95
-            
+
             # Verify the client post was called with the correct arguments
-            mock_post.assert_called_once() 
+            mock_post.assert_called_once()

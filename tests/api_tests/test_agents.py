@@ -26,13 +26,13 @@ class TestAgentsAPI:
                 }
             ]
             mock_get.return_value = mock_response
-            
+
             # Make the API request
             response = client.get(
                 f"/api/agents/list?org_id={org_id}",
                 headers=auth_headers
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
@@ -40,10 +40,10 @@ class TestAgentsAPI:
             assert len(result) == 1
             assert result[0]["id"] == agent_id
             assert result[0]["organization_id"] == org_id
-            
+
             # Verify the client get was called with the correct arguments
             mock_get.assert_called_once()
-    
+
     async def test_list_all_agents(self, client, mock_db_session, auth_headers):
         """Test listing all agents endpoint."""
         # Mock the response from the client get call directly
@@ -76,13 +76,13 @@ class TestAgentsAPI:
                 }
             ]
             mock_get.return_value = mock_response
-            
+
             # Make the API request
             response = client.get(
                 "/api/agents/list_all",
                 headers=auth_headers
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
@@ -92,10 +92,10 @@ class TestAgentsAPI:
             assert result[1]["id"] == agent_id2
             assert result[0]["organization_id"] == org_id1
             assert result[1]["organization_id"] == org_id2
-            
+
             # Verify the client get was called with the correct arguments
             mock_get.assert_called_once()
-    
+
     async def test_execute_agent(self, client, mock_db_session, auth_headers, org_id):
         """Test executing an agent endpoint."""
         # Mock the response from the client post call directly
@@ -108,7 +108,7 @@ class TestAgentsAPI:
                     "location": "New York"
                 }
             }
-            
+
             # Configure the mock to return a streaming response
             mock_response = MagicMock()
             mock_response.status_code = 200
@@ -120,16 +120,16 @@ class TestAgentsAPI:
                 b'data: [DONE]\n\n'
             ]
             mock_post.return_value = mock_response
-            
+
             # Make the API request
             response = client.post(
                 f"/api/agents/execute?org_id={org_id}&agent_id={agent_id}",
                 headers=auth_headers,
                 json=execution_data
             )
-            
+
             # Verify the response status code
             assert response.status_code == 200
-            
+
             # Verify the client post was called with the correct arguments
-            mock_post.assert_called_once() 
+            mock_post.assert_called_once()

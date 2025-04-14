@@ -41,22 +41,22 @@ class TestAuthAPI:
                 "last_name": test_user_data["last_name"]
             }
             mock_post.return_value = mock_response
-            
+
             # Make the API request
             response = client.post(
                 "/api/auth/signup",
                 json=test_user_data
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert result["id"] == user_id
             assert result["email"] == test_user_data["email"]
-            
+
             # Verify the client post was called with the correct arguments
             mock_post.assert_called_once()
-    
+
     async def test_login(self, client, mock_db_session, test_login_data):
         """Test user login endpoint."""
         # Mock the response from the client post call directly
@@ -74,18 +74,18 @@ class TestAuthAPI:
                 }
             }
             mock_post.return_value = mock_response
-            
+
             # Make the API request
             response = client.post(
                 "/api/auth/login",
                 json=test_login_data
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert "access_token" in result
             assert result["token_type"] == "bearer"
-            
+
             # Verify the client post was called with the correct arguments
-            mock_post.assert_called_once() 
+            mock_post.assert_called_once()

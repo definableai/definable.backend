@@ -41,23 +41,23 @@ class TestOrganizationAPI:
                 }
             ]
             mock_get.return_value = mock_response
-            
+
             # Make the API request
             response = client.get(
                 "/api/org/list",
                 headers=auth_headers
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert isinstance(result, list)
             assert len(result) == 2
             assert result[0]["name"] == "Default Org"
-            
+
             # Verify the client get was called with the correct arguments
             mock_get.assert_called_once()
-    
+
     async def test_create_org(self, client, mock_db_session, auth_headers, test_org_data):
         """Test creating an organization endpoint."""
         # Mock the response from the client post call directly
@@ -73,18 +73,18 @@ class TestOrganizationAPI:
                 "settings": {}
             }
             mock_post.return_value = mock_response
-            
+
             # Make the API request
             response = client.post(
                 f"/api/org/create_org?name={test_org_data['name']}",
                 headers=auth_headers
             )
-            
+
             # Verify response
             assert response.status_code == 200
             result = response.json()
             assert result["id"] == org_id
             assert result["name"] == test_org_data["name"]
-            
+
             # Verify the client post was called with the correct arguments
-            mock_post.assert_called_once() 
+            mock_post.assert_called_once()
