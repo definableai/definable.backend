@@ -1,13 +1,9 @@
 import pytest
 from fastapi import HTTPException
 from unittest.mock import AsyncMock, MagicMock
-from unittest.mock import AsyncMock, MagicMock
 import sys
 from uuid import UUID, uuid4
-from uuid import UUID, uuid4
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
@@ -28,6 +24,7 @@ sys.modules['src.utils.auth_util'] = MagicMock()
 sys.modules['src.services.auth.service'] = MagicMock()
 sys.modules['src.services.auth.model'] = MagicMock()
 sys.modules['src.services.auth.schema'] = MagicMock()
+sys.modules['dependencies.security'] = MagicMock()
 
 # Mock database models
 class MockUserModel(BaseModel):
@@ -40,9 +37,11 @@ class MockUserModel(BaseModel):
     is_active: bool = True
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
+    organization_id: Optional[UUID] = None
 
-    class Config:
-        extra = "allow"
+    model_config = {
+        "extra": "allow"
+    }
 
 # Mock API response model (used to simulate API responses)
 class MockResponse(BaseModel):
@@ -51,18 +50,19 @@ class MockResponse(BaseModel):
     email: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    message: Optional[str] = None
     password: Optional[str] = None
     organization_id: Optional[UUID] = None
-    roles: List[Dict[str, Any]] = Field(default_factory=list)
-    access_token: Optional[str] = None
-    refresh_token: Optional[str] = None
-    token_type: Optional[str] = None
-    expires_in: Optional[float] = None
     is_active: Optional[bool] = None
+    roles: Optional[List[Any]] = None
+    access_token: Optional[str] = None
+    token_type: Optional[str] = None
+    refresh_token: Optional[str] = None
+    expires_in: Optional[int] = None
+    message: Optional[str] = None
 
-    class Config:
-        extra = "allow"
+    model_config = {
+        "extra": "allow"
+    }
 
 @pytest.fixture
 def mock_db_session():
@@ -115,7 +115,7 @@ def mock_auth_service():
         # Check if user with email already exists
         existing_user = session.execute.return_value.scalar_one_or_none.return_value
         if existing_user and getattr(existing_user, 'email', None) == user_data.email:
-        existing_user = session.execute.return_value.scalar_one_or_none.return_value
+          existing_user = session.execute.return_value.scalar_one_or_none.return_value
         if existing_user and getattr(existing_user, 'email', None) == user_data.email:
             raise HTTPException(status_code=400, detail="Email already registered")
 
@@ -161,7 +161,7 @@ def mock_auth_service():
         return MockResponse(
             access_token=access_token,
             token_type="bearer",
-            expires_in=expires_delta.total_seconds()
+            expires_in=int(expires_delta.total_seconds())
         )
 
     async def mock_get_me(current_user):
@@ -194,7 +194,7 @@ def mock_auth_service():
             access_token=access_token,
             refresh_token=refresh_token,
             token_type="bearer",
-            expires_in=expires_delta.total_seconds()
+            expires_in=int(expires_delta.total_seconds())
         )
 
     async def mock_update_profile(user_id, profile_data, session):
@@ -253,8 +253,7 @@ class TestAuthService:
             email="newuser@example.com",
             first_name="New",
             last_name="User",
-            password="Rock0004@"
-            password="Rock0004@"
+            password="Rock0004@",
         )
 
         # Call the service
@@ -338,8 +337,7 @@ class TestAuthService:
         # Create login data with wrong password
         login_data = MockResponse(
             email=mock_user.email,
-            password="wrong_password"
-            password="wrong_password"
+            password="wrong_password",
         )
 
         # Verify exception is raised
@@ -386,6 +384,8 @@ class TestAuthService:
         # Verify service method was called
         assert mock_auth_service.post_login.called
 
+        assert mock_auth_service.post_login.called
+
     async def test_get_current_user(self, mock_auth_service):
         """Test getting current user info."""
         # Create mock user data (as it would be extracted from JWT)
@@ -402,8 +402,7 @@ class TestAuthService:
             "roles": [
                 {
                     "organization_id": uuid4(),
-                    "role": "ADMIN"
-                    "role": "ADMIN"
+                    "role": "ADMIN",
                 }
             ]
         }
@@ -429,7 +428,6 @@ class TestAuthService:
         async def mock_signup_invalid_email(user_data, session):
             # Basic email validation
             if "@" not in user_data.email or "." not in user_data.email:
-            if "@" not in user_data.email or "." not in user_data.email:
                 raise HTTPException(status_code=400, detail="Invalid email format")
 
             # Original implementation
@@ -441,8 +439,6 @@ class TestAuthService:
         # Create signup data with invalid email
         signup_data = MockResponse(
             email="invalid-email",
-            first_name="Invalid",
-            last_name="Email",
             first_name="Invalid",
             last_name="Email",
             password="Rock0004@"
@@ -483,9 +479,7 @@ class TestAuthService:
         signup_data = MockResponse(
             email="newuser@example.com",
             first_name="New",
-            first_name="New",
             last_name="User",
-            password="weak"
             password="weak"
         )
 
@@ -541,8 +535,7 @@ class TestAuthService:
                 raise HTTPException(
                     status_code=400,
                     detail="Email and password are required",
-                    detail="Email and password are required",
-                    headers={"WWW-Authenticate": "Bearer"}
+                    headers={"WWW -Authenticate": "Bearer"}
                 )
 
             # Original implementation
@@ -584,8 +577,6 @@ class TestAuthService:
             "email": "noroles@example.com",
             "first_name": "NoRoles",
             "last_name": "User",
-            "organization_id": uuid4(),
-            "roles": []
             "organization_id": uuid4(),
             "roles": []
         }

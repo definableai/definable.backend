@@ -1,18 +1,10 @@
 import pytest
 from fastapi import HTTPException
 from unittest.mock import AsyncMock, MagicMock
-from unittest.mock import AsyncMock, MagicMock
 import sys
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from typing import List, Optional, Any
-
-# Import pydantic
-from pydantic import BaseModel, Field
-from datetime import datetime, timezone
-from typing import List, Optional, Any
-
-# Import pydantic
 from pydantic import BaseModel, Field
 
 # Create mock modules before any imports
@@ -40,8 +32,7 @@ class MockRoleModel(BaseModel):
     is_default: bool = False
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
 class MockPermissionModel(BaseModel):
     id: UUID = Field(default_factory=uuid4)
@@ -51,8 +42,7 @@ class MockPermissionModel(BaseModel):
     description: str = "Test Permission Description"
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
 class MockRolePermissionModel(BaseModel):
     id: UUID = Field(default_factory=uuid4)
@@ -60,8 +50,7 @@ class MockRolePermissionModel(BaseModel):
     permission_id: Optional[UUID] = None
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
 # Base Pydantic model for requests/responses
 class MockResponse(BaseModel):
@@ -79,8 +68,7 @@ class MockResponse(BaseModel):
     permission_ids: Optional[List[UUID]] = None
     permissions: Optional[List[Any]] = None
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
 @pytest.fixture
 def mock_user():
@@ -169,7 +157,6 @@ def mock_roles_service():
 
             # Validate hierarchy level
             if role_data.hierarchy_level and role_data.hierarchy_level >= 90:
-            if role_data.hierarchy_level and role_data.hierarchy_level >= 90:
                 raise HTTPException(status_code=400, detail="Hierarchy level must be less than 90")
 
             # Create role
@@ -181,13 +168,11 @@ def mock_roles_service():
                 organization_id=org_id,
                 is_system_role=False,
                 **role_dict
-                **role_dict
             )
             session.add(db_role)
             await session.flush()
 
             # Add permissions
-            for permission_id in role_data.permission_ids or []:
             for permission_id in role_data.permission_ids or []:
                 role_permission = MockRolePermissionModel(
                     role_id=db_role.id,
@@ -332,8 +317,6 @@ class TestRoleService:
         permission_data = MockResponse(
             id=uuid4(),
             created_at=datetime.now(timezone.utc).isoformat(),
-            id=uuid4(),
-            created_at=datetime.now(timezone.utc).isoformat(),
             name="Test Permission",
             resource="roles",
             action="read",
@@ -343,7 +326,6 @@ class TestRoleService:
         # Call the service
         response = await mock_roles_service.post_permission(
             permission_data,
-
             mock_db_session
         )
 
@@ -945,7 +927,6 @@ class TestRoleService:
         # Mock custom implementation that validates name
         async def mock_create_role_empty_name(org_id, role_data, session, user):
             # Validate name
-            if not role_data.name or len(str(role_data.name).strip()) == 0:
             if not role_data.name or len(str(role_data.name).strip()) == 0:
                 raise HTTPException(status_code=400, detail="Role name cannot be empty")
             # This return statement is necessary for typing but never executed in the test

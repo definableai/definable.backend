@@ -1,13 +1,9 @@
 import pytest
 from fastapi import HTTPException
 from unittest.mock import AsyncMock, MagicMock
-from unittest.mock import AsyncMock, MagicMock
 import sys
 from uuid import uuid4, UUID
-from uuid import uuid4, UUID
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Any
-from pydantic import BaseModel, Field
 from typing import Optional, List, Any
 from pydantic import BaseModel, Field
 
@@ -694,8 +690,6 @@ class TestInvitationService:
             organization_id=org_id,
             role_id=invitation_data.role_id or uuid4(),  # Use default if None
             invitee_email=str(invitation_data.invitee_email or "existing@example.com"),  # Ensure str type
-            role_id=invitation_data.role_id or uuid4(),  # Use default if None
-            invitee_email=str(invitation_data.invitee_email or "existing@example.com"),  # Ensure str type
             invited_by=uuid4(),
             status=InvitationStatus.PENDING
         )
@@ -727,8 +721,6 @@ class TestInvitationService:
 
         # Configure mock to return a non-pending invitation
         non_pending_invitation = MockInvitationModel(
-            invitee_email=str(action_request.email or "invited@example.com"),  # Ensure str type
-            invite_token=str(action_request.token or "test_token"),  # Ensure str type
             invitee_email=str(action_request.email or "invited@example.com"),  # Ensure str type
             invite_token=str(action_request.token or "test_token"),  # Ensure str type
             status=InvitationStatus.ACCEPTED  # Already ACCEPTED

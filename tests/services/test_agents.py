@@ -1,12 +1,8 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from unittest.mock import AsyncMock, MagicMock
 import sys
 from uuid import uuid4, UUID
-from uuid import uuid4, UUID
 from datetime import datetime
-from typing import Dict, List, Any, Optional
-from pydantic import BaseModel, Field
 from typing import Dict, List, Any, Optional
 from pydantic import BaseModel, Field
 
@@ -198,7 +194,6 @@ def mock_agents_service():
 
             # Mock the row result structure from raw SQL query
             row = {**agent.model_dump(), "tools": tools}
-            row = {**agent.model_dump(), "tools": tools}
             agents.append(row)
 
         # Set up the mock for execute.return_value.mappings().all()
@@ -247,7 +242,6 @@ def mock_agents_service():
 
             # Mock the row result structure from raw SQL query
             row = {**agent.model_dump(), "tools": tools}
-            row = {**agent.model_dump(), "tools": tools}
             agents.append(row)
 
         # Set up the mock for execute.return_value.mappings().all()
@@ -289,7 +283,6 @@ def mock_agents_service():
         db_agent = MockAgentModel(
             organization_id=org_id,
             user_id=user["id"] if user else uuid4(),
-            **agent_data_dict
             **agent_data_dict
         )
         session.add(db_agent)

@@ -2,12 +2,9 @@ import pytest
 from fastapi import HTTPException, UploadFile, BackgroundTasks
 from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock
-from unittest.mock import AsyncMock, MagicMock
 import sys
 from uuid import UUID, uuid4
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Union
-from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Dict, Any, Optional, Union
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -29,25 +26,6 @@ sys.modules['dependencies.security'] = MagicMock()
 models_mock = MagicMock()
 sys.modules['models'] = models_mock
 
-# Create the models module with proper structure
-models_mock = MagicMock()
-sys.modules['models'] = models_mock
-
-# Set up libs.vectorstore.v1 module
-vectorstore_mock = MagicMock()
-vectorstore_mock.create_vectorstore = AsyncMock(return_value=uuid4())
-sys.modules['libs.vectorstore.v1'] = vectorstore_mock
-
-# Set up libs.s3.v1 module
-s3_mock = MagicMock()
-s3_client_mock = MagicMock()
-s3_client_mock.upload_file = AsyncMock(return_value="uploads/test.pdf")
-s3_client_mock.get_presigned_url = AsyncMock(return_value="https://example.com/uploads/test.pdf")
-s3_client_mock.delete_file = AsyncMock()
-s3_mock.s3_client = s3_client_mock
-sys.modules['libs.s3.v1'] = s3_mock
-
-# Constants for status
 # Set up libs.vectorstore.v1 module
 vectorstore_mock = MagicMock()
 vectorstore_mock.create_vectorstore = AsyncMock(return_value=uuid4())
@@ -71,8 +49,6 @@ class DocumentStatus:
 
 # Add the enum to the mocked module
 models_mock.DocumentStatus = DocumentStatus
-# Add the enum to the mocked module
-models_mock.DocumentStatus = DocumentStatus
 
 # Mock models
 class MockKnowledgeBaseModel(BaseModel):
@@ -93,9 +69,10 @@ class MockKnowledgeBaseModel(BaseModel):
     updated_at: Optional[str] = None
     knowledge_bases: Optional[List[Any]] = Field(default_factory=lambda: [])
 
-    class Config:
-        arbitrary_types_allowed = True
-        extra = "allow"
+    model_config = {
+        "arbitrary_types_allowed": True,
+        "extra": "allow"
+    }
 
 class MockKBDocumentModel(BaseModel):
     id: UUID = Field(default_factory=uuid4)
@@ -119,18 +96,16 @@ class MockKBDocumentModel(BaseModel):
     extraction_completed_at: Optional[datetime] = None
     indexing_completed_at: Optional[datetime] = None
 
-    class Config:
-        arbitrary_types_allowed = True
-        extra = "allow"
+    model_config = {
+        "arbitrary_types_allowed": True,
+        "extra": "allow"
+    }
 
 class MockSourceTypeModel:
     FILE = 1
     URL = 2
 
 # Add models to mocked modules
-models_mock.KnowledgeBaseModel = MockKnowledgeBaseModel
-models_mock.KBDocumentModel = MockKBDocumentModel
-models_mock.SourceTypeModel = MockSourceTypeModel
 models_mock.KnowledgeBaseModel = MockKnowledgeBaseModel
 models_mock.KBDocumentModel = MockKBDocumentModel
 models_mock.SourceTypeModel = MockSourceTypeModel
@@ -144,9 +119,10 @@ class MockDocument(BaseModel):
     page_content: str = ""
     metadata: Dict[str, Any] = Field(default_factory=lambda: {})
 
-    class Config:
-        arbitrary_types_allowed = True
-        extra = "allow"
+    model_config = {
+        "arbitrary_types_allowed": True,
+        "extra": "allow"
+    }
 
 langchain_documents_mock.Document = MockDocument
 
@@ -314,7 +290,6 @@ def mock_kb_service():
             collection_id=collection_id,
             name=kb_data.name,
             embedding_model=kb_data.settings["embedding_model"],
-            embedding_model=kb_data.settings["embedding_model"],
             settings=kb_data.model_dump()
         )
         session.add(kb)
@@ -413,9 +388,6 @@ def mock_kb_service():
         await s3_client_mock.upload_file(
         file=BytesIO(file_content),
         key=s3_key
-        await s3_client_mock.upload_file(
-        file=BytesIO(file_content),
-        key=s3_key
         )
 
         # Create document
@@ -445,7 +417,6 @@ def mock_kb_service():
         )
 
         # Generate download URL for response
-        download_url = await s3_client_mock.get_presigned_url(
         download_url = await s3_client_mock.get_presigned_url(
             s3_key,
             expires_in=3600,
@@ -623,13 +594,6 @@ class TestKBService:
         org_id = uuid4()
         kb_data = MockResponse(
             name="New Knowledge Base",
-            settings={
-                "embedding_model": "openai",
-                "max_chunk_size": 1000,
-                "chunk_overlap": 100,
-                "separator": "\n\n",
-                "version": 1
-            }
             settings={
                 "embedding_model": "openai",
                 "max_chunk_size": 1000,
@@ -819,7 +783,6 @@ class TestKBService:
             file=mock_upload_file,
             source_id=None,
             source_metadata={
-            source_metadata={
                 "file_type": "pdf",
                 "original_filename": "test.pdf",
                 "size": 1024,
@@ -869,13 +832,6 @@ class TestKBService:
             url="https://example.com",
             operation="scrape",
             source_id=None,
-            settings={
-                "excludeTags": [""],
-                "includeTags": [""],
-                "onlyMainContent": True,
-                "formats": ["text"]
-            },
-            source_metadata={
             settings={
                 "excludeTags": [""],
                 "includeTags": [""],
@@ -1084,7 +1040,6 @@ class TestKBService:
             file=mock_upload_file,
             source_id=None,
             source_metadata={
-            source_metadata={
                 "file_type": "pdf",
                 "original_filename": "test.pdf",
                 "size": 1024,
@@ -1127,13 +1082,6 @@ class TestKBService:
             url="https://example.com",
             operation="scrape",
             source_id=None,
-            settings={
-                "excludeTags": [""],
-                "includeTags": [""],
-                "onlyMainContent": True,
-                "formats": ["text"]
-            },
-            source_metadata={
             settings={
                 "excludeTags": [""],
                 "includeTags": [""],
@@ -1298,21 +1246,6 @@ class TestKBService:
                 }
             },
             source_metadata={
-            settings={
-                "maxDepth": 2,
-                "limit": 50,
-                "includePaths": ["/docs", "/blog"],
-                "excludePaths": ["/private"],
-                "ignoreSitemap": False,
-                "allowBackwardLinks": True,
-                "scrapeOptions": {
-                    "excludeTags": ["nav", "footer"],
-                    "includeTags": [],
-                    "onlyMainContent": True,
-                    "formats": ["text", "html"]
-                }
-            },
-            source_metadata={
                 "url": "https://example.com",
                 "operation": "crawl",
                 "settings": {
@@ -1412,7 +1345,6 @@ class TestKBService:
         kb_id = uuid4()
         doc_chunk_data = MockResponse(
             chunk_id=123,
-            chunk_id=123,
             content="Updated chunk content"
         )
 
@@ -1426,9 +1358,7 @@ class TestKBService:
             return MockResponse(
                 id=uuid4(),
                 chunk_id=doc_chunk_data.chunk_id,
-                chunk_id=doc_chunk_data.chunk_id,
                 content=doc_chunk_data.content,
-                metadata={"chunk_index": doc_chunk_data.chunk_id, "doc_id": str(uuid4())}
                 metadata={"chunk_index": doc_chunk_data.chunk_id, "doc_id": str(uuid4())}
             )
 
@@ -1437,9 +1367,6 @@ class TestKBService:
 
         # Call service
         response = await mock_kb_service.put_update_document_chunk(
-            org_id=org_id,
-            kb_id=kb_id,
-            doc_chunk_data=doc_chunk_data,
             org_id=org_id,
             kb_id=kb_id,
             doc_chunk_data=doc_chunk_data,
@@ -1462,7 +1389,6 @@ class TestKBService:
         org_id = uuid4()
         kb_id = uuid4()
         doc_chunk_data = MockResponse(
-            chunk_id=999,
             chunk_id=999,
             content="Updated chunk content"
         )

@@ -1,17 +1,10 @@
 import pytest
 from fastapi import HTTPException
 from unittest.mock import AsyncMock, MagicMock
-from unittest.mock import AsyncMock, MagicMock
 import sys
 from uuid import UUID, uuid4
 from datetime import datetime
 from typing import Optional, Any, Dict
-
-# Import pydantic
-from pydantic import BaseModel, Field
-from typing import Optional, Any, Dict
-
-# Import pydantic
 from pydantic import BaseModel, Field
 
 # Create mock modules before any imports
@@ -37,8 +30,9 @@ class MockToolCategoryModel(BaseModel):
     is_default: bool = False
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {
+        "arbitrary_types_allowed": True
+    }
 
 class MockToolModel(BaseModel):
     id: UUID = Field(default_factory=uuid4)
@@ -50,8 +44,9 @@ class MockToolModel(BaseModel):
     created_by: Optional[UUID] = None
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {
+        "arbitrary_types_allowed": True
+    }
 
 class MockResponse(BaseModel):
     """Base class for mock responses"""
@@ -65,8 +60,9 @@ class MockResponse(BaseModel):
     created_at: Optional[str] = None
     is_default: Optional[bool] = None
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {
+        "arbitrary_types_allowed": True
+    }
 
 @pytest.fixture
 def mock_user():
@@ -230,8 +226,6 @@ def mock_tools_service():
 
         db_tool = MockToolModel(
             org_id=org_id,
-            created_by=user["id"],
-            **tool_dict
             created_by=user["id"],
             **tool_dict
         )

@@ -1,12 +1,9 @@
 import pytest
 from fastapi import HTTPException
 from unittest.mock import AsyncMock, MagicMock
-from unittest.mock import AsyncMock, MagicMock
 import sys
 from uuid import UUID, uuid4
 from datetime import datetime
-from typing import Dict, Any, Optional, Union
-from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional, Union
 from pydantic import BaseModel, Field
 
@@ -36,8 +33,7 @@ class LLMModel(BaseModel):
     is_active: bool = True
     config: Optional[Dict[str, Any]] = None
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
 # Mock models
 class MockLLMModel(BaseModel):
@@ -50,9 +46,7 @@ class MockLLMModel(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
 
-    class Config:
-        arbitrary_types_allowed = True
-        extra = "allow"
+    model_config = {"arbitrary_types_allowed": True, "extra": "allow"}
 
 class MockResponse(BaseModel):
     id: Optional[UUID] = None
@@ -65,9 +59,7 @@ class MockResponse(BaseModel):
     updated_at: Optional[Union[datetime, str]] = None
     message: Optional[str] = None
 
-    class Config:
-        arbitrary_types_allowed = True
-        extra = "allow"
+    model_config = {"arbitrary_types_allowed": True, "extra": "allow"}
 
 @pytest.fixture
 def mock_user():
@@ -129,8 +121,6 @@ def mock_llm_service():
 
     async def mock_add(model_data, session):
         # Check if model exists with same name, provider, and version
-        existing_model = session.execute.return_value.scalar_one_or_none.return_value
-        if existing_model:
         existing_model = session.execute.return_value.scalar_one_or_none.return_value
         if existing_model:
             raise HTTPException(status_code=400, detail="Model already exists")
@@ -308,11 +298,7 @@ class TestLLMService:
             name="Claude-3-Haiku",
             provider="anthropic",
             version="3-haiku",
-            name="Claude-3-Haiku",
-            provider="anthropic",
-            version="3-haiku",
             is_active=True,
-            config={"temperature": 0.7, "max_tokens": 2000}
             config={"temperature": 0.7, "max_tokens": 2000}
         )
 
@@ -352,7 +338,6 @@ class TestLLMService:
             version=mock_llm.version,
             is_active=True,
             config={"temperature": 0.8}
-            config={"temperature": 0.8}
         )
 
         # Verify exception is raised
@@ -376,8 +361,6 @@ class TestLLMService:
 
         # Create update data
         update_data = MockResponse(
-            name="GPT-4-Updated",
-            config={"temperature": 0.5, "max_tokens": 5000}
             name="GPT-4-Updated",
             config={"temperature": 0.5, "max_tokens": 5000}
         )
@@ -412,7 +395,6 @@ class TestLLMService:
 
         # Create update data
         update_data = MockResponse(
-            name="Updated Name",
             name="Updated Name",
             is_active=False
         )
@@ -527,10 +509,8 @@ class TestLLMService:
         model_data = MockResponse(
             name="Unknown Model",
             provider="unsupported",
-            provider="unsupported",
             version="1.0",
             is_active=True,
-            config={"temperature": 0.7}
             config={"temperature": 0.7}
         )
 
@@ -555,7 +535,6 @@ class TestLLMService:
 
         # Create update data with only config
         update_data = MockResponse(
-            config={"temperature": 0.9, "max_tokens": 8000, "top_p": 0.95}
             config={"temperature": 0.9, "max_tokens": 8000, "top_p": 0.95}
         )
 
@@ -684,7 +663,6 @@ class TestLLMService:
         async def mock_add_empty_name(model_data, session):
             # Validate name
             if not model_data.name or not model_data.name.strip():
-            if not model_data.name or not model_data.name.strip():
                 raise HTTPException(status_code=400, detail="Model name cannot be empty")
 
             # Validate provider
@@ -706,9 +684,7 @@ class TestLLMService:
             name="",
             provider="openai",
             version="1.0",
-            version="1.0",
             is_active=True,
-            config={"temperature": 0.7}
             config={"temperature": 0.7}
         )
 

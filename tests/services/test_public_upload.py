@@ -1,19 +1,11 @@
 import pytest
 from fastapi import UploadFile, HTTPException
-from fastapi import UploadFile, HTTPException
 from io import BytesIO
-from unittest.mock import AsyncMock, MagicMock
 from unittest.mock import AsyncMock, MagicMock
 import sys
 from uuid import UUID, uuid4
 from datetime import datetime
 from typing import Optional
-
-# Import pydantic
-from pydantic import BaseModel, Field
-from typing import Optional
-
-# Import pydantic
 from pydantic import BaseModel, Field
 
 # Create mock modules before any imports
@@ -47,14 +39,6 @@ libs_s3_v1.S3Client = MockS3Client
 sys.modules['libs'] = MagicMock()
 sys.modules['libs.s3'] = MagicMock()
 sys.modules['libs.s3.v1'] = libs_s3_v1
-# Create the proper module structure for libs.s3.v1
-libs_s3_v1 = MagicMock()
-# Add S3Client attribute to the mock
-libs_s3_v1.S3Client = MockS3Client
-# Assign the configured mock to sys.modules
-sys.modules['libs'] = MagicMock()
-sys.modules['libs.s3'] = MagicMock()
-sys.modules['libs.s3.v1'] = libs_s3_v1
 
 # Mock models using Pydantic
 class MockPublicUploadModel(BaseModel):
@@ -64,8 +48,7 @@ class MockPublicUploadModel(BaseModel):
     url: str = "https://example.com/uploads/test.jpg"
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
 class MockResponse(BaseModel):
     """Base class for mock responses"""
@@ -76,8 +59,7 @@ class MockResponse(BaseModel):
     created_at: Optional[str] = None
     error: Optional[str] = None
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
 @pytest.fixture
 def mock_user():
@@ -267,7 +249,6 @@ class TestPublicUploadService:
                 await session.commit()
                 return MockResponse(url="https://example.com/uploads/test.jpg")
             except Exception as e:
-                return MockResponse(error=str(e))
                 return MockResponse(error=str(e))
             finally:
                 # Restore the original function for cleanup

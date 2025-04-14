@@ -1,19 +1,12 @@
 import pytest
 from fastapi import HTTPException
 from unittest.mock import AsyncMock, MagicMock
-from unittest.mock import AsyncMock, MagicMock
 import sys
 import json
 from uuid import UUID, uuid4
 from datetime import datetime
 import re
 from typing import Dict, Optional, Any
-
-# Import pydantic
-from pydantic import BaseModel, Field
-from typing import Dict, Optional, Any
-
-# Import pydantic
 from pydantic import BaseModel, Field
 
 # Create mock modules before any imports
@@ -40,8 +33,7 @@ class MockOrganizationModel(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
 class MockOrganizationMemberModel(BaseModel):
     organization_id: UUID = Field(default_factory=uuid4)
@@ -50,8 +42,7 @@ class MockOrganizationMemberModel(BaseModel):
     status: str = "active"
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
 class MockRoleModel(BaseModel):
     id: UUID = Field(default_factory=uuid4)
@@ -60,8 +51,7 @@ class MockRoleModel(BaseModel):
     is_admin: bool = False
     permissions: Dict[str, Any] = Field(default_factory=dict)
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
 class MockResponse(BaseModel):
     id: Optional[UUID] = None
@@ -72,8 +62,7 @@ class MockResponse(BaseModel):
     updated_at: Optional[str] = None
     message: Optional[str] = None
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
 # Create a mock JSONResponse that's simpler and more predictable
 class MockJSONResponse:

@@ -15,18 +15,26 @@ class UserData(BaseModel):
     last_name: str
     password: str
 
+    model_config = {"extra": "forbid"}
+
 class LoginData(BaseModel):
     email: str
     password: str
+
+    model_config = {"extra": "forbid"}
 
 class KBData(BaseModel):
     name: str
     settings: Dict[str, Any]
 
+    model_config = {"extra": "forbid"}
+
 class SearchData(BaseModel):
     query: str
     limit: Optional[int] = 3
     score_threshold: Optional[float] = 0.0
+
+    model_config = {"extra": "forbid"}
 
 # Instead of importing the main application, create a simplified test app
 @pytest.fixture
