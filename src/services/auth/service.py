@@ -1,9 +1,7 @@
 from datetime import timedelta
-from pathlib import Path
 from uuid import uuid4
 
 from fastapi import Depends, HTTPException, status
-from fastapi.responses import HTMLResponse
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,12 +17,14 @@ from models import (
 from services.__base.acquire import Acquire
 
 from .schema import InviteSignup, TokenResponse, UserLogin, UserResponse, UserSignup
+from uuid import UUID
+from dependencies.security import InviteTokenBearer
 
 
 class AuthService:
   """Authentication service."""
 
-  http_exposed = ["post=signup", "post=login", "get=me", "post=signup_invite", "get=signup_invite"]
+  http_exposed = ["post=signup", "post=login", "get=me", "post=signup_invite"]
 
   def __init__(self, acquire: Acquire):
     """Initialize service."""
@@ -78,86 +78,97 @@ class AuthService:
   async def post_signup_invite(
     self,
     user_data: InviteSignup,
+    token_payload: dict = Depends(InviteTokenBearer()),
     session: AsyncSession = Depends(get_db),
   ) -> UserResponse:
-    # Validate invitation
-    query = select(InvitationModel).where(
-      InvitationModel.invite_token == user_data.invite_token,
-    )
-    result = await session.execute(query)
-    invitation = result.unique().scalar_one_or_none()
-
-    if not invitation:
-      self.logger.error(f"Invalid invitation token: {user_data.invite_token}")
-      raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Invalid invitation",
-      )
-
-    self.logger.info(f"Starting invite signup process for email: {invitation.invitee_email}")
-
-    # Check if invitation is pending
-    if invitation.status != int(InvitationStatus.PENDING):
-      self.logger.error(f"Invitation is not pending: {invitation.id}")
-      raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=f"Invitation is not pending (current status: {InvitationStatus(invitation.status).name})",
-      )
-
-    # Check if user exists
-    user_query = select(UserModel).where(UserModel.email == invitation.invitee_email)
-    user_result = await session.execute(user_query)
-    if user_result.unique().scalar_one_or_none():
-      self.logger.error(f"Email already registered: {invitation.invitee_email}")
-      raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Email already registered",
-      )
-
-    # Create user
-    self.logger.debug("Creating new user", email=invitation.invitee_email)
-    user_dict = user_data.model_dump(exclude={"invite_token"})
-    user_dict["email"] = invitation.invitee_email
-    user_dict["password"] = self.utils.get_password_hash(user_dict["password"])
-    db_user = UserModel(**user_dict)
-    session.add(db_user)
-    await session.flush()
-
-    # Add user to organization with invited role
     try:
-      self.logger.debug("Adding user to organization", user_id=str(db_user.id))
-      member = OrganizationMemberModel(
-        organization_id=invitation.organization_id,
-        user_id=db_user.id,
-        role_id=invitation.role_id,
-        status="active",  # Directly active as they're invited
+      # Get invitation
+      query = select(InvitationModel).where(
+        and_(
+          InvitationModel.id == UUID(token_payload["invitation_id"]),
+          InvitationModel.invitee_email == token_payload["email"],
+        )
       )
-      session.add(member)
+      result = await session.execute(query)
+      invitation = result.unique().scalar_one_or_none()
 
-      # Update invitation status
-      invitation.status = int(InvitationStatus.ACCEPTED)
-      session.add(invitation)
+      if not invitation:
+        self.logger.error(f"Invalid invitation token: {token_payload}")
+        raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail="Invalid invitation",
+        )
 
-      await session.commit()
-      await session.refresh(db_user)
+      self.logger.info(f"Starting invite signup process for email: {invitation.invitee_email}")
 
-      self.logger.info(
-        "Invite signup completed successfully",
-        user_id=str(db_user.id),
-        org_id=str(invitation.organization_id),
-      )
-      return UserResponse(
-        id=db_user.id,
-        email=db_user.email,
-        message="User created and added to organization successfully",
-      )
+      # Check if invitation is pending
+      if invitation.status != int(InvitationStatus.PENDING):
+        self.logger.error(f"Invitation is not pending: {invitation.id}")
+        raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail=f"Invitation is not pending (current status: {InvitationStatus(invitation.status).name})",
+        )
+
+      # Check if user exists
+      user_query = select(UserModel).where(UserModel.email == invitation.invitee_email)
+      user_result = await session.execute(user_query)
+      if user_result.unique().scalar_one_or_none():
+        self.logger.error(f"Email already registered: {invitation.invitee_email}")
+        raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail="Email already registered",
+        )
+
+      # Create user
+      self.logger.debug("Creating new user", email=invitation.invitee_email)
+      user_dict = user_data.model_dump()
+      user_dict["email"] = invitation.invitee_email
+      user_dict["password"] = self.utils.get_password_hash(user_dict["password"])
+      db_user = UserModel(**user_dict)
+      session.add(db_user)
+      await session.flush()
+
+      # Add user to organization with invited role
+      try:
+        self.logger.debug("Adding user to organization", user_id=str(db_user.id))
+        member = OrganizationMemberModel(
+          organization_id=invitation.organization_id,
+          user_id=db_user.id,
+          role_id=invitation.role_id,
+          status="active",  # Directly active as they're invited
+        )
+        session.add(member)
+
+        # Update invitation status
+        invitation.status = int(InvitationStatus.ACCEPTED)
+        session.add(invitation)
+
+        await session.commit()
+        await session.refresh(db_user)
+
+        self.logger.info(
+          "Invite signup completed successfully",
+          user_id=str(db_user.id),
+          org_id=str(invitation.organization_id),
+        )
+        return UserResponse(
+          id=db_user.id,
+          email=db_user.email,
+          message="User created and added to organization successfully",
+        )
+
+      except Exception as e:
+        await session.rollback()
+        self.logger.error(f"Failed to add user to organization: {str(e)}")
+        raise HTTPException(
+          status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+          detail=f"Failed to add user to organization: {str(e)}",
+        )
 
     except Exception as e:
-      await session.rollback()
-      self.logger.error(f"Failed to add user to organization: {str(e)}")
       raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail=f"Failed to add user to organization: {str(e)}",
+        detail=str(e),
       )
 
   async def post_login(self, form_data: UserLogin, session: AsyncSession = Depends(get_db)) -> TokenResponse:
@@ -192,46 +203,6 @@ class AuthService:
   ) -> UserResponse:
     """Get current user."""
     return UserResponse.model_validate(current_user)
-
-  async def get_signup_invite(
-    self,
-    token: str,
-    email: str,
-    session: AsyncSession = Depends(get_db),
-  ) -> HTMLResponse:
-    """Display the signup form for an invitation."""
-    self.logger.info(f"Displaying invite signup page for email: {email}")
-
-    # Get invitation
-    query = select(InvitationModel).where(
-      and_(
-        InvitationModel.invite_token == token,
-        InvitationModel.invitee_email == email,
-      )
-    )
-    result = await session.execute(query)
-    invitation = result.unique().scalar_one_or_none()
-
-    # Get organization name
-    if not invitation:
-      raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Invalid invitation",
-      )
-
-    # Get organization name
-    org = await OrganizationModel.read(invitation.organization_id)
-    org_name = org.name if org else "Our Organization"
-
-    # Return signup form for pending invitations
-    template_path = Path(__file__).parent / "templates" / "signup_invite.html"
-    with open(template_path, "r") as f:
-      content = f.read().format(
-        org_name=org_name,
-        email=email,
-        token=token,
-      )
-    return HTMLResponse(content=content, status_code=200)
 
   ### PRIVATE METHODS ###
 

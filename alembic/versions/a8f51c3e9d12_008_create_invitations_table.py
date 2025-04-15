@@ -31,7 +31,6 @@ def upgrade() -> None:
     sa.Column("invited_by", postgresql.UUID(), nullable=False),
     sa.Column("status", sa.SmallInteger(), server_default="0", nullable=False),
     sa.Column("expiry_time", sa.DateTime(timezone=True), nullable=False),
-    sa.Column("invite_token", sa.String(64), nullable=False, unique=True),
     sa.Column("created_at", sa.TIMESTAMP(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
     sa.Column("updated_at", sa.TIMESTAMP(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
     sa.PrimaryKeyConstraint("id"),

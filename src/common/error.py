@@ -64,6 +64,75 @@ class AuthenticationError(BaseCustomError):
     super().__init__(message=message, error_code="AUTHENTICATION_ERROR", status_code=401, details=details)
 
 
+class BillingError(BaseCustomError):
+  """Base class for billing-related errors."""
+
+  def __init__(self, message: str, error_code: str = "BILLING_ERROR", status_code: int = 400, details: Optional[Dict[str, Any]] = None):
+    super().__init__(message=message, error_code=error_code, status_code=status_code, details=details)
+
+
+class InsufficientCreditsError(BillingError):
+  """Exception raised when user doesn't have enough credits."""
+
+  def __init__(self, message: str = "Insufficient credits", details: Optional[Dict[str, Any]] = None):
+    super().__init__(
+      message=message,
+      error_code="INSUFFICIENT_CREDITS",
+      status_code=402,  # Payment Required
+      details=details,
+    )
+
+
+class ChargeNotFoundError(BillingError):
+  """Exception raised when a charge is not found."""
+
+  def __init__(self, message: str = "Charge not found", details: Optional[Dict[str, Any]] = None):
+    super().__init__(
+      message=message,
+      error_code="CHARGE_NOT_FOUND",
+      status_code=404,  # Not Found
+      details=details,
+    )
+
+
+class InvalidTransactionError(BillingError):
+  """Exception raised when a transaction is invalid."""
+
+  def __init__(self, message: str = "Invalid transaction", details: Optional[Dict[str, Any]] = None):
+    super().__init__(
+      message=message,
+      error_code="INVALID_TRANSACTION",
+      status_code=400,  # Bad Request
+      details=details,
+    )
+
+
+class ChargeError(BillingError):
+  """Base exception for charge-related errors."""
+
+  def __init__(
+    self, message: str = "Charge operation failed", error_code: str = "CHARGE_ERROR", status_code: int = 400, details: Optional[Dict[str, Any]] = None
+  ):
+    super().__init__(
+      message=message,
+      error_code=error_code,
+      status_code=status_code,
+      details=details,
+    )
+
+
+class DuplicateChargeError(ChargeError):
+  """Exception for duplicate charge attempts."""
+
+  def __init__(self, message: str = "Duplicate charge detected", details: Optional[Dict[str, Any]] = None):
+    super().__init__(
+      message=message,
+      error_code="DUPLICATE_CHARGE_ERROR",
+      status_code=409,  # Conflict is appropriate for duplicates
+      details=details,
+    )
+
+
 def handle_exception(error: Exception) -> BaseCustomError:
   """Convert various exceptions to BaseCustomError."""
   if isinstance(error, BaseCustomError):
@@ -74,5 +143,15 @@ def handle_exception(error: Exception) -> BaseCustomError:
     return ValidationCustomError(message="Validation failed", original_error=error)
   elif isinstance(error, HTTPException):
     return BaseCustomError(message=error.detail, error_code="HTTP_ERROR", status_code=error.status_code)
+  elif isinstance(error, ChargeError):
+    return error
+  elif isinstance(error, DuplicateChargeError):
+    return error
+  elif isinstance(error, InsufficientCreditsError):
+    return error
+  elif isinstance(error, ChargeNotFoundError):
+    return error
+  elif isinstance(error, InvalidTransactionError):
+    return error
   else:
     return BaseCustomError(message="Internal server error", error_code="INTERNAL_SERVER_ERROR")

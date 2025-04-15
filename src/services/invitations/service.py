@@ -1,15 +1,13 @@
-import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
-from fastapi.responses import HTMLResponse
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from dependencies.security import RBAC
+from dependencies.security import RBAC, InviteTokenBearer
 from models import InvitationModel, OrganizationMemberModel, OrganizationModel, RoleModel
 from services.__base.acquire import Acquire
 
@@ -33,8 +31,7 @@ class InvitationService:
     "post=accept",
     "post=reject",
     "get=list",
-    "get=get",
-    "get=reject",
+    "get=get"
   ]
 
   def __init__(self, acquire: Acquire):
@@ -45,63 +42,117 @@ class InvitationService:
     self.logger = acquire.logger
 
   async def post_send(
-    self,
-    org_id: UUID,
-    invitation_data: InvitationCreate,
-    session: AsyncSession = Depends(get_db),
-    user: dict = Depends(RBAC("invitations", "write")),
+      self,
+      org_id: UUID,
+      invitation_data: InvitationCreate,
+      session: AsyncSession = Depends(get_db),
+      user: dict = Depends(RBAC("invitations", "write")),
   ) -> InvitationResponse:
-    self.logger.info(f"Creating invitation for email: {invitation_data.invitee_email}")
-
-    # Validate inviter's role
-    await self._validate_inviter_role(user["id"], org_id, invitation_data.role_id, session)
-
-    # Check if invitation already exists
-    existing_invitation = await self._get_pending_invitation(org_id, invitation_data.invitee_email, session)
-
-    if existing_invitation:
-      self.logger.error(f"Invitation already exists for email: {invitation_data.invitee_email}")
-      raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Invitation already sent to this email address",
+      """Create and send a new invitation to join an organization."""
+      self.logger.info(
+          "Starting invitation creation process",
+          email=invitation_data.invitee_email,
+          org_id=str(org_id),
+          role_id=str(invitation_data.role_id),
+          inviter_id=str(user["id"])
       )
 
-    # Generate invite token
-    invite_token = secrets.token_urlsafe(32)
+      # Validate inviter's role
+      try:
+          await self._validate_inviter_role(user["id"], org_id, invitation_data.role_id, session)
+      except Exception as e:
+          self.logger.error(
+              "Failed to validate inviter's role",
+              error=str(e),
+              user_id=str(user["id"]),
+              org_id=str(org_id)
+          )
+          raise HTTPException(
+              status_code=status.HTTP_403_FORBIDDEN,
+              detail="You don't have permission to create invitations for this role",
+          )
 
-    # Set expiry time (48 hours from now)
-    expiry_time = invitation_data.expiry_time or datetime.now(timezone.utc) + timedelta(hours=48)
-
-    # Create invitation
-    invitation = InvitationModel(
-      organization_id=org_id,
-      role_id=invitation_data.role_id,
-      invitee_email=invitation_data.invitee_email,
-      invited_by=user["id"],
-      status=InvitationStatus.PENDING,
-      expiry_time=expiry_time,
-      invite_token=invite_token,
-    )
-
-    session.add(invitation)
-    await session.flush()
-
-    # Send invitation email
-    try:
-      await self._send_invitation_email(invitation, org_id, session)
-    except Exception as e:
-      await session.rollback()
-      self.logger.error(f"Failed to send invitation email: {str(e)}")
-      raise HTTPException(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail=f"Failed to send invitation email: {str(e)}",
+      # Check if invitation already exists
+      existing_invitation = await self._get_pending_invitation(
+          org_id, invitation_data.invitee_email, session
       )
+      if existing_invitation:
+          self.logger.warning(
+              "Invitation already exists",
+              email=invitation_data.invitee_email,
+              invitation_id=str(existing_invitation.id)
+          )
+          raise HTTPException(
+              status_code=status.HTTP_400_BAD_REQUEST,
+              detail="Invitation already sent to this email address",
+          )
 
-    await session.commit()
-    await session.refresh(invitation)
+      # Set expiry time
+      expiry_time = invitation_data.expiry_time or datetime.now(timezone.utc) + timedelta(hours=48)
 
-    self.logger.info(f"Invitation created successfully: {invitation.id}")
-    return InvitationResponse.model_validate(invitation)
+      # Process the invitation within a transaction
+      try:
+          # Create invitation record
+          invitation = InvitationModel(
+              organization_id=org_id,
+              role_id=invitation_data.role_id,
+              invitee_email=invitation_data.invitee_email,
+              invited_by=user["id"],
+              status=InvitationStatus.PENDING,
+              expiry_time=expiry_time,
+          )
+
+          session.add(invitation)
+          await session.flush()
+          self.logger.debug("Invitation record created", invitation_id=str(invitation.id))
+
+          # Generate invite token
+          invite_token = self.utils.create_access_token(
+              data={
+                  "invitation_id": str(invitation.id),
+                  "email": invitation.invitee_email,
+                  "org_id": str(org_id),
+                  "role_id": str(invitation_data.role_id)
+              }
+          )
+
+          # Send invitation email
+          await self._send_invitation_email(invitation, org_id, session, invite_token)
+
+          # Commit the transaction
+          await session.commit()
+          await session.refresh(invitation)
+
+          self.logger.info(
+              "Invitation created and sent successfully",
+              invitation_id=str(invitation.id),
+              email=invitation.invitee_email
+          )
+
+          return InvitationResponse.model_validate(invitation)
+
+      except Exception as e:
+          await session.rollback()
+
+          # Handle specific error types
+          error_msg = str(e)
+          if "token" in error_msg.lower():
+              detail = "Failed to generate invitation token"
+          elif "email" in error_msg.lower():
+              detail = f"Failed to send invitation email: {error_msg}"
+          else:
+              detail = "An unexpected error occurred while creating the invitation"
+
+          self.logger.error(
+              "Failed to process invitation",
+              error=error_msg,
+              email=invitation_data.invitee_email
+          )
+
+          raise HTTPException(
+              status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+              detail=detail,
+          )
 
   async def post_resend(
     self,
@@ -135,10 +186,12 @@ class InvitationService:
     await self._validate_inviter_role(user["id"], org_id, original_invitation.role_id, session)
 
     # Generate new invite token
-    invite_token = secrets.token_urlsafe(32)
-
-    # Set expiry time (48 hours from now)
-    expiry_time = datetime.now(timezone.utc) + timedelta(hours=48)
+    invite_token = self.utils.create_invite_token(
+      invitation_id=str(original_invitation.id),
+      email=original_invitation.invitee_email,
+      org_id=str(org_id),
+      role_id=str(original_invitation.role_id)
+    )
 
     # Create new invitation
     new_invitation = InvitationModel(
@@ -147,8 +200,7 @@ class InvitationService:
       invitee_email=original_invitation.invitee_email,
       invited_by=user["id"],  # Update to current user as inviter
       status=InvitationStatus.PENDING,
-      expiry_time=expiry_time,
-      invite_token=invite_token,
+      expiry_time=datetime.now(timezone.utc) + timedelta(hours=48),
     )
 
     try:
@@ -157,7 +209,7 @@ class InvitationService:
 
       # Send invitation email
       try:
-        await self._send_invitation_email(new_invitation, org_id, session)
+        await self._send_invitation_email(new_invitation, org_id, session, invite_token)
       except Exception as e:
         await session.rollback()
         self.logger.error(f"Failed to send invitation email: {str(e)}")
@@ -243,14 +295,22 @@ class InvitationService:
   async def post_accept(
     self,
     action_request: InvitationActionRequest,
+    token_payload: dict = Depends(InviteTokenBearer()),
     session: AsyncSession = Depends(get_db),
   ) -> dict:
-    self.logger.info(f"Accepting invitation for email: {action_request.email} with token: {action_request.token}")
+    self.logger.info(f"Accepting invitation for email: {action_request.email}")
+
+    # Verify email matches
+    if token_payload["email"] != action_request.email:
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Email mismatch",
+      )
 
     # Find invitation
     query = select(InvitationModel).where(
       and_(
-        InvitationModel.invite_token == action_request.token,
+        InvitationModel.id == UUID(token_payload["invitation_id"]),
         InvitationModel.invitee_email == action_request.email,
       )
     )
@@ -267,7 +327,7 @@ class InvitationService:
     if invitation.status != int(InvitationStatus.PENDING):
       raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail=f"Invitation is not in pending state (current status: {InvitationStatus(invitation.status).name})",
+        detail="Invitation is not pending",
       )
 
     # Update invitation status
@@ -280,14 +340,22 @@ class InvitationService:
   async def post_reject(
     self,
     action_request: InvitationActionRequest,
+    token_payload: dict = Depends(InviteTokenBearer()),
     session: AsyncSession = Depends(get_db),
   ) -> dict:
-    self.logger.info(f"Rejecting invitation for email: {action_request.email} with token: {action_request.token}")
+    self.logger.info(f"Rejecting invitation for email: {action_request.email}")
+
+    # Verify email matches
+    if token_payload["email"] != action_request.email:
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Email mismatch",
+      )
 
     # Find invitation
     query = select(InvitationModel).where(
       and_(
-        InvitationModel.invite_token == action_request.token,
+        InvitationModel.id == UUID(token_payload["invitation_id"]),
         InvitationModel.invitee_email == action_request.email,
       )
     )
@@ -300,89 +368,12 @@ class InvitationService:
         detail="Invitation not found",
       )
 
-    # Check if invitation is pending
-    if invitation.status != int(InvitationStatus.PENDING):
-      raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=f"Invitation is not in pending state (current status: {InvitationStatus(invitation.status).name})",
-      )
-
     # Update invitation status
     invitation.status = int(InvitationStatus.REJECTED)
     session.add(invitation)
     await session.commit()
 
     return {"message": "Invitation rejected successfully"}
-
-  async def get_reject(
-    self,
-    token: str,
-    email: str,
-    session: AsyncSession = Depends(get_db),
-  ) -> HTMLResponse:
-    """
-    Handle reject link click from email.
-
-    Args:
-        token: Invitation token
-        email: Invitee email
-        session: Database session
-
-    Returns:
-        HTML response
-    """
-    self.logger.info(f"Rejecting invitation via link for email: {email} with token: {token}")
-
-    # Find invitation
-    query = select(InvitationModel).where(
-      and_(
-        InvitationModel.invite_token == token,
-        InvitationModel.invitee_email == email,
-      )
-    )
-    result = await session.execute(query)
-    invitation = result.unique().scalar_one_or_none()
-
-    if not invitation:  # Add this null check first
-      raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Invalid invitation",
-      )
-
-    # Get organization name for the response
-    org_name = "the organization"
-    if invitation and invitation.organization_id:
-      org = await OrganizationModel.read(invitation.organization_id)
-      if org:
-        org_name = org.name
-
-    # Update invitation status to REJECTED
-    invitation.status = int(InvitationStatus.REJECTED)
-    session.add(invitation)
-    await session.commit()
-
-    # Return success message
-    return HTMLResponse(
-      content=f"""
-            <html>
-                <head>
-                    <title>Invitation Rejected</title>
-                    <style>
-                        body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; text-align: center; }}
-                        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 5px; }}
-                        h1 {{ color: #e74c3c; }}
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <h1>Invitation Rejected</h1>
-                        <p>You have successfully rejected the invitation to join {org_name}.</p>
-                    </div>
-                </body>
-            </html>
-            """,
-      status_code=200,
-    )
 
   # Private methods
 
@@ -471,19 +462,24 @@ class InvitationService:
     result = await session.execute(query)
     return result.unique().scalar_one_or_none()
 
-  async def _send_invitation_email(self, invitation: InvitationModel, org_id: UUID, session: AsyncSession) -> None:
+  async def _send_invitation_email(
+    self,
+    invitation: InvitationModel,
+    org_id: UUID,
+    session: AsyncSession,
+    invite_token: str
+  ) -> None:
     try:
       org = await OrganizationModel.read(org_id)
       if not org:
         raise ValueError("Organization not found")
 
-      accept_url = f"{self.settings.frontend_url}/api/auth/signup/invite?token={invitation.invite_token}&email={invitation.invitee_email}"
-      reject_url = f"{self.settings.frontend_url}/api/invitations/reject?token={invitation.invite_token}&email={invitation.invitee_email}"
+      accept_url = f"{self.settings.frontend_url}/api/auth/signup/invite?token={invite_token}&email={invitation.invitee_email}"
+      reject_url = f"{self.settings.frontend_url}/api/invitations/reject?token={invite_token}&email={invitation.invitee_email}"
 
       await self.utils.send_invitation_email(
         email=invitation.invitee_email,
         organization_name=org.name,
-        invite_token=invitation.invite_token,
         accept_url=accept_url,
         reject_url=reject_url,
       )

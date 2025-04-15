@@ -1,7 +1,6 @@
-import uuid
 from datetime import datetime
 from io import BytesIO
-from typing import Annotated, List
+from typing import Annotated, List, Optional, TypedDict
 from uuid import UUID
 
 from fastapi import BackgroundTasks, Body, Depends, HTTPException
@@ -9,7 +8,7 @@ from fastapi.responses import JSONResponse
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_postgres import PGVector
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -17,7 +16,7 @@ from database import async_engine, get_db
 from dependencies.security import RBAC
 from libs.s3.v1 import s3_client
 from libs.vectorstore.v1 import create_vectorstore
-from models import DocumentStatus, KBDocumentModel, KnowledgeBaseModel, SourceTypeModel
+from models import DocumentStatus, KBDocumentModel, KBFolder, KnowledgeBaseModel, SourceTypeModel
 from services.__base.acquire import Acquire
 
 from .loaders import DocumentProcessor
@@ -39,6 +38,46 @@ from .schema import (
 from .source_handlers import get_source_handler
 
 
+class FolderItem(TypedDict):
+  id: str
+  name: str
+  folder_info: dict
+  created_at: Optional[str]
+  updated_at: str
+  item_count: int
+
+
+class FileItem(TypedDict):
+  id: str
+  title: str
+  description: str
+  file_type: str
+  size: int
+  extraction_status: DocumentStatus
+  indexing_status: DocumentStatus
+  created_at: Optional[str]
+  updated_at: str
+  download_url: Optional[str]
+
+
+class CurrentFolder(TypedDict):
+  id: str
+  name: str
+  parent_id: Optional[str]
+
+
+class BreadcrumbItem(TypedDict):
+  id: str
+  name: str
+
+
+class KnowledgeResponse(TypedDict, total=False):
+  folders: List[FolderItem]
+  files: List[FileItem]
+  current_folder: CurrentFolder
+  breadcrumbs: List[BreadcrumbItem]
+
+
 class KnowledgeBaseService:
   """Knowledge base service."""
 
@@ -49,6 +88,7 @@ class KnowledgeBaseService:
     "get=get",
     "get=list",
     "delete=remove_document",
+    "post=testing",
     "get=get_document_chunks",
     "put=update_document_chunk",
     "delete=delete_document_chunks",
@@ -58,6 +98,7 @@ class KnowledgeBaseService:
     "get=get_document_content",
     "post=index_documents",
     "post=add_document_chunk",
+    "get=list_knowledge",
   ]
 
   def __init__(self, acquire: Acquire):
@@ -199,54 +240,100 @@ class KnowledgeBaseService:
     user: dict = Depends(RBAC("kb", "write")),
   ) -> KBDocumentResponse:
     """Add file document to knowledge base."""
-    try:
-      # TODO: switch this logic to pre-process in handler
-      # get source type model
-      print(document_data)
-      print(document_data.source_id)
-      source_type_model = await session.get(SourceTypeModel, 1)
-      if not source_type_model:
-        raise HTTPException(status_code=404, detail="Source type not found")
-      # extract file metadata
-      file_metadata = document_data.get_metadata()
-      # upload file to s3
-      config_schema = source_type_model.config_schema
-      storage = config_schema.get("storage")
-      if not storage:
-        raise HTTPException(status_code=400, detail="Storage not found in source type config")
-      s3_key = f"{storage['bucket']}/{storage['path']}/{org_id}/{kb_id}/{str(uuid.uuid4())}.{file_metadata['file_type']}"
-      try:
-        file_content = await document_data.file.read()
-        await s3_client.upload_file(BytesIO(file_content), s3_key, content_type=document_data.file.content_type)
-      except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
+    print(document_data)
+    # Get source type model
+    source_type_model = await session.get(SourceTypeModel, 1)
+    if not source_type_model:
+      raise HTTPException(status_code=404, detail="Source type not found")
 
-      # update file metadata with s3 key
-      file_metadata["s3_key"] = s3_key
-      print(file_metadata)
-      # Create document
-      db_doc = KBDocumentModel(
-        title=document_data.title,
-        description=document_data.description,
-        kb_id=kb_id,
-        source_type_id=1,  # File type
-        source_id=document_data.source_id,
-        source_metadata=file_metadata,
-        extraction_status=DocumentStatus.PENDING,
-        indexing_status=DocumentStatus.PENDING,
+    # Extract file metadata
+    file_metadata = document_data.get_metadata()
+
+    # Process folder path if provided
+    folder_id = None
+    folder_path = document_data.folder_path if hasattr(document_data, "folder_path") and document_data.folder_path else None
+
+    if folder_path and isinstance(folder_path, list) and len(folder_path) > 0:
+      current_parent_id = None
+
+      # Process each folder in the path
+      # TODO: can we optimize this to not do a loop on a query?
+      for i, folder_name in enumerate(folder_path):
+        # Check if folder with same name already exists at this level
+        query = select(KBFolder).where(KBFolder.kb_id == kb_id, KBFolder.name == folder_name, KBFolder.parent_id == current_parent_id)
+        result = await session.execute(query)
+        folder = result.scalar_one_or_none()
+
+        if not folder:
+          # Create new folder
+          folder = KBFolder(
+            name=folder_name,
+            parent_id=current_parent_id,
+            kb_id=kb_id,
+            folder_info={},  # Empty default info
+          )
+          session.add(folder)
+          await session.flush()  # To get the ID
+
+        # Move to next level
+        current_parent_id = folder.id
+
+      # Set the final folder ID for the document
+      folder_id = current_parent_id
+
+      # Check if a file with the same name already exists in this folder
+      existing_file_query = select(KBDocumentModel).where(
+        KBDocumentModel.kb_id == kb_id, KBDocumentModel.folder_id == folder_id, KBDocumentModel.title == document_data.title
       )
+      existing_file = await session.execute(existing_file_query)
+      if existing_file.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail=f"A file with name '{document_data.title}' already exists in this folder")
 
-      session.add(db_doc)
-      await session.commit()
-      await session.refresh(db_doc)
+    # Upload file to s3
+    config_schema = source_type_model.config_schema
+    storage = config_schema.get("storage")
+    if not storage:
+      raise HTTPException(status_code=400, detail="Storage not found in source type config")
 
-      # Start background processing
-      background_tasks.add_task(self._process_document_task, source_type=source_type_model, doc=db_doc, session=session, org_id=org_id)
+    if folder_path:
+      joined_folder_path = "/".join(folder_path)
+      s3_key = f"{storage['bucket']}/{storage['path']}/{org_id}-{kb_id}/{joined_folder_path}/{document_data.file.filename}"
+    else:
+      s3_key = f"{storage['bucket']}/{storage['path']}/{org_id}-{kb_id}/{document_data.file.filename}"
 
-      return KBDocumentResponse.model_validate(db_doc)
-
+    try:
+      file_content = await document_data.file.read()
+      # print(file_content, document_data.file.content_type, s3_key)
+      await s3_client.upload_file(BytesIO(file_content), s3_key, content_type=document_data.file.content_type)
     except Exception as e:
-      raise HTTPException(status_code=400, detail=str(e))
+      raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
+
+    # Update file metadata with s3 key and folder info
+    file_metadata["s3_key"] = s3_key
+    if folder_id:
+      file_metadata["folder_id"] = str(folder_id)
+
+    # Create document
+    db_doc = KBDocumentModel(
+      title=document_data.title,
+      description=document_data.description,
+      kb_id=kb_id,
+      folder_id=folder_id,  # Associate with folder
+      source_type_id=1,  # File type
+      source_metadata=file_metadata,
+      extraction_status=DocumentStatus.PENDING,
+      indexing_status=DocumentStatus.PENDING,
+    )
+
+    session.add(db_doc)
+    await session.commit()
+    await session.refresh(db_doc)
+
+    # Start background processing
+    background_tasks.add_task(self._process_document_task, source_type=source_type_model, doc=db_doc, session=session, org_id=org_id)
+    background_tasks.add_task(self._indexing_documents_task, [db_doc.id], org_id, kb_id, session)
+
+    return KBDocumentResponse.model_validate(db_doc)
 
   async def post_add_url_document(
     self,
@@ -335,14 +422,14 @@ class KnowledgeBaseService:
         FROM langchain_pg_embedding
         WHERE collection_id = :collection_id
         AND cmetadata->>'doc_id' = :doc_id
-        ORDER BY cmetadata->>'chunk_index'
+        ORDER BY cmetadata->>'chunk_id'
         LIMIT :limit OFFSET :offset
       """)
       result = await session.execute(query, {"collection_id": kb_model.collection_id, "doc_id": str(doc_id), "limit": limit, "offset": offset})
 
       chunks = []
       for row in result:
-        chunk = DocumentChunk(id=row.id, chunk_id=row.cmetadata.get("chunk_index"), content=row.document, metadata=row.cmetadata)
+        chunk = DocumentChunk(id=row.id, chunk_id=row.cmetadata.get("chunk_id"), content=row.document, metadata=row.cmetadata)
         chunks.append(chunk)
 
       return KBDocumentChunksResponse(document_id=doc_id, title=doc_model.title, chunks=chunks, total_chunks=len(chunks))
@@ -453,7 +540,7 @@ class KnowledgeBaseService:
       await session.commit()
 
       return DocumentChunk(
-        id=updated_chunk.id, chunk_id=updated_chunk.cmetadata.get("chunk_index"), content=updated_chunk.document, metadata=updated_chunk.cmetadata
+        id=updated_chunk.id, chunk_id=updated_chunk.cmetadata.get("chunk_id"), content=updated_chunk.document, metadata=updated_chunk.cmetadata
       )
 
     except Exception as e:
@@ -559,7 +646,7 @@ class KnowledgeBaseService:
       chunks = []
       for doc, score in results:
         chunk = DocumentChunk(
-          chunk_id=int(doc.metadata.get("chunk_index", 0)),  # Convert to int with default 0
+          chunk_id=int(doc.metadata.get("chunk_id", 0)),  # Convert to int with default 0
           content=doc.page_content,
           metadata=doc.metadata,
           score=score,
@@ -625,10 +712,10 @@ class KnowledgeBaseService:
       """)
     result = await session.execute(query, {"collection_id": kb_model.collection_id, "doc_id": str(doc_id)})
     max_index = result.scalar() or -1
-    new_chunk_index = max_index
+    new_chunk_index = max_index + 1
 
     # Create metadata for the new chunk
-    metadata = {**doc_model.source_metadata, "doc_id": str(doc_id), "chunk_index": new_chunk_index}
+    metadata = {**doc_model.source_metadata, "doc_id": str(doc_id), "chunk_id": new_chunk_index}
 
     # Initialize vector store
     vectorstore = PGVector(
@@ -645,6 +732,128 @@ class KnowledgeBaseService:
 
     # Return the created chunk
     return DocumentChunk(id=UUID(chunk_ids[0]), chunk_id=new_chunk_index, content=chunk_data.content, metadata=metadata)
+
+  async def get_list_knowledge(
+    self,
+    org_id: UUID,
+    kb_id: UUID,
+    folder_id: Optional[UUID] = None,  # If None, list root level
+    session: AsyncSession = Depends(get_db),
+    user: dict = Depends(RBAC("kb", "read")),
+  ) -> KnowledgeResponse:
+    """
+    List folders and files at a specific level in the folder hierarchy.
+
+    If folder_id is not provided, returns top-level folders and files.
+    If folder_id is provided, returns folders and files inside that folder.
+    """
+    # First check if KB exists and belongs to the organization
+    kb_model = await self._get_kb(kb_id, org_id, session)
+    if not kb_model:
+      raise HTTPException(status_code=404, detail="Knowledge base not found")
+
+    # Get folders at the specified level
+    folders_query = (
+      select(KBFolder)
+      .where(
+        KBFolder.kb_id == kb_id,
+        KBFolder.parent_id == folder_id,  # When folder_id is None, this finds root folders
+      )
+      .order_by(KBFolder.name)
+    )
+
+    folders_result = await session.execute(folders_query)
+    folders = folders_result.scalars().all()
+
+    # Get files at the specified level
+    files_query = (
+      select(KBDocumentModel)
+      .where(
+        KBDocumentModel.kb_id == kb_id,
+        KBDocumentModel.folder_id == folder_id,  # When folder_id is None, this finds root files
+      )
+      .order_by(KBDocumentModel.title)
+    )
+
+    files_result = await session.execute(files_query)
+    files = files_result.scalars().all()
+
+    # Format the response
+    response: KnowledgeResponse = {"folders": [], "files": []}
+
+    # Add folders to response
+    for folder in folders:
+      # Count items inside the folder
+      child_folders_count = await session.execute(select(func.count()).where(KBFolder.kb_id == kb_id, KBFolder.parent_id == folder.id))
+
+      child_files_count = await session.execute(select(func.count()).where(KBDocumentModel.kb_id == kb_id, KBDocumentModel.folder_id == folder.id))
+
+      total_items = child_folders_count.scalar_one() + child_files_count.scalar_one()
+
+      folder_item: FolderItem = {
+        "id": str(folder.id),
+        "name": folder.name,
+        "folder_info": folder.folder_info,
+        "created_at": folder.created_at.isoformat() if hasattr(folder, "created_at") else None,
+        "updated_at": folder.updated_at.isoformat(),
+        "item_count": total_items,
+      }
+      response["folders"].append(folder_item)
+
+    # Add files to response with download URLs
+    for file in files:
+      file_data: FileItem = {
+        "id": str(file.id),
+        "title": file.title,
+        "description": file.description,
+        "file_type": file.source_metadata.get("file_type", ""),
+        "size": file.source_metadata.get("size", 0),
+        "extraction_status": file.extraction_status,
+        "indexing_status": file.indexing_status,
+        "created_at": file.created_at.isoformat() if hasattr(file, "created_at") else None,
+        "updated_at": file.updated_at.isoformat(),
+        "download_url": None,
+      }
+
+      # Generate pre-signed URL if file has s3_key
+      if file.source_metadata.get("s3_key"):
+        try:
+          download_url = await s3_client.get_presigned_url(
+            file.source_metadata["s3_key"],
+            expires_in=3600,
+            operation="get_object",
+          )
+          file_data["download_url"] = download_url
+        except Exception:
+          file_data["download_url"] = None
+
+      response["files"].append(file_data)
+
+    # Add current folder info if we're not at root level
+    if folder_id:
+      current_folder = await session.get(KBFolder, folder_id)
+      if current_folder:
+        current_folder_info: CurrentFolder = {
+          "id": str(current_folder.id),
+          "name": current_folder.name,
+          "parent_id": str(current_folder.parent_id) if current_folder.parent_id else None,
+        }
+        response["current_folder"] = current_folder_info
+
+        # Get folder breadcrumbs (path)
+        if current_folder.parent_id:
+          breadcrumbs: List[BreadcrumbItem] = []
+          parent_id = current_folder.parent_id
+          while parent_id:
+            parent = await session.get(KBFolder, parent_id)
+            if not parent:
+              break
+            breadcrumb_item: BreadcrumbItem = {"id": str(parent.id), "name": parent.name}
+            breadcrumbs.insert(0, breadcrumb_item)
+            parent_id = parent.parent_id
+          response["breadcrumbs"] = breadcrumbs
+
+    return response
 
   ### PRIVATE METHODS ###
 
