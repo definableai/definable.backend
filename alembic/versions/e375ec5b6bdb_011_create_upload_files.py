@@ -1,4 +1,4 @@
-"""010_create_upload_files
+"""011_create_upload_files
 
 Revision ID: e375ec5b6bdb
 Revises: ba6775663b8a
@@ -15,7 +15,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "e375ec5b6bdb"
-down_revision: Union[str, None] = "ba6775663b8a"
+down_revision: Union[str, None] = "d2e2a9098210"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

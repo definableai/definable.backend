@@ -20,6 +20,8 @@ class Settings(BaseSettings):
   stripe_secret_key: str
   stripe_publishable_key: str
   stripe_webhook_secret: str
+  stripe_success_url: str
+  stripe_cancel_url: str
   jwt_expire_minutes: int
   kb_settings_version: int
   s3_bucket: str
