@@ -12,6 +12,7 @@ __pycache__/
 
 # Environment and build files
 .env
+.env.test
 .venv
 env/
 venv/
