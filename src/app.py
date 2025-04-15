@@ -36,12 +36,15 @@ manager.register_services()
 def main():
   parser = argparse.ArgumentParser(description="Run the FastAPI application.")
   parser.add_argument("--dev", action="store_true", help="Run in development mode with Uvicorn.")
+  parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the server on.")
+  parser.add_argument("--port", type=int, default=8000, help="Port to run the server on.")
+  parser.add_argument("--workers", type=int, default=4, help="Number of workers to run the server on.")
   args = parser.parse_args()
 
   if args.dev:
     import uvicorn
 
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("app:app", host=args.host, port=args.port, reload=True)
   else:
     import subprocess
 
@@ -50,11 +53,11 @@ def main():
         "gunicorn",
         "src.app:app",
         "--workers",
-        "4",
+        f"{args.workers}",
         "--worker-class",
         "uvicorn.workers.UvicornWorker",
         "--bind",
-        "0.0.0.0:8000",
+        f"{args.host}:{args.port}",
         "--pythonpath",
         "src",
       ])

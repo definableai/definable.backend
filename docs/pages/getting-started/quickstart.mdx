@@ -1,0 +1,249 @@
+---
+title: 'Quickstart Guide'
+description: 'Get up and running with Zyeta in minutes'
+---
+
+This guide will help you set up and run Zyeta on your local machine for development and testing purposes.
+
+## Prerequisites
+
+Before you begin, make sure you have the following installed:
+- **Python 3.10 or later** (recommended)
+- **PostgreSQL 14+** (required for vector storage)
+- **Poetry** (for dependency management)
+- **Docker** (optional, for containerized setup)
+- **Git** (for version control)
+
+## Clone the Repository
+
+First, clone the repository from GitHub:
+
+```bash
+git clone https://github.com/zyeta-io/zyeta.backend.git
+cd zyeta.backend
+```
+
+## Python Environment Setup
+
+We recommend using Poetry for dependency management:
+
+```bash
+# Install Poetry if you don't have it already
+curl -sSL https://install.python-poetry.org | python3 -
+
+# Install dependencies
+poetry install
+```
+
+<Note>
+Make sure you're using Python 3.10 or later. You can check your version with `python --version`.
+</Note>
+
+## Pre-commit Setup
+
+We use pre-commit hooks to ensure code quality:
+
+```bash
+pre-commit install
+```
+
+This will configure automatic linting and type checking before each commit.
+
+## Environment Configuration
+
+1. Create your environment file by copying the example file:
+
+```bash
+cp .env.local .env
+```
+
+2. Configure the following essential environment variables in your `.env` file:
+
+```
+# Application
+APP_NAME=zyeta-backend
+ENVIRONMENT=dev
+
+# Security
+JWT_SECRET=your_secret_key_here
+MASTER_API_KEY=your_master_api_key_here
+JWT_EXPIRE_MINUTES=1400
+
+# Database
+DATABASE_URL=postgresql+asyncpg://postgres:mysecretpassword@localhost:5432/postgres
+
+# External APIs
+OPENAI_API_KEY=your_openai_key_here
+FRONTEND_URL=http://localhost:8000
+```
+
+<Tip>
+Generate secure random strings for `JWT_SECRET` and `MASTER_API_KEY`. You can use Python's `secrets` module: `python -c "import secrets; print(secrets.token_hex(32))"`.
+</Tip>
+
+## Database Setup
+
+### Option 1: Local PostgreSQL with Docker (Recommended)
+
+The easiest way to set up PostgreSQL is using Docker:
+
+```bash
+docker run --name zyeta-postgres -e POSTGRES_PASSWORD=mysecretpassword -p 5432:5432 -d postgres
+```
+
+### Option 2: Using Supabase
+
+If you prefer a cloud-based PostgreSQL service:
+
+1. Create a Supabase account at [supabase.com](https://supabase.com)
+2. Create a new project
+3. Navigate to the Database settings in your Supabase dashboard
+4. Copy the connection string from the "Connection Pooling" section
+
+<Accordion title="Supabase Connection Types">
+Supabase offers different connection string formats for different network setups:
+
+1. **Direct Connection**: 
+   - Format: `postgresql://postgres:[YOUR-PASSWORD]@db.xxxxxxxxxxx.supabase.co:5432/postgres`
+   - Best for persistent connections
+
+2. **Session Pooler**:
+   - Format: `postgresql://postgres.xxxxxxxxxxx:[YOUR-PASSWORD]@...`
+   - Recommended if you're on an IPv4 network and have connection issues
+
+3. **Transaction Pooler**:
+   - Similar to Session Pooler but optimized for short-lived connections
+   - Good for stateless applications
+
+If you experience connection issues, try the Session Pooler connection string.
+</Accordion>
+
+## Database Migrations Setup
+
+1. Copy the Alembic configuration template:
+
+```bash
+cp alembic.copy.ini alembic.ini
+```
+
+2. Edit `alembic.ini` and update the `sqlalchemy.url` to match your database URL:
+
+```ini
+# For local Docker PostgreSQL
+sqlalchemy.url = postgresql+asyncpg://postgres:mysecretpassword@localhost:5432/postgres
+```
+
+<Note>
+If your database password contains special characters like `@`, remember to URL-encode them in your `.env` file, but in the `alembic.ini` file, you need to escape `%` by doubling it: `%%`.
+</Note>
+
+3. Apply database migrations:
+
+```bash
+alembic upgrade head
+```
+
+## Running the Application
+
+Start the application in development mode:
+
+```bash
+# Using Python directly
+python -m src.app --dev
+
+# OR using FastAPI CLI (if installed)
+fastapi dev src/app.py
+```
+
+The API will be available at:
+- API Endpoints: `http://localhost:8000/api/`
+- Swagger UI Documentation: `http://localhost:8000/docs`
+- ReDoc Documentation: `http://localhost:8000/redoc`
+
+## Docker Deployment (Alternative)
+
+For a fully containerized setup:
+
+```bash
+# Build and start services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+```
+
+## Verification
+
+To verify your setup is working:
+
+1. Open `http://localhost:8000/docs` in your browser
+2. Try creating a new user account via the `/api/auth/signup` endpoint
+3. Login with the created account via `/api/auth/login`
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Database Connection Issues">
+    If you're having trouble connecting to your database:
+    
+    - Check if PostgreSQL is running: `pg_isready`
+    - Verify your connection string format
+    - Ensure your firewall allows connections to port 5432
+    - Try connecting with `psql` to verify credentials
+  </Accordion>
+  
+  <Accordion title="Poetry Dependency Issues">
+    If you encounter issues with Poetry:
+    
+    ```bash
+    # Update Poetry
+    poetry self update
+    
+    # Clear Poetry cache
+    poetry cache clear pypi --all
+    
+    # Update dependencies
+    poetry update
+    ```
+  </Accordion>
+  
+  <Accordion title="Migration Errors">
+    If migrations fail:
+    
+    ```bash
+    # Check Alembic history
+    alembic history
+    
+    # Reset migrations if needed
+    alembic downgrade base
+    alembic upgrade head
+    ```
+  </Accordion>
+  
+  <Accordion title="IPv4/IPv6 Connectivity Issues">
+    If using Supabase and experiencing connection problems:
+    
+    - Try the Session Pooler connection string instead of Direct Connection
+    - Check if your network primarily uses IPv4 (common in many environments)
+    - Supabase proxies Session and Transaction pooler connections for IPv4 networks
+  </Accordion>
+</AccordionGroup>
+
+## What's Next?
+
+Now that you have Zyeta running, explore:
+
+<CardGroup cols={2}>
+  <Card title="Development Workflow" icon="code" href="/pages/getting-started/development-workflow">
+    Learn our coding standards and contribution process
+  </Card>
+  <Card title="Architecture Overview" icon="diagram-project" href="/pages/architecture/overview">
+    Understand how Zyeta is structured
+  </Card>
+  <Card title="Authentication" icon="lock" href="/pages/features/authentication">
+    Learn about securing your API endpoints
+  </Card>
+  <Card title="Knowledge Base" icon="brain" href="/pages/features/knowledge-base">
+    Explore our vector database integration
+  </Card>
+</CardGroup> 

@@ -1,0 +1,270 @@
+---
+title: 'Authentication Service API'
+description: 'API reference for user authentication and account management'
+---
+
+The Authentication Service handles user registration, login, and account management operations.
+
+## Endpoints
+
+### Sign Up
+
+Create a new user account with organization.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "first_name": "John",
+    "last_name": "Doe",
+    "password": "SecurePassword123!"
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/auth/signup"
+headers = {
+    "Content-Type": "application/json"
+}
+data = {
+    "email": "user@example.com",
+    "first_name": "John",
+    "last_name": "Doe",
+    "password": "SecurePassword123!"
+}
+
+response = requests.post(url, headers=headers, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/auth/signup";
+const headers = {
+    "Content-Type": "application/json"
+};
+const data = {
+    email: "user@example.com",
+    first_name: "John",
+    last_name: "Doe",
+    password: "SecurePassword123!"
+};
+
+axios.post(url, data, { headers })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "c0abe032-157d-487f-9975-8fa742c70fd6",
+  "email": "user@example.com",
+  "first_name": "John",
+  "last_name": "Doe"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/auth/signup`
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `email` | string | Yes | User's email address |
+| `first_name` | string | Yes | User's first name |
+| `last_name` | string | Yes | User's last name |
+| `password` | string | Yes | User's password (must meet security requirements) |
+
+**Response:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string (UUID) | The user's unique identifier |
+| `email` | string | User's email address |
+| `first_name` | string | User's first name |
+| `last_name` | string | User's last name |
+
+### Login
+
+Authenticate a user and receive an access token.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "SecurePassword123!"
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/auth/login"
+headers = {
+    "Content-Type": "application/json"
+}
+data = {
+    "email": "user@example.com",
+    "password": "SecurePassword123!"
+}
+
+response = requests.post(url, headers=headers, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/auth/login";
+const headers = {
+    "Content-Type": "application/json"
+};
+const data = {
+    email: "user@example.com",
+    password: "SecurePassword123!"
+};
+
+axios.post(url, data, { headers })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer"
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/auth/login`
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `email` | string | Yes | User's email address |
+| `password` | string | Yes | User's password |
+
+**Response:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `access_token` | string | JWT token to be used for authenticated requests |
+| `token_type` | string | The type of token (always "bearer") |
+
+### Sign Up via Invitation
+
+Register a new user account through an invitation.
+
+<CodeGroup>
+```bash Request
+curl -X POST {{baseUrl}}/api/auth/signup_invite \
+  -H "Content-Type: application/json" \
+  -d '{
+    "first_name": "John",
+    "last_name": "Doe",
+    "password": "SecurePassword123!",
+    "invite_token": "valid-invitation-token"
+  }'
+```
+
+```python Python
+import requests
+
+url = "{{baseUrl}}/api/auth/signup_invite"
+headers = {
+    "Content-Type": "application/json"
+}
+data = {
+    "first_name": "John",
+    "last_name": "Doe",
+    "password": "SecurePassword123!",
+    "invite_token": "valid-invitation-token"
+}
+
+response = requests.post(url, headers=headers, json=data)
+print(response.json())
+```
+
+```javascript JavaScript
+const axios = require('axios');
+
+const url = "{{baseUrl}}/api/auth/signup_invite";
+const headers = {
+    "Content-Type": "application/json"
+};
+const data = {
+    first_name: "John",
+    last_name: "Doe",
+    password: "SecurePassword123!",
+    invite_token: "valid-invitation-token"
+};
+
+axios.post(url, data, { headers })
+    .then(response => console.log(response.data))
+    .catch(error => console.error(error));
+```
+
+```json Response
+{
+  "id": "c0abe032-157d-487f-9975-8fa742c70fd6",
+  "email": "invited@example.com",
+  "first_name": "John",
+  "last_name": "Doe",
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+</CodeGroup>
+
+**Endpoint:** `POST /api/auth/signup_invite`
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `first_name` | string | Yes | User's first name |
+| `last_name` | string | Yes | User's last name |
+| `password` | string | Yes | User's password |
+| `invite_token` | string | Yes | The invitation token received via email |
+
+**Response:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string (UUID) | The user's unique identifier |
+| `email` | string | User's email address (from invitation) |
+| `first_name` | string | User's first name |
+| `last_name` | string | User's last name |
+| `access_token` | string | JWT token for authentication |
+
+## Error Responses
+
+| Status Code | Description |
+|-------------|-------------|
+| 400 | Bad Request - Invalid input or validation error |
+| 401 | Unauthorized - Invalid credentials |
+| 409 | Conflict - User already exists |
+| 422 | Unprocessable Entity - Input validation failed |
+| 500 | Internal Server Error - Server-side error |
+
+## Authentication
+
+Most endpoints in this service do not require authentication, as they are used for the authentication process itself. The exceptions are:
+
+- Password reset endpoints may require a valid reset token
+- Account management endpoints may require a valid JWT token
+
+## Implementation Notes
+
+- Passwords are securely hashed using SHA-256
+- JWT tokens have a configurable expiration time
+- Failed login attempts are rate-limited to prevent brute force attacks

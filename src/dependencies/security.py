@@ -12,6 +12,39 @@ from database import get_db
 from models import OrganizationMemberModel, PermissionModel, RoleModel, RolePermissionModel
 
 
+class InviteTokenBearer(HTTPBearer):
+  """Bearer token handler for invitation tokens."""
+
+  def __init__(self, auto_error: bool = True):
+    super().__init__(auto_error=auto_error)
+
+  async def __call__(
+    self,
+    request: Request = None,  # type: ignore
+    websocket: WebSocket = None,  # type: ignore
+  ) -> Optional[HTTPAuthorizationCredentials]:
+    if request:
+      credentials = await super().__call__(request)
+      if not credentials or credentials.scheme != "Bearer":
+        raise HTTPException(status_code=403, detail="Invalid authorization")
+      try:
+        payload = jwt.decode(credentials.credentials, settings.jwt_secret, algorithms=["HS256"])
+        return payload
+      except jwt.InvalidTokenError:
+        raise HTTPException(status_code=403, detail="Invalid or expired invitation token")
+    elif websocket:
+      token = websocket.query_params.get("token")
+      if not token:
+        raise HTTPException(status_code=403, detail="Invalid authorization")
+      try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+        return payload
+      except jwt.InvalidTokenError:
+        raise HTTPException(status_code=403, detail="Invalid or expired invitation token")
+    else:
+      raise HTTPException(status_code=403, detail="Invalid authorization")
+
+
 class JWTBearer(HTTPBearer):
   def __init__(self, auto_error: bool = True):
     super().__init__(auto_error=auto_error)

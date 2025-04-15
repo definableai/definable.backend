@@ -32,7 +32,6 @@ class InvitationModel(CRUD):
   invited_by: Mapped[UUID] = mapped_column(PGUUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
   status: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=InvitationStatus.PENDING)
   expiry_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-  invite_token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
 
   # Relationships
   organization = relationship("OrganizationModel", back_populates="invitations")

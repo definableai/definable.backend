@@ -1,0 +1,313 @@
+---
+title: 'Coding Standards'
+description: 'Guidelines and best practices for contributing to the Zyeta backend codebase'
+---
+
+This guide outlines the coding standards and best practices for the Zyeta backend codebase. Following these standards ensures code consistency, maintainability, and quality across the project.
+
+## Code Formatting and Linting
+
+### Ruff
+
+We use [Ruff](https://github.com/charliermarsh/ruff) as our primary linter and formatter. Ruff combines many Python linting tools into one fast package.
+
+Our Ruff configuration is defined in `ruff.toml` at the project root:
+
+```toml
+indent-width = 2
+preview = true
+target-version = "py310"
+
+lint.select = [
+  "F",  # Pyflakes
+  "W6",
+  "E71",
+  "E72",
+  "E112",   # no-indented-block
+  "E113",   # unexpected-indentation
+  "E203",   # whitespace-before-punctuation
+  "E272",   # multiple-spaces-before-keyword
+  "E275",   # missing-whitespace-after-keyword
+  "E303",   # too-many-blank-lines
+  "E304",   # blank-line-after-decorator
+  "E501",   # line-too-long
+  "E702",   # multiple-statements-on-one-line-semicolon
+  "E703",   # useless-semicolon
+  "E731",   # lambda-assignment
+  "W191",   # tab-indentation
+  "W291",   # trailing-whitespace
+  "W293",   # blank-line-with-whitespace
+  "UP039",  # unnecessary-class-parentheses
+  "C416",   # unnecessary-comprehension
+  "RET506", # superfluous-else-raise
+  "RET507", # superfluous-else-continue
+  "A",      # builtin-variable-shadowing, builtin-argument-shadowing, builtin-attribute-shadowing
+  "SIM105", # suppressible-exception
+  "FURB110",# if-exp-instead-of-or-operator
+  "RUF018", # assignment-in-assert
+]
+
+line-length = 150
+
+exclude = [
+  "docs/",
+  "examples/",
+  "extra/",
+  "tinygrad/runtime/autogen",
+  "test/external/mlperf_resnet",
+  "test/external/mlperf_unet3d",
+]
+```
+
+Key standards enforced by our Ruff configuration:
+
+1. **Indentation**: Use 2 spaces for indentation (not tabs)
+2. **Line Length**: Maximum 150 characters per line
+3. **Python Version**: Code should be compatible with Python 3.10+
+4. **Whitespace**: No trailing whitespace, consistent spacing around operators
+
+### Type Checking with Mypy
+
+We use [Mypy](https://mypy.readthedocs.io/) for static type checking. Our Mypy configuration is defined in `mypy.ini`:
+
+```ini
+[mypy]
+warn_unused_configs = True
+files = src
+ignore_missing_imports = True
+check_untyped_defs = True
+explicit_package_bases = True
+warn_unreachable = True
+warn_redundant_casts = True
+```
+
+Key type checking requirements:
+
+1. **Type Annotations**: All function parameters and return values should have type annotations
+2. **Imported Types**: Use proper imports for types (e.g., `from typing import List, Optional, Dict`)
+3. **Pydantic Models**: Use properly typed Pydantic models for data validation
+
+### Pre-commit Hooks
+
+We use [pre-commit](https://pre-commit.com/) to run linting and type-checking automatically before commits. Our pre-commit configuration is in `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: Ruff (local)
+        entry: python3 -m ruff
+        language: system
+        pass_filenames: true
+        types: [python]
+        args:
+          - check
+
+      - id: mypy
+        name: Mypy (local)
+        entry: python3 -m mypy
+        language: system
+        pass_filenames: false
+        types: [python]
+        args:
+          - src/
+          - --strict-equality
+          - --pretty
+          - --show-error-codes
+          - --config-file=mypy.ini
+```
+
+To set up pre-commit:
+
+1. Install pre-commit: `pip install pre-commit`
+2. Install hooks: `pre-commit install`
+
+## Code Structure and Organization
+
+### Directory Structure
+
+Follow the established directory structure:
+
+```
+src/
+├── config/       # Configuration management
+├── database/     # Database connection and base models
+├── dependencies/ # FastAPI dependencies
+├── middlewares/  # HTTP middleware components
+├── models/       # SQLAlchemy ORM models
+├── schemas/      # Shared Pydantic schemas
+├── services/     # Business logic organized by domain
+│   └── [feature]/
+│       ├── schema.py  # Feature-specific schemas
+│       └── service.py # Feature-specific service
+├── utils/        # Utility functions
+└── app.py        # Application entry point
+```
+
+### Import Order
+
+Organize imports in the following order, with a blank line between each group:
+
+1. Standard library imports
+2. Third-party library imports
+3. Application-specific imports
+
+Example:
+
+```python
+from datetime import datetime
+from typing import List, Optional, Dict
+from uuid import UUID
+
+from fastapi import Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+
+from database import get_db
+from models import MyModel
+from services.common import format_response
+```
+
+## Naming Conventions
+
+1. **Files and Directories**: Use snake_case (e.g., `user_service.py`)
+2. **Classes**: Use PascalCase (e.g., `UserService`)
+3. **Functions and Variables**: Use snake_case (e.g., `get_user_by_id`)
+4. **Constants**: Use UPPER_SNAKE_CASE (e.g., `MAX_CONNECTIONS`)
+5. **Database Models**: Use PascalCase with "Model" suffix (e.g., `UserModel`)
+6. **Pydantic Schemas**: Use PascalCase with descriptive suffixes:
+   - Base schemas: `UserBase`
+   - Create operations: `UserCreate`
+   - Update operations: `UserUpdate`
+   - Responses: `UserResponse`
+
+## Documentation Standards
+
+### Docstrings
+
+Use triple-quoted docstrings for modules, classes, and functions:
+
+```python
+def get_user_by_id(user_id: UUID) -> UserResponse:
+    """
+    Retrieve a user by their unique identifier.
+    
+    Args:
+        user_id: The UUID of the user to retrieve
+        
+    Returns:
+        UserResponse object with user details
+        
+    Raises:
+        HTTPException: If user not found (404) or on server error (500)
+    """
+```
+
+### Comments
+
+- Use comments to explain "why" not "what" when code is not self-explanatory
+- Keep comments up-to-date with code changes
+- Use complete sentences with proper punctuation
+
+## Error Handling
+
+1. **HTTP Exceptions**: Use FastAPI's `HTTPException` with appropriate status codes
+2. **Validation Errors**: Use Pydantic for input validation
+3. **Database Errors**: Catch and handle specific database exceptions
+4. **Logging**: Include appropriate logging for errors with context
+
+Example:
+
+```python
+try:
+    result = await session.execute(query)
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return UserResponse.model_validate(user)
+except SQLAlchemyError as e:
+    logger.error(f"Database error when fetching user {user_id}: {str(e)}")
+    raise HTTPException(status_code=500, detail="Database error")
+```
+
+## Service Design Patterns
+
+### Dependency Injection
+
+Use FastAPI's dependency injection system for:
+- Database sessions
+- Authentication
+- Authorization
+- Configuration
+
+Example:
+
+```python
+async def get_users(
+    offset: int = 0,
+    limit: int = 10,
+    session: AsyncSession = Depends(get_db),
+    user: dict = Depends(RBAC("users", "read")),
+) -> PaginatedUserResponse:
+    # Implementation
+```
+
+### Separation of Concerns
+
+1. **Models**: Define database structure only
+2. **Schemas**: Handle data validation and serialization
+3. **Services**: Implement business logic
+4. **API Routes**: Handle HTTP concerns only
+
+## Testing Standards
+
+All code should include appropriate tests:
+
+1. **Unit Tests**: Test individual functions and methods
+2. **Integration Tests**: Test interactions between components
+3. **API Tests**: Test HTTP endpoints
+
+Use pytest fixtures for common test setup and async testing support.
+
+Example test:
+
+```python
+@pytest.mark.asyncio
+async def test_get_user(db_session, test_user):
+    # Arrange
+    user_service = UserService()
+    
+    # Act
+    result = await user_service.get(test_user.id, session=db_session)
+    
+    # Assert
+    assert result.id == test_user.id
+    assert result.name == test_user.name
+```
+
+## Contributing Guidelines
+
+Before submitting your code:
+
+1. Ensure all linting and type checking passes: `ruff check` and `mypy src/`
+2. Write or update tests for your changes
+3. Document new features or behavior changes
+4. Keep commits focused and with clear messages
+5. Rebase your branch on the latest main before requesting review
+
+## Common Mistakes to Avoid
+
+1. **Circular Imports**: Organize imports to prevent circular dependencies
+2. **Missing Type Annotations**: Ensure all functions have proper type hints
+3. **Undocumented Magic**: Avoid complex code without clear documentation
+4. **Hardcoded Values**: Use configuration instead of hardcoding sensitive data
+5. **Overly Complex Functions**: Keep functions focused on a single task
+
+## Best Practices
+
+1. **Pagination**: Always implement pagination for list endpoints
+2. **Error Details**: Provide specific, actionable error messages
+3. **Defensive Programming**: Validate inputs and handle unexpected cases
+4. **Security**: Follow security best practices for authentication and data handling
+5. **Performance**: Be mindful of database query efficiency
