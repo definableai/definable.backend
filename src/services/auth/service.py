@@ -24,8 +24,7 @@ from dependencies.security import InviteTokenBearer
 class AuthService:
   """Authentication service."""
 
-  http_exposed = ["post=signup", "post=login", "get=me", "post=signup_invite", "get=signup_invite", "post=request_password_reset",
-                  "post=reset_password"]
+  http_exposed = ["post=signup", "post=login", "get=me", "post=signup_invite", "post=request_password_reset", "post=reset_password"]
 
   def __init__(self, acquire: Acquire):
     """Initialize service."""
@@ -204,7 +203,7 @@ class AuthService:
   ) -> UserResponse:
     """Get current user."""
     return UserResponse.model_validate(current_user)
-  
+
   async def post_request_password_reset(self, reset_request: PasswordResetRequest, session: AsyncSession = Depends(get_db)) -> dict:
     """Request password reset."""
     try:
@@ -295,46 +294,6 @@ class AuthService:
         detail="Failed to reset password"
       )
 
-  async def get_signup_invite(
-    self,
-    token: str,
-    email: str,
-    session: AsyncSession = Depends(get_db),
-  ) -> HTMLResponse:
-    """Display the signup form for an invitation."""
-    self.logger.info(f"Displaying invite signup page for email: {email}")
-
-    # Get invitation
-    query = select(InvitationModel).where(
-      and_(
-        InvitationModel.invite_token == token,
-        InvitationModel.invitee_email == email,
-      )
-    )
-    result = await session.execute(query)
-    invitation = result.unique().scalar_one_or_none()
-
-    # Get organization name
-    if not invitation:
-      raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Invalid invitation",
-      )
-
-    # Get organization name
-    org = await OrganizationModel.read(invitation.organization_id)
-    org_name = org.name if org else "Our Organization"
-
-    # Return signup form for pending invitations
-    template_path = Path(__file__).parent / "templates" / "signup_invite.html"
-    with open(template_path, "r") as f:
-      content = f.read().format(
-        org_name=org_name,
-        email=email,
-        token=token,
-      )
-    return HTMLResponse(content=content, status_code=200)
-  
   ### PRIVATE METHODS ###
 
   async def _setup_default_organization(self, user: UserModel, session: AsyncSession) -> OrganizationModel:
