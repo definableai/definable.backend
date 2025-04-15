@@ -7,6 +7,7 @@ from libs.s3.v1 import s3_client
 from models import KBDocumentModel
 
 from .base import BaseSourceHandler
+from ..loaders import DoclingFileLoader
 
 
 class FileMetadata(BaseModel):
@@ -23,29 +24,27 @@ class FileSourceHandler(BaseSourceHandler):
   """Handler for file-based sources."""
 
   ALLOWED_EXTENSIONS = {
-    # Documents
+    # Document formats
     "pdf": "application/pdf",
-    "doc": "application/msword",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "txt": "text/plain",
-    "md": "text/markdown",
-    "mdx": "text/markdown",
-    # Spreadsheets
-    "csv": "text/csv",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "xls": "application/vnd.ms-excel",
-    # Presentations
-    "ppt": "application/vnd.ms-powerpoint",
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    # Emails
-    "eml": "message/rfc822",
-    "msg": "application/vnd.ms-outlook",
-    # Web
     "html": "text/html",
     "htm": "text/html",
+    "md": "text/markdown",
+    "asciidoc": "text/asciidoc",
+    "adoc": "text/asciidoc",
+    "csv": "text/csv",
+    # Image formats
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "tiff": "image/tiff",
+    "bmp": "image/bmp",
+    # XML formats
     "xml": "application/xml",
-    # Others
-    "epub": "application/epub+zip",
+    "nxml": "application/xml",
+    "uspto": "application/xml",
   }
 
   def __init__(self, config: Dict):
@@ -96,13 +95,11 @@ class FileSourceHandler(BaseSourceHandler):
       with open(temp_path, "wb") as f:
         f.write(file_content.read())
 
-      # Get appropriate loader based on file type
-      loader = self._get_loader(temp_path, metadata["file_type"])
-      if not loader:
-        raise ValueError(f"No loader available for file type: {metadata['file_type']}")
-
-      # Extract content
-      docs = await loader.aload()
+      # Use Docling loader with required arguments
+      loader = DoclingFileLoader(kb_id=document.kb_id, document=document)
+      docs = []
+      async for doc in loader.load():
+        docs.append(doc)
       content = "\n\n".join(doc.page_content for doc in docs)
 
       return content
@@ -123,42 +120,3 @@ class FileSourceHandler(BaseSourceHandler):
         temp_path.unlink()
     except Exception as e:
       print(f"Cleanup error: {str(e)}")
-
-  def _get_loader(self, file_path: Path, file_type: str):
-    """Get appropriate loader based on file type."""
-    from langchain_community.document_loaders import (
-      CSVLoader,
-      PyPDFLoader,
-      TextLoader,
-      UnstructuredEmailLoader,
-      UnstructuredEPubLoader,
-      UnstructuredExcelLoader,
-      UnstructuredHTMLLoader,
-      UnstructuredMarkdownLoader,
-      UnstructuredPowerPointLoader,
-      UnstructuredWordDocumentLoader,
-      UnstructuredXMLLoader,
-    )
-
-    loaders = {
-      "pdf": PyPDFLoader,
-      "docx": UnstructuredWordDocumentLoader,
-      "doc": UnstructuredWordDocumentLoader,
-      "html": UnstructuredHTMLLoader,
-      "htm": UnstructuredHTMLLoader,
-      "md": UnstructuredMarkdownLoader,
-      "mdx": UnstructuredMarkdownLoader,
-      "xml": UnstructuredXMLLoader,
-      "epub": UnstructuredEPubLoader,
-      "csv": CSVLoader,
-      "eml": UnstructuredEmailLoader,
-      "msg": UnstructuredEmailLoader,
-      "pptx": UnstructuredPowerPointLoader,
-      "ppt": UnstructuredPowerPointLoader,
-      "xlsx": UnstructuredExcelLoader,
-      "xls": UnstructuredExcelLoader,
-      "txt": TextLoader,
-    }
-
-    loader_class = loaders.get(file_type)
-    return loader_class(str(file_path)) if loader_class else None

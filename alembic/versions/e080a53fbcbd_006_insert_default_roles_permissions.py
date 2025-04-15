@@ -160,4 +160,5 @@ def downgrade() -> None:
   """)
 
   op.execute("DELETE FROM permissions")
+  op.execute("UPDATE messages SET model_id = NULL WHERE model_id IS NOT NULL")
   op.execute("DELETE FROM models")
