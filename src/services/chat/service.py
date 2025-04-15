@@ -1,8 +1,12 @@
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 from io import BytesIO
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import AsyncGenerator, Dict, List, Optional, Union
 from uuid import UUID
+
+from agno.media import File, Image
 
 from fastapi import Depends, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -10,9 +14,13 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from dependencies.security import RBAC
-from libs.chats.v1 import LLMFactory
+
+from dependencies.security import JWTBearer
+from libs.chats.v1 import LLMFactory, generate_prompts_stream
 from libs.s3.v1 import S3Client
+from libs.speech.v1 import transcribe
+from dependencies.security import RBAC
+
 from models import ChatModel, ChatUploadModel, LLMModel, MessageModel
 from services.__base.acquire import Acquire
 
@@ -27,6 +35,7 @@ from .schema import (
   MessageCreate,
   MessageResponse,
   MessageRole,
+  TextInput,
 )
 
 
@@ -40,6 +49,9 @@ class ChatService:
     "delete=delete_session",
     "post=bulk_delete_sessions",
     "post=upload_file",
+    "post=transcribe",
+    "post=generate_prompts",
+    "get=prompt",
   ]
 
   def __init__(self, acquire: Acquire):
@@ -225,95 +237,123 @@ class ChatService:
     user: dict = Depends(RBAC("chats", "write")),
   ) -> StreamingResponse:
     """Send a message to a chat session."""
-    if not model_id and not agent_id:
-      raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Either model_id or agent_id must be provided")
+    try:
+      if not model_id and not agent_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Either model_id or agent_id must be provided")
 
-    # Check if chat session exists
-    query = select(ChatModel).where(
-      and_(
-        ChatModel.id == chat_id,
-        ChatModel.user_id == user["id"],
-        ChatModel.org_id == user["org_id"],
+      # Check if chat session exists
+      query = select(ChatModel).where(
+        and_(
+          ChatModel.id == chat_id,
+          ChatModel.user_id == user["id"],
+          ChatModel.org_id == user["org_id"],
+        )
       )
-    )
-    result = await session.execute(query)
-    db_session = result.scalar_one_or_none()
-
-    if not db_session:
-      raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found")
-
-    # get the parent id from the last message of the chat session
-    query = select(MessageModel).where(MessageModel.chat_session_id == chat_id).order_by(MessageModel.created_at.desc())
-    result = await session.execute(query)
-    last_message = result.scalars().first()
-    parent_id = last_message.id if last_message else None
-
-    # # get urls of the files uploaded
-    # query = select(ChatUploadModel).filter(ChatUploadModel.id.in_(message_data.file_uploads))
-    # result = await session.execute(query)
-    # file_uploads = result.scalars().all()
-
-    # if chatting with a LLM model
-    if model_id:
-      # check if LLM model exists
-      query = select(LLMModel).where(LLMModel.id == model_id)
       result = await session.execute(query)
-      llm_model = result.scalar_one_or_none()
-      if not llm_model:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LLM model not found")
+      db_session = result.scalar_one_or_none()
 
-      # Create the users message
-      user_message = MessageModel(
-        chat_session_id=chat_id,
-        parent_message_id=parent_id,
-        model_id=model_id,
-        content=message_data.content,
-        role=MessageRole.USER,
-        created_at=datetime.now(timezone.utc),
-      )
-      session.add(user_message)
-      await session.commit()
+      if not db_session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found")
 
-      # files = []
-      # if message_data.file_uploads:
-      #   for file_upload in file_uploads:
-      #     file = File(url=file_upload.url, mime_type=file_upload.content_type)
-      #     files.append(file)
+      # get the parent id from the last message of the chat session
+      query = select(MessageModel).where(MessageModel.chat_session_id == chat_id).order_by(MessageModel.created_at.desc())
+      result = await session.execute(query)
+      last_message = result.scalars().first()
+      parent_id = last_message.id if last_message else None
 
-      # print(files)
+      # if chatting with a LLM model
+      if model_id:
+        # check if LLM model exists
+        query = select(LLMModel).where(LLMModel.id == model_id)
+        result = await session.execute(query)
+        llm_model = result.scalar_one_or_none()
+        if not llm_model:
+          raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LLM model not found")
 
-      # generate a streaming response
-      async def generate_response() -> AsyncGenerator[str, None]:
-        full_response = ""
-        buffer: list[str] = []
-        async for token in self.llm_factory.chat(
-          provider=llm_model.provider, llm=llm_model.name, chat_session_id=chat_id, message=message_data.content
-        ):
-          buffer.append(token.content)
-          full_response += token.content
-          if len(buffer) >= self.chunk_size:
-            d = {"message": "".join(buffer)}
-            yield f"data: {json.dumps(d)}\n\n"
-            buffer = []
-
-        if buffer:
-          d = {"message": "".join(buffer)}
-          yield f"data: {json.dumps(d)}\n\n"
-
-        yield f"data: {json.dumps({'message': 'DONE'})}\n\n"
-
-        # Create ai message
-        ai_message = MessageModel(
+        # Create the users message
+        user_message = MessageModel(
           chat_session_id=chat_id,
-          parent_message_id=user_message.id,
+          parent_message_id=parent_id,
           model_id=model_id,
-          content=full_response,
-          role=MessageRole.MODEL,
+          content=message_data.content,
+          role=MessageRole.USER,
           created_at=datetime.now(timezone.utc),
         )
-        session.add(ai_message)
+        session.add(user_message)
         await session.commit()
-        await session.refresh(ai_message)
+        await session.refresh(user_message)
+
+        files: List[Union[File, Image]] = []
+        if message_data.file_uploads:
+          # Fetch the file uploads from the database
+          query = select(ChatUploadModel).filter(ChatUploadModel.id.in_(message_data.file_uploads))
+          result = await session.execute(query)
+          file_uploads = result.scalars().all()
+
+          for file_upload in file_uploads:
+            # Create the appropriate File object based on mimetype
+            if file_upload.content_type.startswith("image/"):
+              files.append(Image(url=file_upload.url))
+            else:
+              files.append(File(url=file_upload.url, mime_type=file_upload.content_type))
+
+            # Create a new ChatUploadModel linking to this message
+            new_upload = ChatUploadModel(
+              message_id=user_message.id,
+              filename=file_upload.filename,
+              content_type=file_upload.content_type,
+              file_size=file_upload.file_size,
+              url=file_upload.url,
+              _metadata=file_upload._metadata,
+            )
+            session.add(new_upload)
+
+          # Commit the new file uploads
+          await session.commit()
+
+        # generate a streaming response
+        async def generate_response() -> AsyncGenerator[str, None]:
+          full_response = ""
+          buffer: list[str] = []
+          print(f"message_data.content: {message_data.content}")
+          async for token in self.llm_factory.chat(
+            provider=llm_model.provider,
+            llm=llm_model.version,
+            chat_session_id=chat_id,
+            message=message_data.content,
+            assets=files,
+          ):
+            buffer.append(token.content)
+            full_response += token.content
+            if len(buffer) >= self.chunk_size:
+              d = {"message": "".join(buffer)}
+              yield f"data: {json.dumps(d)}\n\n"
+              buffer = []
+
+          if buffer:
+            d = {"message": "".join(buffer)}
+            yield f"data: {json.dumps(d)}\n\n"
+
+          yield f"data: {json.dumps({'message': 'DONE'})}\n\n"
+
+          # Create ai message
+          ai_message = MessageModel(
+            chat_session_id=chat_id,
+            parent_message_id=user_message.id,
+            model_id=model_id,
+            content=full_response,
+            role=MessageRole.MODEL,
+            created_at=datetime.now(timezone.utc),
+          )
+          session.add(ai_message)
+          await session.commit()
+          await session.refresh(ai_message)
+
+    except Exception:
+      from traceback import print_exc
+
+      print_exc()
+      raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error sending message")
 
     return StreamingResponse(generate_response(), media_type="text/event-stream")
 
@@ -394,3 +434,88 @@ class ChatService:
     await session.commit()
 
     return ChatFileUploadResponse(id=db_upload.id, url=url)
+
+  async def post_transcribe(
+    self,
+    audio_data: Optional[bytes] = None,
+    content_type: Optional[str] = None,
+    language: str = "en-US",
+    file: Optional[UploadFile] = None,
+    user: dict = Depends(JWTBearer()),
+  ) -> Dict[str, str]:
+    """
+    Transcribe audio data to text.
+
+    Args:
+        audio_data: Raw audio data in bytes (optional if file is provided)
+        content_type: MIME type of the audio (e.g., "audio/mp3", "audio/wav")
+        language: Language code for transcription (default: "en-US")
+        file: Uploaded audio file (optional if audio_data is provided)
+
+    Returns:
+        Dictionary with transcribed text and status
+    """
+    try:
+      # Handle file upload case
+      if file and not audio_data:
+        file_content = await file.read()
+        file_size = len(file_content)
+
+        if file_size == 0:
+          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
+
+        # Use tempfile module instead of hardcoded path
+        # Create temporary file with proper extension
+        temp_dir = tempfile.gettempdir()
+        file_name = file.filename or "temp_audio_file"
+        file_name = file_name.replace(" ", "_")  # Replace spaces with underscores
+        temp_path = os.path.join(temp_dir, file_name)
+
+        try:
+          with open(temp_path, "wb") as f:
+            f.write(file_content)
+        except Exception as write_error:
+          print(f"Warning: Could not save debug file: {str(write_error)}")
+          # Continue even if we can't save the debug file
+
+        # Pass correct arguments to transcribe function
+        transcribed_text = await transcribe(source=file_content, content_type=file.content_type, language=language)
+      # Handle raw bytes case
+      elif audio_data and content_type:
+        transcribed_text = await transcribe(source=audio_data, content_type=content_type, language=language)
+      else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Either audio_data with content_type or file must be provided")
+
+      return {"text": transcribed_text, "status": "success"}
+    except Exception as e:
+      from traceback import print_exc
+
+      print_exc()
+
+      # More detailed error message
+      error_message = str(e)
+      error_type = type(e).__name__
+
+      raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error transcribing audio: {error_type}: {error_message}")
+
+  async def get_prompt(
+    self,
+    data: TextInput,
+    user: dict = Depends(JWTBearer()),
+  ) -> StreamingResponse:
+    """Generate prompts for a given text with streaming response."""
+    try:
+
+      async def content_generator():
+        try:
+          async for token in generate_prompts_stream(data.text, data.prompt_type, data.num_prompts, data.model):
+            yield f"data: {json.dumps({'content': token})}\n\n"
+
+          # Send a DONE message when complete
+          yield f"data: {json.dumps({'content': 'DONE'})}\n\n"
+        except Exception as e:
+          yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+      return StreamingResponse(content_generator(), media_type="text/event-stream")
+    except Exception as e:
+      raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error generating prompts: {str(e)}")

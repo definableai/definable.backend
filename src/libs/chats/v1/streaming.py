@@ -1,48 +1,42 @@
 import asyncio
-from typing import AsyncGenerator, Sequence
+from typing import AsyncGenerator, List, Sequence, Type, Union
 from uuid import UUID
 
 from agno.agent import Agent, RunResponse
-from agno.media import File
+from agno.media import File, Image
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.storage.postgres import PostgresStorage
 
 from config.settings import settings
 
+# Define a type alias for model classes
+ModelClass = Union[Type[OpenAIChat], Type[Claude]]
+
 
 class LLMFactory:
   """Factory for creating Agno agents with different LLM providers."""
 
-  def __init__(self):
-    # Initialize model configurations
-    # TODO : we have to shif this in DB
-    self.model_configs = {
-      "openai": {
-        "models": {
-          "gpt-4o": {"class": OpenAIChat, "id": "gpt-4o"},
-          "gpt-4o-mini": {"class": OpenAIChat, "id": "gpt-4o-mini"},
-          "o1-preview": {"class": OpenAIChat, "id": "o1-preview"},
-          "gpt-3.5-turbo": {"class": OpenAIChat, "id": "gpt-3.5-turbo"},
-          "o1": {"class": OpenAIChat, "id": "o1"},
-        },
-      },
-      "anthropic": {
-        "models": {
-          "claude-3.7-sonnet": {"class": Claude, "id": "claude-3-7-sonnet-latest"},
-          "claude-3.5-sonnet": {"class": Claude, "id": "claude-3-5-sonnet-latest"},
-          "claude-3.5-haiku": {"class": Claude, "id": "claude-3-5-haiku-latest"},
-        },
-      },
-    }
+  # Map provider names to their model classes
+  PROVIDER_MODELS: dict[str, ModelClass] = {
+    "openai": OpenAIChat,
+    "anthropic": Claude,
+  }
 
+  def __init__(self):
     # Configure storage for conversation persistence
     db_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
     self.storage = PostgresStorage(table_name="__agno_chat_sessions", db_url=db_url, schema="public")
     self.storage.create()
 
+  def get_model_class(self, provider: str) -> ModelClass:
+    """Get the model class for a given provider name."""
+    if provider not in self.PROVIDER_MODELS:
+      raise ValueError(f"Unsupported provider: {provider}")
+    return self.PROVIDER_MODELS[provider]
+
   async def chat(
-    self, provider: str, llm: str, chat_session_id: str | UUID, message: str, memory_size: int = 100, files: Sequence[File] = []
+    self, provider: str, llm: str, chat_session_id: str | UUID, message: str, memory_size: int = 100, assets: Sequence[Union[File, Image]] = []
   ) -> AsyncGenerator[RunResponse, None]:
     """Stream chat responses using Agno agent.
 
@@ -54,9 +48,20 @@ class LLMFactory:
     Yields:
         Streaming response tokens
     """
+
+    images: List[Image] = []
+    files: List[File] = []
+
+    for asset in assets:
+      if isinstance(asset, Image):
+        images.append(asset)
+      elif isinstance(asset, File):
+        files.append(asset)
+
+    model_class = self.get_model_class(provider)
     # Create agent with storage for memory retention
     agent = Agent(
-      model=self.model_configs[provider]["models"][llm]["class"](id=self.model_configs[provider]["models"][llm]["id"]),  # type: ignore
+      model=model_class(id=llm),  # type: ignore
       storage=self.storage,
       markdown=True,
       stream=True,
@@ -64,14 +69,14 @@ class LLMFactory:
       session_id=str(chat_session_id),
       num_history_responses=memory_size,
     )
-    async for token in await agent.arun(message):
+    async for token in await agent.arun(message, files=files or None, images=images or None):
       yield token
 
 
 if __name__ == "__main__":
 
   async def main():
-    llm_factory = LLMFactory()
+    llm_factory: LLMFactory = LLMFactory()
 
     # Example usage with streaming
     async for token in llm_factory.chat(

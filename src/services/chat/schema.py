@@ -92,3 +92,13 @@ class ChatFileUploadResponse(BaseModel):
 
   id: UUID
   url: HttpUrl
+
+class Model(str, Enum):
+  CHAT = "chat"
+  REASON = "reason"
+
+class TextInput(BaseModel):
+  text: str
+  num_prompts: int = 1
+  prompt_type: str = "task" # creative, question, continuation, task
+  model: Model = Model.CHAT
