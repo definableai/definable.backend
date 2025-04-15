@@ -1,5 +1,6 @@
 import asyncio
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Sequence
+from uuid import UUID
 
 from agno.agent import Agent, RunResponse
 from agno.media import File
@@ -15,6 +16,7 @@ class LLMFactory:
 
   def __init__(self):
     # Initialize model configurations
+    # TODO : we have to shif this in DB
     self.model_configs = {
       "openai": {
         "models": {
@@ -36,11 +38,11 @@ class LLMFactory:
 
     # Configure storage for conversation persistence
     db_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
-    self.storage = PostgresStorage(table_name="chat_sessions", db_url=db_url, schema="public")
+    self.storage = PostgresStorage(table_name="__agno_chat_sessions", db_url=db_url, schema="public")
     self.storage.create()
 
   async def chat(
-    self, provider: str, llm: str, chat_session_id: str, message: str, memory_size: int = 100, files: list[File] = []
+    self, provider: str, llm: str, chat_session_id: str | UUID, message: str, memory_size: int = 100, files: Sequence[File] = []
   ) -> AsyncGenerator[RunResponse, None]:
     """Stream chat responses using Agno agent.
 
@@ -59,10 +61,10 @@ class LLMFactory:
       markdown=True,
       stream=True,
       add_history_to_messages=True,
-      session_id=chat_session_id,
+      session_id=str(chat_session_id),
       num_history_responses=memory_size,
     )
-    async for token in await agent.arun(message, files=files):
+    async for token in await agent.arun(message):
       yield token
 
 

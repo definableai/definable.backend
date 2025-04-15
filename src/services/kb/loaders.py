@@ -1,46 +1,105 @@
 from pathlib import Path
-from typing import AsyncIterator, List, Optional
+from typing import AsyncIterator, List, Any
 from uuid import UUID, uuid4
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import (
-  CSVLoader,
-  PyPDFLoader,
-  TextLoader,
-  UnstructuredEmailLoader,
-  UnstructuredEPubLoader,
-  UnstructuredExcelLoader,
-  UnstructuredHTMLLoader,
-  UnstructuredMarkdownLoader,
-  UnstructuredPowerPointLoader,
-  UnstructuredWordDocumentLoader,
-  UnstructuredXMLLoader,
+from docling.document_converter import (
+  DocumentConverter,
+  PdfFormatOption,
+  WordFormatOption,
+  ExcelFormatOption,
 )
-from langchain_core.document_loaders.base import BaseLoader
-from langchain_core.documents import Document
+from docling.chunking import HybridChunker
+from docling.datamodel.base_models import InputFormat
+from docling.pipeline.simple_pipeline import SimplePipeline
+from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
+from langchain_core.documents import Document as LangChainDocument
 from langchain_openai import OpenAIEmbeddings
 from langchain_postgres import PGVector
 
-from database import async_engine
-from libs.s3.v1 import s3_client
-from models import KBDocumentModel
+from src.database import async_engine
+from src.libs.s3.v1 import s3_client
+from src.models import KBDocumentModel
 
 from .schema import AllowedFileExtension
 
 
-class FileLoader:
-  """File loader factory for different file types."""
+class DoclingFileLoader:
+  """File loader using Docling for document processing."""
 
   def __init__(self, kb_id: UUID, document: KBDocumentModel):
     self.kb_id = kb_id
     self.document = document
     self.file_path = ""
 
-  async def load(self) -> AsyncIterator[Document]:
-    """Load document based on file type."""
+    # Initialize the document converter with format options
+    self.converter = DocumentConverter(
+      allowed_formats=[
+        InputFormat.PDF,
+        InputFormat.IMAGE,
+        InputFormat.DOCX,
+        InputFormat.XLSX,
+        InputFormat.PPTX,
+        InputFormat.HTML,
+        InputFormat.MD,
+        InputFormat.ASCIIDOC,
+        InputFormat.CSV,
+        InputFormat.XML_JATS,
+        InputFormat.XML_USPTO,
+      ],
+      format_options={
+        InputFormat.PDF: PdfFormatOption(
+          pipeline_cls=StandardPdfPipeline,
+        ),
+        InputFormat.DOCX: WordFormatOption(
+          pipeline_cls=SimplePipeline,
+        ),
+        InputFormat.XLSX: ExcelFormatOption(
+          pipeline_cls=SimplePipeline,
+        ),
+      },
+    )
+
+    self.chunker = HybridChunker(tokenizer="BAAI/bge-small-en-v1.5")
+
+  def _get_input_format(self) -> InputFormat:
+    """Determine the input format based on file extension."""
+    file_ext = self.document.file_type.lower()
+
+    # Map file extensions to Docling input formats
+    format_mapping = {
+      AllowedFileExtension.PDF: InputFormat.PDF,
+      # Office formats
+      AllowedFileExtension.DOCX: InputFormat.DOCX,
+      AllowedFileExtension.XLSX: InputFormat.XLSX,
+      AllowedFileExtension.PPTX: InputFormat.PPTX,
+      # Web formats
+      AllowedFileExtension.HTML: InputFormat.HTML,
+      AllowedFileExtension.HTM: InputFormat.HTML,
+      # Image formats
+      AllowedFileExtension.JPG: InputFormat.IMAGE,
+      AllowedFileExtension.JPEG: InputFormat.IMAGE,
+      AllowedFileExtension.PNG: InputFormat.IMAGE,
+      AllowedFileExtension.TIFF: InputFormat.IMAGE,
+      AllowedFileExtension.BMP: InputFormat.IMAGE,
+      # Text formats
+      AllowedFileExtension.MD: InputFormat.MD,
+      AllowedFileExtension.ASCIIDOC: InputFormat.ASCIIDOC,
+      AllowedFileExtension.ADOC: InputFormat.ASCIIDOC,
+      # Data formats
+      AllowedFileExtension.CSV: InputFormat.CSV,
+      # XML formats
+      AllowedFileExtension.XML: InputFormat.XML_JATS,  # Default to JATS for generic XML
+      AllowedFileExtension.NXML: InputFormat.XML_JATS,  # NXML is typically JATS
+      AllowedFileExtension.USPTO: InputFormat.XML_USPTO,  # USPTO patent XML
+    }
+
+    return format_mapping.get(file_ext, InputFormat.MD)
+
+  async def load(self) -> AsyncIterator[LangChainDocument]:
+    """Load document using Docling."""
     try:
       # Download file from S3 to temp location
-      file_content = await s3_client.download_file(self.document.s3_key)
+      file_content = await s3_client.download_file(self.document.source_metadata["s3_key"])
       temp_path = f"/tmp/{self.document.id}"
 
       with open(temp_path, "wb") as f:
@@ -48,52 +107,45 @@ class FileLoader:
 
       self.file_path = temp_path
 
-      # Get appropriate loader
-      loader = self._get_loader()
+      try:
+        # Convert the document
+        conversion_result = self.converter.convert(self.file_path)
+        doc = conversion_result.document
 
-      # Load documents
-      if loader:
-        docs = loader.load()
-        for doc in docs:
-          # Enhance metadata
-          doc.metadata.update({
+        # Chunk the document using HybridChunker
+        chunks = self.chunker.chunk(doc)
+
+        # Convert chunks to LangChain documents
+        for idx, chunk in enumerate(chunks, start=1):
+          # Extract metadata from the chunk
+          metadata: dict[str, Any] = {
             "id": str(uuid4()),
             "kb_id": str(self.kb_id),
             "doc_id": str(self.document.id),
             "title": self.document.title,
-            "file_type": self.document.file_type,
-            "original_filename": self.document.original_filename,
-            "tokens": len(doc.page_content),
-          })
-          yield doc
+            "file_type": self.document.source_metadata["file_type"],
+            "original_filename": self.document.source_metadata["original_filename"],
+            "tokens": len(chunk.text),
+            "chunk_id": idx,
+          }
+
+          # Add page number and bounding box if available in the chunk's attributes
+          if hasattr(chunk, "page_number"):
+            metadata["page_number"] = chunk.page_number
+          if hasattr(chunk, "bounding_box"):
+            metadata["bounding_box"] = chunk.bounding_box
+
+          # Create LangChain document
+          lc_doc = LangChainDocument(page_content=chunk.text, metadata=metadata)
+          yield lc_doc
+      except Exception as e:
+        print(f"Error processing {self.document.source_metadata['file_type']} file: {str(e)}")
+        return
 
     finally:
       # Cleanup temp file
       if self.file_path and Path(self.file_path).exists():
         Path(self.file_path).unlink()
-
-  def _get_loader(self) -> Optional[BaseLoader]:
-    """Get appropriate loader based on file type."""
-    loaders = {
-      AllowedFileExtension.PDF.value: lambda: PyPDFLoader(self.file_path),
-      AllowedFileExtension.DOCX.value: lambda: UnstructuredWordDocumentLoader(self.file_path),
-      AllowedFileExtension.HTML.value: lambda: UnstructuredHTMLLoader(self.file_path),
-      AllowedFileExtension.HTM.value: lambda: UnstructuredHTMLLoader(self.file_path),
-      AllowedFileExtension.MARKDOWN.value: lambda: UnstructuredMarkdownLoader(self.file_path),
-      AllowedFileExtension.MDX.value: lambda: UnstructuredMarkdownLoader(self.file_path),
-      AllowedFileExtension.XML.value: lambda: UnstructuredXMLLoader(self.file_path),
-      AllowedFileExtension.EPUB.value: lambda: UnstructuredEPubLoader(self.file_path),
-      AllowedFileExtension.CSV.value: lambda: CSVLoader(self.file_path),
-      AllowedFileExtension.EML.value: lambda: UnstructuredEmailLoader(self.file_path),
-      AllowedFileExtension.MSG.value: lambda: UnstructuredEmailLoader(self.file_path),
-      AllowedFileExtension.PPTX.value: lambda: UnstructuredPowerPointLoader(self.file_path),
-      AllowedFileExtension.PPT.value: lambda: UnstructuredPowerPointLoader(self.file_path),
-      AllowedFileExtension.XLSX.value: lambda: UnstructuredExcelLoader(self.file_path),
-      AllowedFileExtension.XLS.value: lambda: UnstructuredExcelLoader(self.file_path),
-      AllowedFileExtension.TXT.value: lambda: TextLoader(self.file_path),
-    }
-
-    return loaders.get(self.document.file_type, lambda: TextLoader(self.file_path))()
 
 
 class DocumentProcessor:
@@ -103,7 +155,6 @@ class DocumentProcessor:
     self.embedding_model = embedding_model
     self.chunk_size = chunk_size
     self.chunk_overlap = chunk_overlap
-    self.text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
   async def process_document(self, kb_id: UUID, documents: List[KBDocumentModel], collection_name: str) -> None:
     """Process a single document - load, chunk, and store in vector DB."""
@@ -117,20 +168,15 @@ class DocumentProcessor:
         create_extension=False,
       )
 
-      lc_documents: List[Document] = []
+      lc_documents: List[LangChainDocument] = []
       for document in documents:
-        if document.content:
-          lc_documents.append(Document(page_content=document.content, metadata={**document.source_metadata, "doc_id": str(document.id)}))
-
-      # Chunk documents
-      chunks = self.text_splitter.split_documents(lc_documents)
-
-      # add index to metadata
-      for idx, chunk in enumerate(chunks):
-        chunk.metadata["chunk_index"] = idx
+        # Use DoclingFileLoader for consistent chunking
+        loader = DoclingFileLoader(kb_id=kb_id, document=document)
+        async for doc in loader.load():
+          lc_documents.append(doc)
 
       # Store in vector DB
-      await vectorstore.aadd_documents(chunks)
+      await vectorstore.aadd_documents(lc_documents)
 
     except Exception as e:
       raise Exception(f"Error processing document {document.id}: {str(e)}")
