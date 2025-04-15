@@ -1,24 +1,24 @@
 from pathlib import Path
-from typing import AsyncIterator, List, Any
+from typing import Any, AsyncIterator, List
 from uuid import UUID, uuid4
 
-from docling.document_converter import (
-  DocumentConverter,
-  PdfFormatOption,
-  WordFormatOption,
-  ExcelFormatOption,
-)
 from docling.chunking import HybridChunker
 from docling.datamodel.base_models import InputFormat
+from docling.document_converter import (
+  DocumentConverter,
+  ExcelFormatOption,
+  PdfFormatOption,
+  WordFormatOption,
+)
 from docling.pipeline.simple_pipeline import SimplePipeline
 from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
 from langchain_core.documents import Document as LangChainDocument
 from langchain_openai import OpenAIEmbeddings
 from langchain_postgres import PGVector
 
-from src.database import async_engine
-from src.libs.s3.v1 import s3_client
-from src.models import KBDocumentModel
+from database import async_engine
+from libs.s3.v1 import s3_client
+from models import KBDocumentModel
 
 from .schema import AllowedFileExtension
 

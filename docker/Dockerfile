@@ -11,16 +11,16 @@ RUN apt update -y
 RUN apt install netcat-openbsd -y
 
 # Install Poetry
-RUN pip install poetry
+RUN pip install uv
 
 # Copy poetry files
-COPY pyproject.toml poetry.lock ./
+COPY pyproject.toml uv.lock ./
 
 # Configure poetry to not create virtual environment
-RUN poetry config virtualenvs.create false
+# RUN poetry config virtualenvs.create false
 
 # Install dependencies
-RUN poetry install --no-root
+RUN uv sync
 
 # Copy project files
 COPY . .
