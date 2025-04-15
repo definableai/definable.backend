@@ -9,4 +9,7 @@
     },
     "ruff.configuration": "../ruff.toml",
     "ruff.trace.server": "off",
+    "mypy.dmypyExecutable": "${workspaceFolder}/.venv/bin/dmypy",
+    "mypy.enabled": true,
+    "mypy.runUsingActiveInterpreter": true,
 }

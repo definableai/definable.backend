@@ -104,9 +104,6 @@ class TransactionResponseSchema(BaseModel):
 class TransactionWithInvoiceSchema(TransactionResponseSchema):
   has_invoice: bool = False
 
-  class Config:
-    orm_mode = True
-
   @classmethod
   def from_transaction(cls, tx: TransactionModel):
     # First create the base object using parent's from_orm method

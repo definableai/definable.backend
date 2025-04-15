@@ -51,7 +51,6 @@ class BillingService:
     self.session: Optional[AsyncSession] = None
     self.request_id = str(uuid4())  # Add a unique ID per service instance
     self.logger = acquire.logger
-    self.logger.info("BillingService initialized", request_id=self.request_id)
 
   async def get_wallet(
     self,

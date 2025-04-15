@@ -39,11 +39,7 @@ class Middleware(BaseHTTPMiddleware):
       }
 
       if settings.environment == "dev":
-        self.logger.exception(
-          "Exception occurred:",
-          exc_info=(exc_type, exc_value, exc_traceback),
-          error_info=error_info
-        )
+        self.logger.exception("Exception occurred:", exc_info=(exc_type, exc_value, exc_traceback), error_info=error_info)
         return JSONResponse(status_code=500, content=error_info)
       return JSONResponse(status_code=500, content="Internal server error")
 

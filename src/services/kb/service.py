@@ -1,6 +1,6 @@
 from datetime import datetime
 from io import BytesIO
-from typing import Annotated, List, Optional, TypedDict
+from typing import Annotated, List, Optional
 from uuid import UUID
 
 from fastapi import BackgroundTasks, Body, Depends, HTTPException
@@ -11,6 +11,7 @@ from langchain_postgres import PGVector
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
+from typing_extensions import TypedDict
 
 from database import async_engine, get_db
 from dependencies.security import RBAC
