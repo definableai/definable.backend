@@ -57,7 +57,6 @@ class InvitationResendRequest(BaseModel):
 class InvitationActionRequest(BaseModel):
   """Schema for accepting or rejecting an invitation."""
 
-  token: str
   email: EmailStr
 
 
