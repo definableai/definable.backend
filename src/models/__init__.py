@@ -3,7 +3,7 @@ from models.agent_model import AgentModel, AgentToolModel
 from models.auth_model import UserModel
 from models.chat_model import ChatModel, ChatUploadModel, MessageModel
 from models.invitations_model import InvitationModel, InvitationStatus
-from models.kb_model import DocumentStatus, KBDocumentModel, KnowledgeBaseModel, SourceTypeModel
+from models.kb_model import DocumentStatus, KBDocumentModel, KBFolder, KnowledgeBaseModel, SourceTypeModel
 from models.llm_model import LLMModel
 from models.org_model import OrganizationMemberModel, OrganizationModel
 from models.public_upload_model import PublicUploadModel
@@ -18,6 +18,7 @@ __all__ = [
   "InvitationModel",
   "InvitationStatus",
   "KBDocumentModel",
+  "KBFolder",
   "KnowledgeBaseModel",
   "LLMModel",
   "MessageModel",
