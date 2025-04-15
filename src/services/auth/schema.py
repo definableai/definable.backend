@@ -18,7 +18,6 @@ class InviteSignup(BaseModel):
   first_name: str = Field(..., min_length=1, max_length=255)
   last_name: str = Field(..., min_length=1, max_length=255)
   password: str = Field(..., min_length=8)
-  invite_token: str
 
 
 class UserLogin(BaseModel):
