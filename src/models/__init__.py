@@ -1,7 +1,7 @@
 from database import Base
 from models.agent_model import AgentModel, AgentToolModel
 from models.auth_model import UserModel
-from models.billing_models import BillingPlanModel, ChargeModel, TransactionModel, WalletModel
+from models.billing_models import BillingPlanModel, ChargeModel, TransactionModel, WalletModel, TransactionStatus, TransactionType
 from models.chat_model import ChatModel, ChatUploadModel, MessageModel
 from models.invitations_model import InvitationModel, InvitationStatus
 from models.kb_model import DocumentStatus, KBDocumentModel, KBFolder, KnowledgeBaseModel, SourceTypeModel
@@ -34,6 +34,8 @@ __all__ = [
   "SourceTypeModel",
   "ToolCategoryModel",
   "TransactionModel",
+  "TransactionStatus",
+  "TransactionType",
   "ToolModel",
   "UserModel",
   "WalletModel",
