@@ -6,8 +6,8 @@ from pydantic import BaseModel, Field
 from libs.s3.v1 import s3_client
 from models import KBDocumentModel
 
-from .base import BaseSourceHandler
 from ..loaders import DoclingFileLoader
+from .base import BaseSourceHandler
 
 
 class FileMetadata(BaseModel):
@@ -49,7 +49,7 @@ class FileSourceHandler(BaseSourceHandler):
 
   def __init__(self, config: Dict):
     super().__init__(config)
-    self.max_file_size = config.get("max_file_size", 10 * 1024 * 1024)  # 10MB default
+    self.max_file_size = config.get("max_file_size", 20 * 1024 * 1024)  # 20MB default
     self.temp_dir = Path("/tmp")
 
   async def validate_metadata(self, metadata: Dict, **kwargs) -> bool:

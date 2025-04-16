@@ -29,6 +29,7 @@ from .schema import (
   FileDocumentData,
   KBDocumentChunksResponse,
   KBDocumentResponse,
+  KBFolderCreate,
   KnowledgeBaseCreate,
   KnowledgeBaseDetailResponse,
   KnowledgeBaseResponse,
@@ -100,6 +101,7 @@ class KnowledgeBaseService:
     "post=index_documents",
     "post=add_document_chunk",
     "get=list_knowledge",
+    "post=create_folder",
   ]
 
   def __init__(self, acquire: Acquire):
@@ -734,6 +736,76 @@ class KnowledgeBaseService:
     # Return the created chunk
     return DocumentChunk(id=UUID(chunk_ids[0]), chunk_id=new_chunk_index, content=chunk_data.content, metadata=metadata)
 
+  async def post_create_folder(
+    self,
+    org_id: UUID,
+    kb_id: UUID,
+    folder_data: Annotated[KBFolderCreate, Body(...)],
+    session: AsyncSession = Depends(get_db),
+    user: dict = Depends(RBAC("kb", "write")),
+  ) -> FolderItem:
+    """
+    Create a new folder in the knowledge base at any level.
+
+    Args:
+        org_id: Organization ID
+        kb_id: Knowledge Base ID
+        folder_data: Folder creation data
+        session: Database session
+        user: User information
+
+    Returns:
+        Created folder information
+    """
+    # Check if knowledge base exists
+    kb_model = await self._get_kb(kb_id, org_id, session)
+    if not kb_model:
+      raise HTTPException(status_code=404, detail="Knowledge base not found")
+
+    # Check parent folder if specified
+    if folder_data.parent_id:
+      # Check if parent folder exists and belongs to this KB
+      parent_query = select(KBFolder).where(KBFolder.id == folder_data.parent_id, KBFolder.kb_id == kb_id)
+      result = await session.execute(parent_query)
+      parent_folder = result.scalar_one_or_none()
+
+      if not parent_folder:
+        raise HTTPException(status_code=404, detail="Parent folder not found")
+
+      # Check if folder with same name already exists in this parent
+      existing_query = select(KBFolder).where(KBFolder.kb_id == kb_id, KBFolder.parent_id == folder_data.parent_id, KBFolder.name == folder_data.name)
+    else:
+      # Check at root level
+      existing_query = select(KBFolder).where(KBFolder.kb_id == kb_id, KBFolder.parent_id.is_(None), KBFolder.name == folder_data.name)
+
+    # Check for existing folder with the same name
+    result = await session.execute(existing_query)
+    existing_folder = result.scalar_one_or_none()
+    if existing_folder:
+      raise HTTPException(status_code=400, detail=f"A folder named '{folder_data.name}' already exists")
+
+    # Create new folder
+    new_folder = KBFolder(name=folder_data.name, parent_id=folder_data.parent_id, kb_id=kb_id, folder_info=folder_data.folder_info)
+
+    session.add(new_folder)
+    await session.commit()
+    await session.refresh(new_folder)
+
+    # Count items in the folder (will be 0 for a new folder)
+    item_count = 0
+
+    # Format response using FolderItem type
+    folder_response = FolderItem(
+      id=str(new_folder.id),
+      name=new_folder.name,
+      folder_info=new_folder.folder_info,
+      created_at=new_folder.created_at.isoformat() if hasattr(new_folder, "created_at") else None,
+      updated_at=new_folder.updated_at.isoformat(),
+      item_count=item_count,
+    )
+
+    return folder_response
+
   async def get_list_knowledge(
     self,
     org_id: UUID,
@@ -794,7 +866,7 @@ class KnowledgeBaseService:
       folder_item: FolderItem = {
         "id": str(folder.id),
         "name": folder.name,
-        "folder_info": folder.folder_info,
+        "folder_info": folder.folder_info or {},  # Ensure folder_info is always a dictionary
         "created_at": folder.created_at.isoformat() if hasattr(folder, "created_at") else None,
         "updated_at": folder.updated_at.isoformat(),
         "item_count": total_items,
