@@ -291,3 +291,11 @@ class DocumentChunkDelete(BaseModel):
   """Schema for deleting document chunks."""
 
   chunk_ids: List[str]
+
+
+class KBFolderCreate(BaseModel):
+  """Schema for creating a folder in the knowledge base."""
+
+  name: str = Field(..., min_length=1, max_length=100, description="Folder name")
+  parent_id: Optional[UUID] = Field(default=None, description="Parent folder ID. If None, folder will be created at root level")
+  folder_info: Dict = Field(default_factory=dict, description="Additional folder metadata")
