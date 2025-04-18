@@ -1,30 +1,30 @@
-from datetime import timedelta
+import json
 from uuid import uuid4
 
-from fastapi import Depends, HTTPException, status
-from sqlalchemy import and_, select
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from dependencies.security import RBAC
+from libs.stytch.v1 import stytch_base
 from models import (
-  InvitationModel,
-  InvitationStatus,
   OrganizationMemberModel,
   OrganizationModel,
   RoleModel,
   UserModel,
 )
 from services.__base.acquire import Acquire
+from utils import verify_svix_signature
 
-from .schema import InviteSignup, TokenResponse, UserLogin, UserResponse, UserSignup
-from uuid import UUID
-from dependencies.security import InviteTokenBearer
+from .schema import InviteSignup, StytchUser
 
 
 class AuthService:
   """Authentication service."""
 
-  http_exposed = ["post=signup", "post=login", "get=me", "post=signup_invite"]
+  http_exposed = ["post=signup_invite"]
 
   def __init__(self, acquire: Acquire):
     """Initialize service."""
@@ -33,178 +33,74 @@ class AuthService:
     self.settings = acquire.settings
     self.logger = acquire.logger
 
-  async def post_signup(self, user_data: UserSignup, session: AsyncSession = Depends(get_db)) -> UserResponse:
-    """Sign up a new user."""
-    try:
-      self.logger.info(f"Starting user signup process for email: {user_data.email}")
+  async def post(self, request: Request, db: AsyncSession = Depends(get_db)) -> JSONResponse:
+    """Post request."""
+    signature = request.headers["svix-signature"]
+    svix_id = request.headers["svix-id"]
+    svix_timestamp = request.headers["svix-timestamp"]
+    body = await request.body()
 
-      # Check if user exists
-      query = select(UserModel).where(UserModel.email == user_data.email)
-      result = await session.execute(query)
-      if result.unique().scalar_one_or_none():
-        self.logger.error(f"Email already registered: {user_data.email}")
-        raise HTTPException(
-          status_code=status.HTTP_400_BAD_REQUEST,
-          detail="Email already registered",
-        )
+    status = verify_svix_signature(svix_id, svix_timestamp, body.decode("utf-8"), signature)
+    if not status:
+      raise HTTPException(status_code=400, detail="Invalid signature")
+    data = json.loads(body.decode("utf-8"))
 
-      # Create user
-      self.logger.debug("Creating new user", email=user_data.email)
-      user_dict = user_data.model_dump(exclude={"confirm_password"})
-      user_dict["password"] = self.utils.get_password_hash(user_dict["password"])
-      db_user = UserModel(**user_dict)
-      session.add(db_user)
-      await session.flush()
+    user = data["user"]
+    if data["action"] == "CREATE":
+      if len(user["emails"]) == 0:
+        return JSONResponse(content={"message": "No email found"})
 
-      # Set up default organization with owner role
-      await self._setup_default_organization(db_user, session)
-      await session.commit()
-      await session.refresh(db_user)
-
-      self.logger.info("User signup completed successfully", user_id=str(db_user.id))
-      return UserResponse(id=db_user.id, email=db_user.email, message="User created successfully")
-
-    except HTTPException:
-      # Re-raise known exceptions
-      raise
-    except Exception as e:
-      await session.rollback()
-      self.logger.error(f"Signup failed: {str(e)}", exc_info=True)
-      raise HTTPException(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail="Failed to create user account",
+      db_user = await self._create_new_user(
+        StytchUser(
+          email=user["emails"][0]["email"],
+          stytch_id=user["user_id"],
+          first_name=user["name"]["first_name"],
+          last_name=user["name"]["last_name"],
+          metadata=data,
+        ),
+        db,
       )
+      if db_user:
+        await stytch_base.update_user(
+          user["user_id"],
+          str(db_user.id),
+        )
+      return JSONResponse(content={"message": "User created successfully"})
+    else:
+      return JSONResponse(content={"message": "Invalid action"})
 
   async def post_signup_invite(
     self,
     user_data: InviteSignup,
-    token_payload: dict = Depends(InviteTokenBearer()),
+    token_payload: dict = Depends(RBAC("kb", "write")),
     session: AsyncSession = Depends(get_db),
-  ) -> UserResponse:
-    try:
-      # Get invitation
-      query = select(InvitationModel).where(
-        and_(
-          InvitationModel.id == UUID(token_payload["invitation_id"]),
-          InvitationModel.invitee_email == token_payload["email"],
-        )
-      )
-      result = await session.execute(query)
-      invitation = result.unique().scalar_one_or_none()
-
-      if not invitation:
-        self.logger.error(f"Invalid invitation token: {token_payload}")
-        raise HTTPException(
-          status_code=status.HTTP_400_BAD_REQUEST,
-          detail="Invalid invitation",
-        )
-
-      self.logger.info(f"Starting invite signup process for email: {invitation.invitee_email}")
-
-      # Check if invitation is pending
-      if invitation.status != int(InvitationStatus.PENDING):
-        self.logger.error(f"Invitation is not pending: {invitation.id}")
-        raise HTTPException(
-          status_code=status.HTTP_400_BAD_REQUEST,
-          detail=f"Invitation is not pending (current status: {InvitationStatus(invitation.status).name})",
-        )
-
-      # Check if user exists
-      user_query = select(UserModel).where(UserModel.email == invitation.invitee_email)
-      user_result = await session.execute(user_query)
-      if user_result.unique().scalar_one_or_none():
-        self.logger.error(f"Email already registered: {invitation.invitee_email}")
-        raise HTTPException(
-          status_code=status.HTTP_400_BAD_REQUEST,
-          detail="Email already registered",
-        )
-
-      # Create user
-      self.logger.debug("Creating new user", email=invitation.invitee_email)
-      user_dict = user_data.model_dump()
-      user_dict["email"] = invitation.invitee_email
-      user_dict["password"] = self.utils.get_password_hash(user_dict["password"])
-      db_user = UserModel(**user_dict)
-      session.add(db_user)
-      await session.flush()
-
-      # Add user to organization with invited role
-      try:
-        self.logger.debug("Adding user to organization", user_id=str(db_user.id))
-        member = OrganizationMemberModel(
-          organization_id=invitation.organization_id,
-          user_id=db_user.id,
-          role_id=invitation.role_id,
-          status="active",  # Directly active as they're invited
-        )
-        session.add(member)
-
-        # Update invitation status
-        invitation.status = int(InvitationStatus.ACCEPTED)
-        session.add(invitation)
-
-        await session.commit()
-        await session.refresh(db_user)
-
-        self.logger.info(
-          "Invite signup completed successfully",
-          user_id=str(db_user.id),
-          org_id=str(invitation.organization_id),
-        )
-        return UserResponse(
-          id=db_user.id,
-          email=db_user.email,
-          message="User created and added to organization successfully",
-        )
-
-      except Exception as e:
-        await session.rollback()
-        self.logger.error(f"Failed to add user to organization: {str(e)}")
-        raise HTTPException(
-          status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-          detail=f"Failed to add user to organization: {str(e)}",
-        )
-
-    except Exception as e:
-      raise HTTPException(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail=str(e),
-      )
-
-  async def post_login(self, form_data: UserLogin, session: AsyncSession = Depends(get_db)) -> TokenResponse:
-    """Login user."""
-    self.logger.info("Login attempt", email=form_data.email)
-    # Get user
-    query = select(UserModel).where(UserModel.email == form_data.email, UserModel.is_active)
-    result = await session.execute(query)
-    user = result.scalar_one_or_none()
-
-    if not user or not self.utils.verify_password(form_data.password, user.password):
-      self.logger.warning("Failed login attempt", email=form_data.email)
-      raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Incorrect email or password",
-        headers={"WWW-Authenticate": "Bearer"},
-      )
-
-    # Create access token
-    self.logger.debug("Creating access token", user_id=str(user.id))
-    access_token = self.utils.create_access_token(
-      data={"id": str(user.id)},
-      expires_delta=timedelta(minutes=self.settings.jwt_expire_minutes),
-    )
-
-    self.logger.info("Login successful", user_id=str(user.id))
-    return TokenResponse(access_token=access_token)
-
-  async def get_me(
-    self,
-    current_user: dict,
-  ) -> UserResponse:
-    """Get current user."""
-    return UserResponse.model_validate(current_user)
+  ) -> JSONResponse:
+    """Post signup invite."""
+    print(token_payload)
+    return JSONResponse(content={"status": "success"})
 
   ### PRIVATE METHODS ###
+
+  async def _create_new_user(self, user_data: StytchUser, session: AsyncSession) -> UserModel | None:
+    """Create a new user."""
+    user = await session.execute(select(UserModel).where(UserModel.stytch_id == user_data.stytch_id))
+    results = user.unique().scalar_one_or_none()
+    if results:
+      return None
+    else:
+      user = UserModel(
+        email=user_data.email,
+        stytch_id=user_data.stytch_id,
+        first_name=user_data.first_name,
+        last_name=user_data.last_name,
+        _metadata=user_data.metadata,
+      )
+      session.add(user)
+      await session.flush()
+      await self._setup_default_organization(user, session)
+      await session.commit()
+      await session.refresh(user)
+      return user
 
   async def _setup_default_organization(self, user: UserModel, session: AsyncSession) -> OrganizationModel:
     """

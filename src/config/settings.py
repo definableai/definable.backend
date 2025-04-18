@@ -36,6 +36,10 @@ class Settings(BaseSettings):
   python_sandbox_testing_url: str
   deepseek_api_key: str
   prompt_buffer_size: int
+  stytch_project_id: str
+  stytch_secret: str
+  stytch_environment: str
+  stytch_webhook_secret: str
 
   class Config:
     """Config class."""

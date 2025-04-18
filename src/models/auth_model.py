@@ -1,4 +1,5 @@
-from sqlalchemy import Boolean, String
+from sqlalchemy import String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import CRUD
@@ -9,11 +10,12 @@ class UserModel(CRUD):
 
   __tablename__ = "users"
 
+  stytch_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
   email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
-  password: Mapped[str] = mapped_column(String(64), nullable=False)
-  first_name: Mapped[str] = mapped_column(String(50), nullable=False)
-  last_name: Mapped[str] = mapped_column(String(50), nullable=False)
-  is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+  password: Mapped[str] = mapped_column(String(64), nullable=True)
+  first_name: Mapped[str] = mapped_column(String(50), nullable=True)
+  last_name: Mapped[str] = mapped_column(String(50), nullable=True)
+  _metadata: Mapped[dict] = mapped_column("metadata", JSONB, nullable=True)
 
   # Relationships
   sent_invitations = relationship("InvitationModel", foreign_keys="InvitationModel.invited_by", back_populates="inviter")
