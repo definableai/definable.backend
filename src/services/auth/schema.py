@@ -1,23 +1,34 @@
+from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
+
+
+class StytchUser(BaseModel):
+  """Stytch user schema."""
+
+  email: EmailStr
+  stytch_id: str
+  first_name: Optional[str] = Field(None)
+  last_name: Optional[str] = Field(None)
+  metadata: Optional[dict] = Field(None)
 
 
 class UserSignup(BaseModel):
   """User signup schema."""
 
   email: EmailStr
-  first_name: str = Field(..., min_length=1, max_length=255)
-  last_name: str = Field(..., min_length=1, max_length=255)
-  password: str = Field(..., min_length=8)
+  first_name: str
+  last_name: str
+  password: str
 
 
 class InviteSignup(BaseModel):
   """Invite signup schema."""
 
-  first_name: str = Field(..., min_length=1, max_length=255)
-  last_name: str = Field(..., min_length=1, max_length=255)
-  password: str = Field(..., min_length=8)
+  first_name: str
+  last_name: str
+  email: EmailStr
 
 
 class UserLogin(BaseModel):

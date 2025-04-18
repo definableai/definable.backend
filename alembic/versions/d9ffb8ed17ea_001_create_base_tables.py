@@ -51,17 +51,20 @@ def upgrade():
   op.create_table(
     "users",
     sa.Column("id", postgresql.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+    sa.Column("stytch_id", sa.String(255), nullable=False),
     sa.Column("email", sa.String(255), nullable=False),
-    sa.Column("password", sa.String(255), nullable=False),
-    sa.Column("first_name", sa.String(255), nullable=False),
-    sa.Column("last_name", sa.String(255), nullable=False),
-    sa.Column("is_active", sa.Boolean(), server_default="true", nullable=False),
+    sa.Column("password", sa.String(255), nullable=True),
+    sa.Column("first_name", sa.String(255), nullable=True),
+    sa.Column("last_name", sa.String(255), nullable=True),
+    sa.Column("metadata", postgresql.JSONB(), nullable=True),
     sa.Column("created_at", sa.TIMESTAMP(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
     sa.Column("updated_at", sa.TIMESTAMP(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
     sa.PrimaryKeyConstraint("id"),
     sa.UniqueConstraint("email"),
+    sa.UniqueConstraint("stytch_id"),
   )
   op.create_index("ix_users_email", "users", ["email"], unique=True)
+  op.create_index("ix_users_stytch_id", "users", ["stytch_id"], unique=True)
 
   # Create roles table
   op.create_table(
