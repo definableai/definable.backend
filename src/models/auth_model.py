@@ -1,4 +1,4 @@
-from sqlalchemy import String
+from sqlalchemy import Boolean, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -13,6 +13,8 @@ class UserModel(CRUD):
   stytch_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
   email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
   password: Mapped[str] = mapped_column(String(64), nullable=True)
+  password_id: Mapped[str] = mapped_column(String(255), nullable=True, unique=True, index=True)
+  is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
   first_name: Mapped[str] = mapped_column(String(50), nullable=True)
   last_name: Mapped[str] = mapped_column(String(50), nullable=True)
   _metadata: Mapped[dict] = mapped_column("metadata", JSONB, nullable=True)

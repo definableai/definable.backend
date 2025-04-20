@@ -54,8 +54,10 @@ def upgrade():
     sa.Column("stytch_id", sa.String(255), nullable=False),
     sa.Column("email", sa.String(255), nullable=False),
     sa.Column("password", sa.String(255), nullable=True),
+    sa.Column("password_id", sa.String(255), nullable=True),
     sa.Column("first_name", sa.String(255), nullable=True),
     sa.Column("last_name", sa.String(255), nullable=True),
+    sa.Column("is_active", sa.Boolean(), server_default="false", nullable=False),
     sa.Column("metadata", postgresql.JSONB(), nullable=True),
     sa.Column("created_at", sa.TIMESTAMP(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
     sa.Column("updated_at", sa.TIMESTAMP(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
@@ -65,6 +67,7 @@ def upgrade():
   )
   op.create_index("ix_users_email", "users", ["email"], unique=True)
   op.create_index("ix_users_stytch_id", "users", ["stytch_id"], unique=True)
+  op.create_index("ix_users_password_id", "users", ["password_id"], unique=True)
 
   # Create roles table
   op.create_table(

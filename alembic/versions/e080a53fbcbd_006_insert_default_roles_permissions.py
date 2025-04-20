@@ -27,6 +27,7 @@ def upgrade() -> None:
     ("users_read", "View users", "users", "read"),
     ("users_write", "Modify users", "users", "write"),
     ("users_delete", "Delete users", "users", "delete"),
+    ("users_invite", "Invite users", "users", "invite"),
     # Agent permissions
     ("agents_read", "View agents", "agents", "read"),
     ("agents_write", "Modify agents", "agents", "write"),
@@ -127,7 +128,7 @@ def upgrade() -> None:
     elif role_name == "admin":
       # Admin gets all read/write but no delete
       for perm_name, perm_id in permission_ids.items():
-        if "delete" not in perm_name:
+        if "delete" not in perm_name and "invite" not in perm_name:
           op.execute(f"""
                     INSERT INTO role_permissions (id, role_id, permission_id, created_at)
                     VALUES ('{str(uuid4())}', '{role_id}', '{perm_id}', CURRENT_TIMESTAMP)

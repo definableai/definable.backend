@@ -11,6 +11,8 @@ class StytchUser(BaseModel):
   stytch_id: str
   first_name: Optional[str] = Field(None)
   last_name: Optional[str] = Field(None)
+  is_active: bool = Field(default=False)
+  password_id: Optional[str] = Field(None)
   metadata: Optional[dict] = Field(None)
 
 
@@ -29,6 +31,7 @@ class InviteSignup(BaseModel):
   first_name: str
   last_name: str
   email: EmailStr
+  role: str
 
 
 class UserLogin(BaseModel):
