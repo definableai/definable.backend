@@ -62,7 +62,6 @@ class AuthService:
         return JSONResponse(content={"message": "No email found"})
 
       self.logger.info("Creating new user from webhook", stytch_id=user.get("user_id"), email=user["emails"][0]["email"])
-        return JSONResponse(content={"message": "No email found"})
       db_user = await self._create_new_user(
         StytchUser(
           email=user["emails"][0]["email"],
