@@ -50,6 +50,11 @@ class AuthService:
     data = json.loads(body.decode("utf-8"))
     self.logger.debug("Webhook payload received", action=data.get("action"))
 
+    status = verify_svix_signature(svix_id, svix_timestamp, body.decode("utf-8"), signature)
+    if not status:
+      raise HTTPException(status_code=400, detail="Invalid signature")
+    data = json.loads(body.decode("utf-8"))
+
     user = data["user"]
     if data["action"] == "CREATE":
       if len(user["emails"]) == 0:
@@ -57,6 +62,7 @@ class AuthService:
         return JSONResponse(content={"message": "No email found"})
 
       self.logger.info("Creating new user from webhook", stytch_id=user.get("user_id"), email=user["emails"][0]["email"])
+        return JSONResponse(content={"message": "No email found"})
       db_user = await self._create_new_user(
         StytchUser(
           email=user["emails"][0]["email"],
@@ -279,8 +285,3 @@ class AuthService:
     )
 
     return org
-
-  async def _check_user_exists(self, email: str, session: AsyncSession) -> bool | UserModel:
-    """Check if a user exists in the database."""
-    user = await session.execute(select(UserModel).where(UserModel.email == email))
-    return user.unique().scalar_one_or_none()
