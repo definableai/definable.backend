@@ -25,7 +25,7 @@ from .schema import InviteSignup, StytchUser
 class AuthService:
   """Authentication service."""
 
-  http_exposed = ["post=signup_invite"]
+  http_exposed = ["post=signup_invite", "put=invitation_update"]
 
   def __init__(self, acquire: Acquire):
     """Initialize service."""
