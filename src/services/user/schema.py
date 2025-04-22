@@ -41,7 +41,8 @@ class UserListResponse(BaseModel):
 
   class Config:
     from_attributes = True
-    
+
+
 class InviteSignup(BaseModel):
   """Invite signup schema."""
 
@@ -49,6 +50,6 @@ class InviteSignup(BaseModel):
   last_name: str
   email: EmailStr
   role: str
-  
+
   class Config:
     from_attributes = True

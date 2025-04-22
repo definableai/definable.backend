@@ -1,13 +1,12 @@
 import json
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from dependencies.security import RBAC
 from libs.stytch.v1 import stytch_base
 from models import (
   OrganizationMemberModel,
@@ -15,11 +14,10 @@ from models import (
   RoleModel,
   UserModel,
 )
-from models.invitations_model import InvitationModel, InvitationStatus
 from services.__base.acquire import Acquire
 from utils import verify_svix_signature
 
-from .schema import InviteSignup, StytchUser
+from .schema import StytchUser
 
 
 class AuthService:

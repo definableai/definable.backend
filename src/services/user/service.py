@@ -1,19 +1,18 @@
-from uuid import UUID
 import json
+from uuid import UUID
 
-from fastapi import Depends, HTTPException, status, Request
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from dependencies.security import JWTBearer, RBAC
-from models import OrganizationMemberModel, OrganizationModel, RoleModel, UserModel
-from services.__base.acquire import Acquire
+from dependencies.security import RBAC, JWTBearer
 from libs.stytch.v1 import stytch_base
-from models import InvitationModel, InvitationStatus, UserModel
+from models import InvitationModel, InvitationStatus, OrganizationMemberModel, OrganizationModel, RoleModel, UserModel
+from services.__base.acquire import Acquire
 
-from .schema import OrganizationInfo, UserDetailResponse, InviteSignup
+from .schema import InviteSignup, OrganizationInfo, UserDetailResponse
 
 
 class UserService:
@@ -55,17 +54,17 @@ class UserService:
   ) -> JSONResponse:
     """
     Get a list of all users in an organization.
-    
+
     Only organization owners can access this endpoint.
-    
+
     Args:
         org_id: Organization ID
         user: JWT token payload of the logged-in user
         session: Database session
-        
+
     Returns:
         List[UserListResponse]: List of users in the organization
-        
+
     Raises:
         HTTPException: If user doesn't have permission or other errors occur
     """
@@ -110,22 +109,15 @@ class UserService:
 
       # Get all active members of the organization
       members_query = (
-        select(
-          OrganizationMemberModel,
-          UserModel,
-          RoleModel
-        )
+        select(OrganizationMemberModel, UserModel, RoleModel)
         .join(UserModel, OrganizationMemberModel.user_id == UserModel.id)
         .join(RoleModel, OrganizationMemberModel.role_id == RoleModel.id)
-        .where(
-          OrganizationMemberModel.organization_id == org_id,
-          OrganizationMemberModel.status == "active"
-        )
+        .where(OrganizationMemberModel.organization_id == org_id, OrganizationMemberModel.status == "active")
       )
-      
+
       result = await session.execute(members_query)
       members_data = result.all()
-      
+
       # Transform the data into the response format
       users_list = []
       for member, user_model, role in members_data:
@@ -134,18 +126,12 @@ class UserService:
           "email": user_model.email,
           "first_name": user_model.first_name,
           "last_name": user_model.last_name,
-          "role": {
-            "id": str(role.id),
-            "name": role.name
-          },
-          "created_at": user_model.created_at.isoformat() if user_model.created_at else None
+          "role": {"id": str(role.id), "name": role.name},
+          "created_at": user_model.created_at.isoformat() if user_model.created_at else None,
         })
 
       self.logger.info(f"Returning list of {len(users_list)} members for organization {org_id}")
-      return JSONResponse(
-        content=users_list,
-        status_code=status.HTTP_200_OK
-      )
+      return JSONResponse(content=users_list, status_code=status.HTTP_200_OK)
 
     except Exception as e:
       self.logger.error(f"Error in get_list: {str(e)}", exc_info=True)
@@ -153,7 +139,7 @@ class UserService:
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail="Failed to retrieve users list",
       )
-      
+
   async def post_invite(
     self,
     user_data: InviteSignup,
