@@ -1,21 +1,25 @@
 from uuid import UUID
+import json
 
-from fastapi import Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import Depends, HTTPException, status, Request
+from fastapi.responses import JSONResponse
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from dependencies.security import JWTBearer
+from dependencies.security import JWTBearer, RBAC
 from models import OrganizationMemberModel, OrganizationModel, RoleModel, UserModel
 from services.__base.acquire import Acquire
+from libs.stytch.v1 import stytch_base
+from models import InvitationModel, InvitationStatus, UserModel
 
-from .schema import OrganizationInfo, UserDetailResponse
+from .schema import OrganizationInfo, UserDetailResponse, InviteSignup
 
 
 class UserService:
   """User service."""
 
-  http_exposed = ["get=me", "get=details"]
+  http_exposed = ["get=me", "get=list", "post=invite", "put=invite"]
 
   def __init__(self, acquire: Acquire):
     """Initialize service."""
@@ -23,6 +27,7 @@ class UserService:
     self.utils = acquire.utils
     self.settings = acquire.settings
     self.logger = acquire.logger
+    self.schemas = acquire.schemas
 
   async def get_me(
     self,
@@ -42,38 +47,32 @@ class UserService:
         detail="Failed to retrieve user details",
       )
 
-  async def get_details(
+  async def get_list(
     self,
-    user_id: UUID,
     org_id: UUID,
     user: dict = Depends(JWTBearer()),
     session: AsyncSession = Depends(get_db),
-  ) -> UserDetailResponse:
+  ) -> JSONResponse:
     """
-    Get details for a specific user by ID.
-
-    The logged-in user must be in the same organization as the target user.
-    Access is restricted by role hierarchy:
-    - Owners can view anyone
-    - Admins can view developers but not owners
-    - Developers can only view themselves
-
+    Get a list of all users in an organization.
+    
+    Only organization owners can access this endpoint.
+    
     Args:
-        user_id: ID of the user to view
-        org_id: Organization ID context
+        org_id: Organization ID
         user: JWT token payload of the logged-in user
         session: Database session
-
+        
     Returns:
-        UserDetailResponse: User details with organization information
-
+        List[UserListResponse]: List of users in the organization
+        
     Raises:
-        HTTPException: If user is not found or the logged-in user doesn't have permission
+        HTTPException: If user doesn't have permission or other errors occur
     """
     try:
-      self.logger.info(f"User {user['id']} requesting details for user {user_id} in org {org_id}")
+      self.logger.info(f"User {user['id']} requesting list of all members in org {org_id}")
 
-      # First, verify that the logged-in user belongs to the specified organization
+      # Verify that the logged-in user belongs to the specified organization
       logged_in_user_id = UUID(user["id"])
 
       # Check if the logged-in user is a member of the specified organization
@@ -101,65 +100,139 @@ class UserService:
           detail="You don't have a role in this organization",
         )
 
-      # If user is checking their own details, proceed
-      if logged_in_user_id == user_id:
-        self.logger.info(f"User {logged_in_user_id} is viewing their own details")
-        return await self._get_user_details(user_id, session)
-
-      # Check if target user belongs to the same organization
-      target_member_query = select(OrganizationMemberModel).where(
-        OrganizationMemberModel.user_id == user_id,
-        OrganizationMemberModel.organization_id == org_id,
-        OrganizationMemberModel.status == "active",
-      )
-      target_member_result = await session.execute(target_member_query)
-      target_member = target_member_result.scalar_one_or_none()
-
-      if not target_member:
-        self.logger.warning(f"Target user {user_id} is not a member of organization {org_id}")
-        raise HTTPException(
-          status_code=status.HTTP_404_NOT_FOUND,
-          detail="User not found in this organization",
-        )
-
-      # Get the target user's role
-      target_role = await session.get(RoleModel, target_member.role_id) if target_member.role_id else None
-      if not target_role:
-        self.logger.warning(f"Target user {user_id} has no role in organization {org_id}")
-        raise HTTPException(
-          status_code=status.HTTP_404_NOT_FOUND,
-          detail="User has no role in this organization",
-        )
-
-      # Check role-based permissions
-      # Owners (level 100) can view anyone
-      # Admins (level 90) can view developers (level 50) but not owners
-      # Developers (level 50) can view only themselves (already checked above)
-
-      if logged_in_role.name.upper() == "OWNER":
-        # Owners can view anyone
-        self.logger.info(f"Owner {logged_in_user_id} viewing user {user_id}")
-        return await self._get_user_details(user_id, session)
-      elif logged_in_role.name.upper() == "ADMIN" and target_role.name.upper() != "OWNER":
-        # Admins can view non-owners
-        self.logger.info(f"Admin {logged_in_user_id} viewing non-owner user {user_id}")
-        return await self._get_user_details(user_id, session)
-      else:
-        # Default deny
-        self.logger.warning(f"User {logged_in_user_id} (role: {logged_in_role.name}) not allowed to view {user_id} (role: {target_role.name})")
+      # Check if user is an OWNER
+      if logged_in_role.name.upper() != "OWNER":
+        self.logger.warning(f"User {logged_in_user_id} with role {logged_in_role.name} attempted to list all members")
         raise HTTPException(
           status_code=status.HTTP_403_FORBIDDEN,
-          detail="You don't have permission to view this user",
+          detail="Only organization owners can view all members",
         )
 
-    except HTTPException:
-      raise
+      # Get all active members of the organization
+      members_query = (
+        select(
+          OrganizationMemberModel,
+          UserModel,
+          RoleModel
+        )
+        .join(UserModel, OrganizationMemberModel.user_id == UserModel.id)
+        .join(RoleModel, OrganizationMemberModel.role_id == RoleModel.id)
+        .where(
+          OrganizationMemberModel.organization_id == org_id,
+          OrganizationMemberModel.status == "active"
+        )
+      )
+      
+      result = await session.execute(members_query)
+      members_data = result.all()
+      
+      # Transform the data into the response format
+      users_list = []
+      for member, user_model, role in members_data:
+        users_list.append({
+          "id": str(user_model.id),
+          "email": user_model.email,
+          "first_name": user_model.first_name,
+          "last_name": user_model.last_name,
+          "role": {
+            "id": str(role.id),
+            "name": role.name
+          },
+          "created_at": user_model.created_at.isoformat() if user_model.created_at else None
+        })
+
+      self.logger.info(f"Returning list of {len(users_list)} members for organization {org_id}")
+      return JSONResponse(
+        content=users_list,
+        status_code=status.HTTP_200_OK
+      )
+
     except Exception as e:
-      self.logger.error(f"Error in get_details: {str(e)}", exc_info=True)
+      self.logger.error(f"Error in get_list: {str(e)}", exc_info=True)
       raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail="Failed to retrieve user details",
+        detail="Failed to retrieve users list",
       )
+      
+  async def post_invite(
+    self,
+    user_data: InviteSignup,
+    token_payload: dict = Depends(RBAC("users", "invite")),
+    session: AsyncSession = Depends(get_db),
+  ) -> JSONResponse:
+    """Post signup invite."""
+    try:
+      # Check if user exists
+      email = user_data.email
+      query = select(UserModel).where(UserModel.email == email)
+      result = await session.execute(query)
+      user = result.scalars().first()
+
+      if user:
+        # Get user from Stytch
+        stytch_user = await stytch_base.get_user(str(user.id))
+        if not stytch_user.success:  # If user does not exist in Stytch, invite them
+          invite_response = await stytch_base.invite_user(
+            email=email,
+            first_name=user_data.first_name,
+            last_name=user_data.last_name,
+          )
+
+        if not invite_response.success:
+          self.logger.error("Failed to invite user through Stytch", email=email, error=invite_response.errors)
+          raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send invitation")
+      else:
+        # User does not exist, create new user
+        user = await stytch_base.invite_user(email=email, first_name=user_data.first_name, last_name=user_data.last_name)
+
+        invitation = InvitationModel(
+          organization_id=UUID(token_payload.get("org_id")),
+          role_id=user_data.role,
+          invitee_email=email,
+          invited_by=UUID(token_payload.get("user_id")),
+          status=InvitationStatus.PENDING,
+        )
+        session.add(invitation)
+        await session.commit()
+
+      return JSONResponse(
+        content={
+          "message": "User invited successfully",
+        },
+        status_code=status.HTTP_200_OK,
+      )
+
+    except Exception as e:
+      self.logger.error("Error inviting user", email=email, error=str(e))
+      raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+  async def put_invite(
+    self,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+  ) -> JSONResponse:
+    """Update invitation status."""
+    try:
+      content = await request.body()
+      data = json.loads(content.decode("utf-8"))
+      invitation_id = data.get("trusted_metadata").get("invitation_id")
+      invitation_status = data.get("trusted_metadata").get("invitation_status")
+
+      query = update(InvitationModel).where(InvitationModel.id == invitation_id).values(status=invitation_status)
+      await session.execute(query)
+      await session.commit()
+
+      return JSONResponse(
+        content={
+          "message": "Invitation updated successfully",
+        },
+        status_code=status.HTTP_200_OK,
+      )
+    except Exception as e:
+      self.logger.error("Error updating invitation status", invitation_id=invitation_id, error=str(e))
+      raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+  ### PRIVATE METHODS ###
 
   async def _get_user_details(self, user_id: UUID, session: AsyncSession) -> UserDetailResponse:
     """
