@@ -2,7 +2,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
-from sqlalchemy import and_, delete, func, insert, not_, select
+from sqlalchemy import and_, delete, func, insert, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
@@ -169,7 +169,7 @@ class RoleService:
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("roles", "read")),
   ) -> List[RoleResponse]:
-    query = select(RoleModel).where(RoleModel.organization_id == org_id)
+    query = select(RoleModel).where(or_(RoleModel.organization_id == org_id, RoleModel.is_system_role))
     result = await session.execute(query)
     return list(result.unique().scalars().all())
 

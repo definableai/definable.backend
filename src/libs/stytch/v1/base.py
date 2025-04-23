@@ -30,6 +30,14 @@ class StytchBase:
     except Exception as e:
       return LibResponse.error_response([{"message": str(e)}])
 
+  async def get_sessions(self, user_id: str) -> LibResponse[GetResponse] | LibResponse[None]:
+    """Get sessions."""
+    try:
+      response = await self.client.sessions.get_async(user_id)
+      return LibResponse.success_response(response)
+    except Exception as e:
+      return LibResponse.error_response([{"message": str(e)}])
+
   async def invite_user(
     self, email: str, first_name: str | None = None, last_name: str | None = None
   ) -> LibResponse[InviteResponse] | LibResponse[None]:
@@ -76,9 +84,9 @@ if __name__ == "__main__":
 
   async def main():
     stytch_base = StytchBase()
-    # print(await stytch_base.get_user("user-test-4a52d66b-53e1-4f57-b790-b95fd3f88700"))
-    # print(await stytch_base.invite_user("pratyush.yadav1@zyeta.io", "Pratyush"))
+    print(await stytch_base.get_sessions("user-test-32157863-a7a7-4c32-812c-154bb2360ae5"))
+    # print(await stytch_base.invite_user("anandeshsharma5@zyeta.io", "Anandesh", "Sharma"))
     # print(await stytch_base.authenticate_user("RbYYgfNxHDqQA9YJaRWRVoVfF2iY08bemVdYtaIOhvOa"))
-    print(await stytch_base.update_user("user-test-9865995b-2dea-419a-b990-ec1fbb3e542c", "123"))
+    # print(await stytch_base.update_user("user-test-9865995b-2dea-419a-b990-ec1fbb3e542c", "123"))
 
   asyncio.run(main())

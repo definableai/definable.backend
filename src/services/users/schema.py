@@ -1,6 +1,7 @@
+from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 class OrganizationInfo(BaseModel):
@@ -24,7 +25,6 @@ class UserDetailResponse(BaseModel):
   first_name: str
   last_name: str
   full_name: str
-  is_active: bool
   organizations: list[OrganizationInfo]
 
   class Config:
@@ -36,8 +36,26 @@ class UserListResponse(BaseModel):
 
   users: list[UserDetailResponse]
   total: int
-  page: int
-  page_size: int
 
   class Config:
     from_attributes = True
+
+class InviteSignup(BaseModel):
+  """Invite signup schema."""
+
+  first_name: str
+  last_name: str
+  email: EmailStr
+  role: str
+
+  class Config:
+    from_attributes = True
+
+class StytchUser(BaseModel):
+  """Stytch user schema."""
+
+  email: EmailStr
+  stytch_id: str
+  first_name: Optional[str] = Field(None)
+  last_name: Optional[str] = Field(None)
+  metadata: Optional[dict] = Field(None)
