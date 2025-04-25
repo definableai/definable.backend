@@ -51,7 +51,7 @@ class ChatService:
     "post=upload_file",
     "post=transcribe",
     "post=generate_prompts",
-    "get=prompt",
+    "post=prompt",
   ]
 
   def __init__(self, acquire: Acquire):
@@ -498,7 +498,7 @@ class ChatService:
 
       raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error transcribing audio: {error_type}: {error_message}")
 
-  async def get_prompt(
+  async def post_prompt(
     self,
     data: TextInput,
     user: dict = Depends(JWTBearer()),
