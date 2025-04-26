@@ -43,10 +43,11 @@ class AuthService:
     status = verify_svix_signature(svix_id, svix_timestamp, body.decode("utf-8"), signature)
     if not status:
       raise HTTPException(status_code=400, detail="Invalid signature")
+
     data = json.loads(body.decode("utf-8"))
 
-    user = data["user"]
     if data["action"] == "CREATE":
+      user = data["user"]
       if len(user["emails"]) == 0:
         return JSONResponse(content={"message": "No email found"})
 
