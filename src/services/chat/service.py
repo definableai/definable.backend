@@ -188,8 +188,6 @@ class ChatService:
       uploads_by_message[msg_id].append(upload_data)
 
     for msg in messages:
-      # Get uploads for this specific message from our dictionary
-      message_uploads = uploads_by_message.get(msg.id, [])
 
       message_responses.append(
         MessageResponse(
