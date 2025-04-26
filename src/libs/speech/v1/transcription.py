@@ -83,7 +83,7 @@ async def transcribe(source: Union[bytes, str], content_type: Optional[str] = No
       }
 
       file_extension = content_type_to_ext.get(content_type.lower(), "mp3")
-      print(f"Mapped content type {content_type} to extension {file_extension}")
+      logger.debug(f"Mapped content type {content_type} to extension {file_extension}")
 
     # Create a temporary file
     with NamedTemporaryFile(delete=False, suffix=f".{file_extension}") as temp_file:
@@ -91,11 +91,11 @@ async def transcribe(source: Union[bytes, str], content_type: Optional[str] = No
       temp_file.flush()
       temp_path = temp_file.name
 
-    print(f"Temporary file created at: {temp_path} with extension {file_extension}")
+    logger.debug(f"Temporary file created at: {temp_path} with extension {file_extension}")
 
     # Verify the file exists and has content
     file_size = os.path.getsize(temp_path)
-    print(f"File size: {file_size} bytes")
+    logger.debug(f"File size: {file_size} bytes")
 
     if file_size == 0:
       raise ValueError("Audio file is empty")
@@ -155,7 +155,7 @@ async def transcribe(source: Union[bytes, str], content_type: Optional[str] = No
       first_bytes = audio_file.read(16)
       audio_file.seek(0)  # Reset to beginning
 
-      logger.info(f"First few bytes of file: {first_bytes.hex()[:32]}")
+      logger.debug(f"First few bytes of file: {first_bytes.hex()[:32]}")
 
       # Always use transcription with English as the output language
       transcription = await client.audio.transcriptions.create(
