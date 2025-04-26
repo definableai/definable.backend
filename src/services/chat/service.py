@@ -7,24 +7,21 @@ from typing import AsyncGenerator, Dict, List, Optional, Union
 from uuid import UUID
 
 from agno.media import File, Image
-
 from fastapi import Depends, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-
-from dependencies.security import JWTBearer
-from libs.chats.v1 import LLMFactory, generate_prompts_stream
+from dependencies.security import RBAC, JWTBearer
+from libs.chats.v1 import LLMFactory, generate_chat_name, generate_prompts_stream
 from libs.s3.v1 import S3Client
 from libs.speech.v1 import transcribe
-from dependencies.security import RBAC
-
 from models import ChatModel, ChatUploadModel, LLMModel, MessageModel
 from services.__base.acquire import Acquire
 
 from .schema import (
+  AllUploads,
   BulkDeleteRequest,
   ChatFileUploadResponse,
   ChatSessionCreate,
@@ -32,6 +29,7 @@ from .schema import (
   ChatSessionUpdate,
   ChatSessionWithMessages,
   ChatStatus,
+  ChatUploadData,
   MessageCreate,
   MessageResponse,
   MessageRole,
@@ -60,6 +58,8 @@ class ChatService:
     self.llm_factory = LLMFactory()
     self.chunk_size = 10
     self.s3_client = S3Client(bucket="chats")
+    self.logger = acquire.logger
+    self.ws_manager = acquire.ws_manager
 
   async def post(
     self,
@@ -145,12 +145,52 @@ class ChatService:
 
     # Get messages
     query = select(MessageModel).where(MessageModel.chat_session_id == chat_id).order_by(MessageModel.created_at)
-
     result = await session.execute(query)
     messages = result.scalars().all()
 
     message_responses = []
+
+    # Get all message IDs for this chat session
+    message_ids = [msg.id for msg in messages]
+
+    # Get all uploads for this chat session in a single query
+    all_uploads_query = select(
+      ChatUploadModel.id,
+      ChatUploadModel.message_id,
+      ChatUploadModel.filename,
+      ChatUploadModel.file_size,
+      ChatUploadModel.content_type,
+      ChatUploadModel.url,
+    ).where(ChatUploadModel.message_id.in_(message_ids))
+    all_uploads_result = await session.execute(all_uploads_query)
+
+    # Create a dictionary to hold uploads by message_id
+    uploads_by_message: Dict[str, List[ChatUploadData]] = {}
+    all_upload_items = []
+
+    for row in all_uploads_result.mappings():
+      upload_data = ChatUploadData(
+        id=row.id,
+        message_id=row.message_id,
+        filename=row.filename,
+        file_size=row.file_size,
+        content_type=row.content_type,
+        url=row.url,
+      )
+
+      # Add to the list of all uploads
+      all_upload_items.append(upload_data)
+
+      # Organize by message_id for message-specific uploads
+      msg_id = row.message_id
+      if msg_id not in uploads_by_message:
+        uploads_by_message[msg_id] = []
+      uploads_by_message[msg_id].append(upload_data)
+
     for msg in messages:
+      # Get uploads for this specific message from our dictionary
+      message_uploads = uploads_by_message.get(msg.id, [])
+
       message_responses.append(
         MessageResponse(
           id=msg.id,
@@ -161,9 +201,12 @@ class ChatService:
           model_id=msg.model_id,
           agent_id=msg.agent_id,
           metadata=msg._metadata,
-          created_at=msg.created_at.isoformat(),
+          created_at=msg.created_at.isoformat()
         )
       )
+
+    # Create the uploads model
+    uploads_model = AllUploads(uploads=all_upload_items)
 
     return ChatSessionWithMessages(
       id=db_session.id,
@@ -175,6 +218,7 @@ class ChatService:
       created_at=db_session.created_at.isoformat(),
       updated_at=db_session.updated_at.isoformat(),
       messages=message_responses,
+      uploads=uploads_model,  # Pass the properly constructed AllUploads model
     )
 
   async def get_list(
@@ -228,32 +272,51 @@ class ChatService:
 
   async def post_send_message(
     self,
-    chat_id: UUID,
     org_id: UUID,
     message_data: MessageCreate,
+    chat_id: Optional[UUID] = None,
     model_id: Optional[UUID] = None,
     agent_id: Optional[UUID] = None,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("chats", "write")),
   ) -> StreamingResponse:
     """Send a message to a chat session."""
+    is_new_chat = False
+    db_session = None
+    user_id = user["id"]
+
     try:
       if not model_id and not agent_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Either model_id or agent_id must be provided")
 
-      # Check if chat session exists
-      query = select(ChatModel).where(
-        and_(
-          ChatModel.id == chat_id,
-          ChatModel.user_id == user["id"],
-          ChatModel.org_id == user["org_id"],
+      # If chat_id is not provided, create a new chat session
+      if not chat_id:
+        # Create a new chat with default title
+        db_session = ChatModel(
+          title="New Chat",
+          status=ChatStatus.ACTIVE,
+          user_id=user_id,
+          org_id=org_id,
         )
-      )
-      result = await session.execute(query)
-      db_session = result.scalar_one_or_none()
+        session.add(db_session)
+        await session.commit()
+        await session.refresh(db_session)
+        chat_id = db_session.id
+        is_new_chat = True
+      else:
+        # Check if chat session exists
+        query = select(ChatModel).where(
+          and_(
+            ChatModel.id == chat_id,
+            ChatModel.user_id == user["id"],
+            ChatModel.org_id == user["org_id"],
+          )
+        )
+        result = await session.execute(query)
+        db_session = result.scalar_one_or_none()
 
-      if not db_session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found")
+        if not db_session:
+          raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found")
 
       # get the parent id from the last message of the chat session
       query = select(MessageModel).where(MessageModel.chat_session_id == chat_id).order_by(MessageModel.created_at.desc())
@@ -311,11 +374,16 @@ class ChatService:
           # Commit the new file uploads
           await session.commit()
 
+        # Store the chat_id and is_new_chat at a higher scope for access in the async generator
+        if chat_id and is_new_chat:
+          stored_chat_id = chat_id
+          stored_is_new_chat = is_new_chat
+
         # generate a streaming response
         async def generate_response() -> AsyncGenerator[str, None]:
           full_response = ""
           buffer: list[str] = []
-          print(f"message_data.content: {message_data.content}")
+          self.logger.debug(f"message_data.content: {message_data.content}")
           async for token in self.llm_factory.chat(
             provider=llm_model.provider,
             llm=llm_model.version,
@@ -348,6 +416,16 @@ class ChatService:
           session.add(ai_message)
           await session.commit()
           await session.refresh(ai_message)
+
+          response_message = full_response
+          await self._update_chat_name(
+            stored_chat_id,
+            response_message,
+            stored_is_new_chat,
+            org_id,
+            user_id,
+            session,
+          )
 
     except Exception:
       from traceback import print_exc
@@ -519,3 +597,56 @@ class ChatService:
       return StreamingResponse(content_generator(), media_type="text/event-stream")
     except Exception as e:
       raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error generating prompts: {str(e)}")
+
+  ### PRIVATE METHODS ###
+
+  async def _update_chat_name(
+    self,
+    chat_id: UUID,
+    response_text: str,
+    is_new_chat: bool,
+    org_id: UUID,
+    user_id: UUID,
+    session: AsyncSession,
+  ):
+    """Background task to update the chat name after the response is sent."""
+
+    try:
+      if not is_new_chat:
+        return
+
+      # Get the chat
+      query = select(ChatModel).where(ChatModel.id == chat_id)
+      result = await session.execute(query)
+      db_session = result.scalar_one_or_none()
+
+      if not db_session or db_session.title != "New Chat":
+        return
+
+      # Generate a name based on the AI response
+      chat_name = await generate_chat_name(response_text)
+
+      # Update the chat title
+      db_session.title = chat_name
+      await session.commit()
+
+      # Broadcast the updated chat info via WebSocket
+      response_data = {
+        "id": str(chat_id),
+        "title": chat_name,
+        "user_id": str(user_id),
+        "org_id": str(org_id),
+      }
+      await self.ws_manager.broadcast(
+        str(chat_id),
+        {
+          "data": response_data,
+        },
+        "chats",
+        "write",
+      )
+
+      self.logger.debug(f"Updated chat {chat_id} title to: {chat_name}")
+
+    except Exception as e:
+      self.logger.error(f"Error updating chat name: {str(e)}")
