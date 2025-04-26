@@ -60,3 +60,28 @@ class TokenData(BaseModel):
   """Token data schema."""
 
   user_id: UUID
+
+
+class TestSignup(BaseModel):
+  """Test signup schema."""
+
+  first_name: str
+  last_name: str
+  email: EmailStr
+  password: str
+
+
+class TestLogin(BaseModel):
+  """Test login schema."""
+
+  email: EmailStr
+  password: str
+
+
+class TestResponse(BaseModel):
+  """Test response schema."""
+
+  user_id: UUID
+  email: EmailStr
+  stytch_token: str
+  stytch_user_id: str
