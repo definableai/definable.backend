@@ -8,6 +8,7 @@ import httpx
 
 from openai import AsyncOpenAI
 
+from common.logger import log as logger
 from config.settings import settings
 
 
@@ -99,28 +100,75 @@ async def transcribe(source: Union[bytes, str], content_type: Optional[str] = No
     if file_size == 0:
       raise ValueError("Audio file is empty")
 
+    # Translation of the audio to english irrespective of the language
+    # # Open the temporary file and send it to OpenAI's Whisper API
+    # with open(temp_path, "rb") as audio_file:
+    #   # Make sure we're at the start of the file
+    #   audio_file.seek(0)
+
+    #   # For debugging, read a small chunk to verify the file isn't empty
+    #   first_bytes = audio_file.read(16)
+    #   audio_file.seek(0)  # Reset to beginning
+
+    #   logger.info(f"First few bytes of file: {first_bytes.hex()[:32]}")
+
+    #   # First detect the language if not English
+    #   if language.lower() != "en-us" and language.lower() != "en":
+    #     # Auto-detect the language
+    #     detect_response = await client.audio.transcriptions.create(file=audio_file, model="whisper-1", response_format="verbose_json")
+    #     audio_file.seek(0)  # Reset to beginning for next API call
+
+    #     detected_language = detect_response.language
+    #     logger.info(f"Detected language: {detected_language}")
+    #     # If non-English language detected, use translation task
+    #     if detected_language.lower() != "english":
+    #       transcription = await client.audio.translations.create(
+    #         file=audio_file,
+    #         model="whisper-1",
+    #         response_format="text",
+    #       )
+    #     else:
+    #       # If English detected, use standard transcription
+    #       transcription = await client.audio.transcriptions.create(
+    #         file=audio_file,
+    #         model="whisper-1",
+    #         language="en",
+    #         response_format="text"
+    #       )
+    #   else:
+    #     # For English input, use standard transcription
+    #     transcription = await client.audio.transcriptions.create(
+    #       file=audio_file,
+    #       model="whisper-1",
+    #       language="en",
+    #       response_format="text"
+    #     )
+
+    # Translit the audio to english
+
     # Open the temporary file and send it to OpenAI's Whisper API
     with open(temp_path, "rb") as audio_file:
-      # Make sure we're at the start of the file
       audio_file.seek(0)
 
       # For debugging, read a small chunk to verify the file isn't empty
       first_bytes = audio_file.read(16)
       audio_file.seek(0)  # Reset to beginning
 
-      print(f"First few bytes of file: {first_bytes.hex()[:32]}")
+      logger.info(f"First few bytes of file: {first_bytes.hex()[:32]}")
 
+      # Always use transcription with English as the output language
       transcription = await client.audio.transcriptions.create(
         file=audio_file,
         model="whisper-1",
-        language=language,
+        language="en",  # Force English script output
+        response_format="text",
       )
-      return transcription.text
+      return transcription
 
   except httpx.HTTPStatusError as e:
     raise ValueError(f"Error downloading audio from URL: {e}")
   except Exception as e:
-    print(f"Transcription error: {str(e)}")
+    logger.error(f"Transcription error: {str(e)}")
     raise e
   finally:
     # Clean up by removing the temporary file
