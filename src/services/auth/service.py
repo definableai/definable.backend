@@ -18,13 +18,13 @@ from models import (
 from services.__base.acquire import Acquire
 from utils import verify_svix_signature
 
-from .schema import InviteSignup, StytchUser
+from .schema import InviteSignup, StytchUser, TestLogin, TestResponse, TestSignup
 
 
 class AuthService:
   """Authentication service."""
 
-  http_exposed = ["post=signup_invite"]
+  http_exposed = ["post=signup_invite", "post=test_signup", "post=test_login"]
 
   def __init__(self, acquire: Acquire):
     """Initialize service."""
@@ -78,6 +78,59 @@ class AuthService:
     """Post signup invite."""
     print(token_payload)
     return JSONResponse(content={"status": "success"})
+
+  async def post_test_signup(self, test_signup: TestSignup, db: AsyncSession = Depends(get_db)) -> TestResponse:
+    """Post test signup."""
+    create_user_response = await stytch_base.create_user_with_password(
+      test_signup.first_name, test_signup.last_name, test_signup.email, test_signup.password
+    )
+    if create_user_response.success is False:
+      raise HTTPException(status_code=500, detail=create_user_response.model_dump_json())
+
+    db_user = await self._create_new_user(
+      StytchUser(
+        email=create_user_response.data.user.emails[0].email,
+        stytch_id=create_user_response.data.user_id,
+        first_name=create_user_response.data.user.name.first_name,
+        last_name=create_user_response.data.user.name.last_name,
+        metadata={},
+      ),
+      db,
+    )
+    if db_user:
+      print(db_user.id, db_user.email, db_user.stytch_id)
+      t = await stytch_base.update_user(
+        create_user_response.data.user_id,
+        str(db_user.id),
+      )
+      print(t.data.model_dump_json())
+      return TestResponse(
+        user_id=db_user.id,
+        email=create_user_response.data.user.emails[0].email,
+        stytch_token=create_user_response.data.session_token,
+        stytch_user_id=create_user_response.data.user_id,
+      )
+    else:
+      raise HTTPException(status_code=500, detail="Failed to create user in database")
+
+  async def post_test_login(self, test_login: TestLogin, db: AsyncSession = Depends(get_db)) -> TestResponse:
+    """Post test login."""
+    authenticate_user_response = await stytch_base.authenticate_user_with_password(test_login.email, test_login.password)
+    if authenticate_user_response.success is False:
+      raise HTTPException(status_code=500, detail=authenticate_user_response.model_dump_json())
+
+    # query usermodel with stytch_id
+    user = await db.execute(select(UserModel).where(UserModel.stytch_id == authenticate_user_response.data.user.user_id))
+    db_user = user.unique().scalar_one_or_none()
+    if not db_user:
+      raise HTTPException(status_code=500, detail="User not found in database")
+
+    return TestResponse(
+      user_id=db_user.id,
+      email=db_user.email,
+      stytch_token=authenticate_user_response.data.session_token,
+      stytch_user_id=authenticate_user_response.data.user.user_id,
+    )
 
   ### PRIVATE METHODS ###
 
