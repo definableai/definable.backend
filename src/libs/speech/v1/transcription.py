@@ -113,6 +113,7 @@ async def transcribe(source: Union[bytes, str], content_type: Optional[str] = No
       transcription = await client.audio.transcriptions.create(
         file=audio_file,
         model="whisper-1",
+        language=language,
       )
       return transcription.text
 
