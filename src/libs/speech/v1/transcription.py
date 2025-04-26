@@ -101,7 +101,8 @@ async def transcribe(source: Union[bytes, str], content_type: Optional[str] = No
       raise ValueError("Audio file is empty")
 
     # Translation of the audio to english irrespective of the language
-    # # Open the temporary file and send it to OpenAI's Whisper API
+
+    # Open the temporary file and send it to OpenAI's Whisper API
     # with open(temp_path, "rb") as audio_file:
     #   # Make sure we're at the start of the file
     #   audio_file.seek(0)
