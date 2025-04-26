@@ -145,7 +145,7 @@ async def transcribe(source: Union[bytes, str], content_type: Optional[str] = No
     #       response_format="text"
     #     )
 
-    # Translit the audio to english
+    # Transliterate the audio to english
 
     # Open the temporary file and send it to OpenAI's Whisper API
     with open(temp_path, "rb") as audio_file:
