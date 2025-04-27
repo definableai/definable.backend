@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from typing import AsyncGenerator, Dict, List, Optional, Union
 from uuid import UUID
+import uuid
 
 from agno.media import File, Image
 from fastapi import Depends, HTTPException, UploadFile, status
@@ -285,7 +286,10 @@ class ChatService:
 
     try:
       if not model_id and not agent_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Either model_id or agent_id must be provided")
+        raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail="Either model_id or agent_id must be provided",
+        )
 
       # If chat_id is not provided, create a new chat session
       if not chat_id:
@@ -314,7 +318,10 @@ class ChatService:
         db_session = result.scalar_one_or_none()
 
         if not db_session:
-          raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found")
+          raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat session not found",
+          )
 
       # get the parent id from the last message of the chat session
       query = select(MessageModel).where(MessageModel.chat_session_id == chat_id).order_by(MessageModel.created_at.desc())
@@ -329,7 +336,10 @@ class ChatService:
         result = await session.execute(query)
         llm_model = result.scalar_one_or_none()
         if not llm_model:
-          raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LLM model not found")
+          raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="LLM model not found",
+          )
 
         # Create the users message
         user_message = MessageModel(
@@ -429,7 +439,10 @@ class ChatService:
       from traceback import print_exc
 
       print_exc()
-      raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error sending message")
+      raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Error sending message",
+      )
 
     return StreamingResponse(generate_response(), media_type="text/event-stream")
 
@@ -491,21 +504,41 @@ class ChatService:
   async def post_upload_file(
     self,
     org_id: UUID,
-    chat_id: UUID,
     file: UploadFile,
+    chat_id: Optional[UUID] = None,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("chats", "write")),
   ) -> ChatFileUploadResponse:
     """Upload a file to the public S3 bucket."""
     file_content = await file.read()
-    key = f"{org_id}/{chat_id}/{file.filename}"
+    salt = str(uuid.uuid4())
+    file_name = None
+    if file.filename:
+        _, extension = file.filename.rsplit(".", 1)
+        file_name = f"{salt}.{extension}"
+    else:
+        raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail="Filename is missing",
+        )
+    if chat_id:
+        key = f"{org_id}/{chat_id}/{file_name}"
+    else:
+        key = f"chats/{org_id}/{file_name}"
     await self.s3_client.upload_file(file=BytesIO(file_content), key=key)
     url = await self.s3_client.get_presigned_url(key=key, expires_in=3600 * 24 * 30)
     metadata = {
       "org_id": str(org_id),
-      "chat_id": str(chat_id),
+      "filename": file.filename,
+      "chat_id": str(chat_id) if chat_id else None,
     }
-    db_upload = ChatUploadModel(filename=file.filename, content_type=file.content_type, file_size=file.size, url=url, _metadata=metadata)
+    db_upload = ChatUploadModel(
+      filename=file_name,
+      content_type=file.content_type,
+      file_size=file.size,
+      url=url,
+      _metadata=metadata,
+    )
     session.add(db_upload)
     await session.commit()
 
