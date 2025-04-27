@@ -2,7 +2,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, HttpUrl
 
 
 class ChatStatus(str, Enum):
@@ -103,7 +103,7 @@ class ChatSessionWithMessages(ChatSessionResponse):
   """Chat session with messages schema."""
 
   messages: List[MessageResponse] = []
-  uploads: AllUploads = Field(default_factory=AllUploads)
+  uploads: List[ChatUploadData] = []
 
 
 class BulkDeleteRequest(BaseModel):
