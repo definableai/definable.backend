@@ -216,7 +216,7 @@ class ChatService:
       created_at=db_session.created_at.isoformat(),
       updated_at=db_session.updated_at.isoformat(),
       messages=message_responses,
-      uploads=uploads_model,  # Pass the properly constructed AllUploads model
+      uploads=uploads_model.uploads,
     )
 
   async def get_list(

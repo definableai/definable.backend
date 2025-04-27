@@ -103,7 +103,7 @@ class ChatSessionWithMessages(ChatSessionResponse):
   """Chat session with messages schema."""
 
   messages: List[MessageResponse] = []
-  uploads: AllUploads = Field(default_factory=AllUploads)
+  uploads: List[ChatUploadData] = []
 
 
 class BulkDeleteRequest(BaseModel):
