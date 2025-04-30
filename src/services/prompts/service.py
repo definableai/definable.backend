@@ -36,7 +36,7 @@ class PromptService:
     "put=update_prompt",
     "delete=delete_prompt",
     "get=get_prompt",
-    "get=list_public_prompts",
+    "get=list_all_prompts",
   ]
 
   def __init__(self, acquire: Acquire):
@@ -354,7 +354,7 @@ class PromptService:
 
     return {"message": "Prompt deleted successfully"}
 
-  async def get_get_prompt(
+  async def get_list_all_prompts(
     self,
     prompt_id: UUID,
     org_id: Optional[UUID] = None,
