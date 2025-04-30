@@ -356,30 +356,50 @@ class PromptService:
 
   async def get_list_all_prompts(
     self,
-    prompt_id: UUID,
-    org_id: Optional[UUID] = None,
+    category_id: Optional[UUID] = None,
+    is_featured: Optional[bool] = None,
+    offset: int = 0,
+    limit: int = 20,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(JWTBearer()),
-  ) -> PromptResponse:
-    """Get a prompt by ID."""
-    self.logger.info(f"Fetching prompt: {prompt_id}, org_id: {org_id}")
-    # Query to get the prompt with category
-    query = select(PromptModel).options(joinedload(PromptModel.category)).where(PromptModel.id == prompt_id)
+  ) -> PaginatedPromptResponse:
+    """Get all public prompts with pagination."""
+    self.logger.info(f"Listing all public prompts, category: {category_id}, is_featured: {is_featured}")
+    # Base query for public prompts
+    base_query = select(PromptModel).options(joinedload(PromptModel.category)).where(PromptModel.is_public)
 
-    # If org_id is provided, restrict to that org or public prompts
-    if org_id:
-      query = query.where(or_(PromptModel.organization_id == org_id, PromptModel.is_public))
+    # Apply filters
+    if category_id:
+      base_query = base_query.where(PromptModel.category_id == category_id)
 
+    if is_featured is not None:
+      base_query = base_query.where(PromptModel.is_featured == is_featured)
+
+    # Get total count
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total = await session.scalar(count_query) or 0
+    self.logger.debug(f"Total matching public prompts: {total}")
+
+    # Apply pagination
+    query = base_query.order_by(PromptModel.created_at.desc())
+    query = query.offset(offset * limit).limit(limit + 1)
+
+    # Execute query
     result = await session.execute(query)
-    prompt = result.unique().scalar_one_or_none()
+    prompts = result.unique().scalars().all()
 
-    if not prompt:
-      self.logger.warning(f"Prompt not found or access denied: {prompt_id}")
-      raise HTTPException(status_code=404, detail="Prompt not found or you don't have access")
+    # Check if there are more prompts
+    has_more = len(prompts) > limit
+    prompts = prompts[:limit]  # Remove the extra item used to check for more
+    self.logger.debug(f"Retrieved {len(prompts)} public prompts, has_more: {has_more}")
 
-    self.logger.debug(f"Retrieved prompt: {prompt_id}, title: {prompt.title}")
-    # Convert to response model
-    return PromptResponse(**{
-      **{k: v for k, v in prompt.__dict__.items() if k not in ["_sa_instance_state", "category"]},
-      "category": PromptCategoryResponse.model_validate(prompt.category),
-    })
+    # Convert to response models
+    prompt_responses = [
+      PromptResponse(**{
+        **{k: v for k, v in prompt.__dict__.items() if k not in ["_sa_instance_state", "category"]},
+        "category": PromptCategoryResponse.model_validate(prompt.category),
+      })
+      for prompt in prompts
+    ]
+
+    return PaginatedPromptResponse(prompts=prompt_responses, total=total, has_more=has_more)
