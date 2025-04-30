@@ -2,7 +2,7 @@
 
 import utils
 from common.cache import Cache, deps_cache
-from common.logger import log
+from common.logger import logger
 from common.websocket import WebSocketManager
 from config.settings import Settings, settings
 from database import async_session
@@ -17,7 +17,7 @@ class Acquire:
     self.services = self._register_services()
     self.settings: Settings = settings
     self.utils = utils
-    self.logger = log
+    self.logger = logger
     self.cache = Cache()
     self.deps_cache = deps_cache
     self.ws_manager = WebSocketManager()

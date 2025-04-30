@@ -52,6 +52,8 @@ def main():
       subprocess.run([
         "gunicorn",
         "src.app:app",
+        "--log-level",
+        "info",
         "--workers",
         f"{args.workers}",
         "--worker-class",
