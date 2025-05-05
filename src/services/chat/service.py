@@ -10,6 +10,7 @@ import uuid
 from agno.media import File, Image
 from fastapi import Depends, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse, StreamingResponse
+import httpx
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +20,7 @@ from libs.chats.v1 import LLMFactory, generate_chat_name, generate_prompts_strea
 from libs.s3.v1 import S3Client
 from libs.speech.v1 import transcribe
 from models import ChatModel, ChatUploadModel, LLMModel, MessageModel
+from models.agent_model import AgentModel
 from services.__base.acquire import Acquire
 
 from .schema import (
@@ -189,7 +191,6 @@ class ChatService:
       uploads_by_message[msg_id].append(upload_data)
 
     for msg in messages:
-
       message_responses.append(
         MessageResponse(
           id=msg.id,
@@ -200,7 +201,7 @@ class ChatService:
           model_id=msg.model_id,
           agent_id=msg.agent_id,
           metadata=msg._metadata,
-          created_at=msg.created_at.isoformat()
+          created_at=msg.created_at.isoformat(),
         )
       )
 
@@ -388,7 +389,7 @@ class ChatService:
           stored_is_new_chat = is_new_chat
 
         # generate a streaming response
-        async def generate_response() -> AsyncGenerator[str, None]:
+        async def generate_model_response() -> AsyncGenerator[str, None]:
           full_response = ""
           buffer: list[str] = []
           self.logger.debug(f"message_data.content: {message_data.content}")
@@ -435,6 +436,101 @@ class ChatService:
             session,
           )
 
+        return StreamingResponse(generate_model_response(), media_type="text/event-stream")
+
+      # if chatting with an agent
+      elif agent_id:
+        # check if agent exists
+        query = select(AgentModel).where(
+          and_(
+            AgentModel.id == agent_id,
+            AgentModel.is_active,
+          )
+        )
+        result = await session.execute(query)
+        agent = result.scalar_one_or_none()
+        if not agent:
+          raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+        agent_base_url = agent.settings.get("url") or None
+        if not agent_base_url or not agent.is_active:
+          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Agent is not active")
+
+        # Create the user's message
+        user_message = MessageModel(
+          chat_session_id=chat_id,
+          parent_message_id=parent_id,
+          agent_id=agent_id,
+          content=message_data.content,
+          role=MessageRole.USER,
+          created_at=datetime.now(timezone.utc),
+        )
+        session.add(user_message)
+        await session.commit()
+        await session.refresh(user_message)
+
+        # Function to generate streaming response
+        async def generate_agent_response() -> AsyncGenerator[str, None]:
+          full_response = ""
+          buffer: list[str] = []
+          try:
+            # Send a message to the agent with a higher timeout
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:  # Set timeout to 30 seconds
+              url = f"{agent_base_url}/invoke"
+              payload = {"query": message_data.content}  # Adjust payload to match the agent's expected input
+              async with client.stream("POST", url, json=payload) as response:
+                if response.status_code != 200:
+                  error_detail = f"Agent returned an error: {response.status_code}"
+                  self.logger.error(error_detail)
+                  yield f"data: {json.dumps({'error': error_detail})}\n\n"
+                  return
+
+                # Stream the response in chunks
+                async for chunk in response.aiter_text():
+                  try:
+                    # Decode the chunk if it contains nested JSON
+                    if chunk.startswith("data: {"):
+                      chunk = json.loads(chunk[6:])["message"]  # Extract the inner message
+
+                    buffer.append(chunk)
+                    full_response += chunk
+                    if len(buffer) >= self.chunk_size:
+                      d = {"message": "".join(buffer)}
+                      yield f"data: {json.dumps(d)}\n\n"
+                      buffer = []
+                  except Exception as e:
+                    self.logger.error(f"Error processing chunk: {e}", exc_info=True)
+                    yield f"data: {json.dumps({'error': 'Error processing chunk'})}\n\n"
+                    return
+
+            # Yield any remaining data in the buffer
+            if buffer:
+              d = {"message": "".join(buffer)}
+              yield f"data: {json.dumps(d)}\n\n"
+
+            # Signal the end of the stream
+            yield f"data: {json.dumps({'message': 'DONE'})}\n\n"
+
+            # Create the agent's message
+            agent_message = MessageModel(
+              chat_session_id=chat_id,
+              parent_message_id=user_message.id,
+              agent_id=agent_id,
+              content=full_response,
+              role=MessageRole.AGENT,
+              created_at=datetime.now(timezone.utc),
+            )
+            session.add(agent_message)
+            await session.commit()
+            await session.refresh(agent_message)
+
+          except httpx.ReadTimeout as e:
+            self.logger.error(f"Timeout while waiting for agent response: {e}", exc_info=True)
+            yield f"data: {json.dumps({'error': 'Timeout while waiting for agent response'})}\n\n"
+          except Exception as e:
+            self.logger.error(f"Error during streaming response: {e}", exc_info=True)
+            yield f"data: {json.dumps({'error': 'An error occurred during streaming'})}\n\n"
+
     except Exception:
       from traceback import print_exc
 
@@ -444,7 +540,7 @@ class ChatService:
         detail="Error sending message",
       )
 
-    return StreamingResponse(generate_response(), media_type="text/event-stream")
+    return StreamingResponse(generate_agent_response(), media_type="text/event-stream")
 
   async def delete_session(
     self,
@@ -514,17 +610,17 @@ class ChatService:
     salt = str(uuid.uuid4())
     file_name = None
     if file.filename:
-        _, extension = file.filename.rsplit(".", 1)
-        file_name = f"{salt}.{extension}"
+      _, extension = file.filename.rsplit(".", 1)
+      file_name = f"{salt}.{extension}"
     else:
-        raise HTTPException(
-          status_code=status.HTTP_400_BAD_REQUEST,
-          detail="Filename is missing",
-        )
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Filename is missing",
+      )
     if chat_id:
-        key = f"{org_id}/{chat_id}/{file_name}"
+      key = f"{org_id}/{chat_id}/{file_name}"
     else:
-        key = f"chats/{org_id}/{file_name}"
+      key = f"chats/{org_id}/{file_name}"
     await self.s3_client.upload_file(file=BytesIO(file_content), key=key)
     url = await self.s3_client.get_presigned_url(key=key, expires_in=3600 * 24 * 30)
     metadata = {
