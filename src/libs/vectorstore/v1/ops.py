@@ -58,5 +58,5 @@ async def create_vectorstore_qd(org_name: str, collection_name: str) -> UUID:
     await vectorstore.async_create()
 
     return uuid4()
-  except Exception as e: 
+  except Exception as e:
     raise Exception(f"libs.vectorstore.v1.ops.create_vectorstore: {e}")
