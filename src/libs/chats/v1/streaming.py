@@ -46,6 +46,7 @@ class LLMFactory:
     provider: str,
     message: str,
     assets: Sequence[Union[File, Image]] = [],
+    memory_size: int = 100,
   ) -> AsyncGenerator[RunResponse, None]:
     """Stream chat responses using Agno agent.
 
