@@ -40,6 +40,8 @@ class Settings(BaseSettings):
   stytch_secret: str
   stytch_environment: str
   stytch_webhook_secret: str
+  qdrant_api_url: str
+  qdrant_api_key: str
 
   class Config:
     """Config class."""

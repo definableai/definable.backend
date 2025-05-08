@@ -38,6 +38,7 @@ dependencies = [
     "pyjwt>=2.10.1",
     "pytest>=8.3.5",
     "pytest-asyncio>=0.26.0",
+    "qdrant-client>=1.12.1",
     "resend>=2.7.0",
     "ruff>=0.11.5",
     "sqlalchemy[asyncio]>=2.0.40",

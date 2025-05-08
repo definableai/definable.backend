@@ -1,9 +1,12 @@
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from agno.knowledge.langchain import LangChainKnowledgeBase
+from agno.embedder.openai import OpenAIEmbedder
+from agno.vectordb.qdrant.qdrant import Qdrant
 from langchain_openai import OpenAIEmbeddings
 from langchain_postgres import PGVector
 
+from config.settings import settings
 from database import async_engine, async_session
 
 
@@ -41,3 +44,19 @@ async def retrieve(collection_name: str) -> LangChainKnowledgeBase:
   except Exception as e:
     raise Exception(f"libs.vectorstore.v1.ops.retrieve: {e}")
 
+async def create_vectorstore_qd(org_name: str, collection_name: str) -> UUID:
+  try:
+    embedder = OpenAIEmbedder(id="text-embedding-3-large")
+
+    vectorstore = Qdrant(
+      collection=f"{org_name}_{collection_name}",
+      embedder=embedder,
+      url=settings.qdrant_api_url,
+      api_key=settings.qdrant_api_key,
+    )
+
+    await vectorstore.async_create()
+
+    return uuid4()
+  except Exception as e: 
+    raise Exception(f"libs.vectorstore.v1.ops.create_vectorstore: {e}")
