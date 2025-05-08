@@ -6,6 +6,7 @@ from agno.agent import Agent, RunResponse
 from agno.media import File, Image
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
+from agno.models.deepseek import DeepSeek
 from agno.storage.postgres import PostgresStorage
 
 from config.settings import settings
@@ -21,6 +22,7 @@ class LLMFactory:
   PROVIDER_MODELS: dict[str, ModelClass] = {
     "openai": OpenAIChat,
     "anthropic": Claude,
+    "deepseek": DeepSeek,
   }
 
   def __init__(self):
@@ -36,7 +38,12 @@ class LLMFactory:
     return self.PROVIDER_MODELS[provider]
 
   async def chat(
-    self, provider: str, llm: str, chat_session_id: str | UUID, message: str, memory_size: int = 100, assets: Sequence[Union[File, Image]] = []
+    self,
+    chat_session_id: str | UUID,
+    llm: str,
+    provider: str,
+    message: str,
+    assets: Sequence[Union[File, Image]] = [],
   ) -> AsyncGenerator[RunResponse, None]:
     """Stream chat responses using Agno agent.
 

@@ -325,7 +325,12 @@ class ChatService:
           )
 
       # get the parent id from the last message of the chat session
-      query = select(MessageModel).where(MessageModel.chat_session_id == chat_id).order_by(MessageModel.created_at.desc())
+      query = select(
+        MessageModel
+        ).where(
+          MessageModel.chat_session_id == chat_id,
+          MessageModel.role != MessageRole.USER,
+        ).order_by(MessageModel.created_at.desc())
       result = await session.execute(query)
       last_message = result.scalars().first()
       parent_id = last_message.id if last_message else None
@@ -436,7 +441,10 @@ class ChatService:
             session,
           )
 
-        return StreamingResponse(generate_model_response(), media_type="text/event-stream")
+        return StreamingResponse(
+          generate_model_response(),
+          media_type="text/event-stream",
+        )
 
       # if chatting with an agent
       elif agent_id:
@@ -450,11 +458,17 @@ class ChatService:
         result = await session.execute(query)
         agent = result.scalar_one_or_none()
         if not agent:
-          raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+          raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent not found",
+          )
 
         agent_base_url = agent.settings.get("url") or None
         if not agent_base_url or not agent.is_active:
-          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Agent is not active")
+          raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Agent is not active",
+          )
 
         # Create the user's message
         user_message = MessageModel(
@@ -469,16 +483,22 @@ class ChatService:
         await session.commit()
         await session.refresh(user_message)
 
+        request_id = user_message.id
+
         # Function to generate streaming response
         async def generate_agent_response() -> AsyncGenerator[str, None]:
           full_response = ""
           buffer: list[str] = []
           try:
             # Send a message to the agent with a higher timeout
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:  # Set timeout to 30 seconds
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:  # Set timeout to 30 seconds
               url = f"{agent_base_url}/invoke"
+              params: dict = {
+                "user_id": str(user_id),
+              }
               payload = {"query": message_data.content}  # Adjust payload to match the agent's expected input
-              async with client.stream("POST", url, json=payload) as response:
+              headers = {"x-request-id": str(request_id)}
+              async with client.stream("POST", url, json=payload, headers=headers, params=params) as response:
                 if response.status_code != 200:
                   error_detail = f"Agent returned an error: {response.status_code}"
                   self.logger.error(error_detail)
@@ -540,7 +560,10 @@ class ChatService:
         detail="Error sending message",
       )
 
-    return StreamingResponse(generate_agent_response(), media_type="text/event-stream")
+    return StreamingResponse(
+      generate_agent_response(),
+      media_type="text/event-stream",
+    )
 
   async def delete_session(
     self,
