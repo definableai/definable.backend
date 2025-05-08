@@ -4,15 +4,17 @@ from uuid import UUID
 
 from agno.agent import Agent, RunResponse
 from agno.media import File, Image
+
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.models.deepseek import DeepSeek
+
 from agno.storage.postgres import PostgresStorage
 
 from config.settings import settings
 
 # Define a type alias for model classes
-ModelClass = Union[Type[OpenAIChat], Type[Claude]]
+ModelClass = Union[Type[OpenAIChat], Type[Claude], Type[DeepSeek]]
 
 
 class LLMFactory:
