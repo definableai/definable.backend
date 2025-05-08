@@ -19,8 +19,10 @@ from dependencies.security import RBAC, JWTBearer
 from libs.chats.v1 import LLMFactory, generate_chat_name, generate_prompts_stream
 from libs.s3.v1 import S3Client
 from libs.speech.v1 import transcribe
+from libs.vectorstore.v1 import retrieve
 from models import ChatModel, ChatUploadModel, LLMModel, MessageModel
 from models.agent_model import AgentModel
+from models.kb_model import KnowledgeBaseModel
 from services.__base.acquire import Acquire
 
 from .schema import (
@@ -277,6 +279,7 @@ class ChatService:
     chat_id: Optional[UUID] = None,
     model_id: Optional[UUID] = None,
     agent_id: Optional[UUID] = None,
+    kb_id: Optional[UUID] = None,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("chats", "write")),
   ) -> StreamingResponse:
@@ -291,6 +294,19 @@ class ChatService:
           status_code=status.HTTP_400_BAD_REQUEST,
           detail="Either model_id or agent_id must be provided",
         )
+
+      knowledge = None
+      # if kb_id is provided
+      if kb_id:
+        query = select(KnowledgeBaseModel).where(KnowledgeBaseModel.id == kb_id)
+        result = await session.execute(query)
+        knowledge_base = result.scalar_one_or_none()
+        if not knowledge_base:
+          raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+          )
+        knowledge = await retrieve(knowledge_base.name)
 
       # If chat_id is not provided, create a new chat session
       if not chat_id:
@@ -404,6 +420,7 @@ class ChatService:
             chat_session_id=chat_id,
             message=message_data.content,
             assets=files,
+            knowledge_base=knowledge,
           ):
             buffer.append(token.content)
             full_response += token.content

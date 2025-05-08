@@ -1,8 +1,9 @@
 import asyncio
-from typing import AsyncGenerator, List, Sequence, Type, Union
+from typing import AsyncGenerator, List, Optional, Sequence, Type, Union
 from uuid import UUID
 
 from agno.agent import Agent, RunResponse
+from agno.knowledge.langchain import LangChainKnowledgeBase
 from agno.media import File, Image
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
@@ -44,6 +45,8 @@ class LLMFactory:
     provider: str,
     message: str,
     assets: Sequence[Union[File, Image]] = [],
+    knowledge_base: Optional[LangChainKnowledgeBase] = None,
+    memory_size: int = 100,
   ) -> AsyncGenerator[RunResponse, None]:
     """Stream chat responses using Agno agent.
 
@@ -75,6 +78,8 @@ class LLMFactory:
       add_history_to_messages=True,
       session_id=str(chat_session_id),
       num_history_responses=memory_size,
+      knowledge=knowledge_base,
+      search_knowledge=True
     )
     async for token in await agent.arun(message, files=files or None, images=images or None):
       yield token
