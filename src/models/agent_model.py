@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
@@ -33,3 +33,35 @@ class AgentModel(CRUD):
   is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
   settings: Mapped[dict] = mapped_column(JSONB, nullable=False)
   version: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class AgentAnalyticsModel(CRUD):
+  """Model for storing analytics data related to agent interactions."""
+
+  __tablename__ = "agent_analytics"
+
+  agent_id: Mapped[UUID] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, comment="Foreign key referencing the agent")
+  session_id: Mapped[UUID] = mapped_column(
+    ForeignKey("messages.id", ondelete="SET NULL"), nullable=False, comment="Foreign key referencing the chat session (messages.id)"
+  )
+  user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, comment="Foreign key referencing the user")
+  org_id: Mapped[UUID] = mapped_column(
+    ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True, comment="Foreign key referencing the organization"
+  )
+  memory: Mapped[dict] = mapped_column(JSONB, nullable=True, comment="Memory data associated with the agent")
+  agent_data: Mapped[dict] = mapped_column(JSONB, nullable=True, comment="Data specific to the agent")
+  session_data: Mapped[dict] = mapped_column(JSONB, nullable=True, comment="Data specific to the session")
+
+  # Update these to ensure timestamps are stored without timezone information
+  created_at: Mapped[datetime] = mapped_column(
+    default=lambda: datetime.now(UTC).replace(tzinfo=None), nullable=False, comment="Timestamp when the record was created"
+  )
+  updated_at: Mapped[datetime] = mapped_column(
+    default=lambda: datetime.now(UTC).replace(tzinfo=None),
+    onupdate=lambda: datetime.now(UTC).replace(tzinfo=None),
+    nullable=False,
+    comment="Timestamp when the record was last updated",
+  )
+
+  def __repr__(self) -> str:
+    return f"<AgentAnalytics(id={self.id}, agent_id={self.agent_id}, session_id={self.session_id})>"

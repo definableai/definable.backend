@@ -1,5 +1,5 @@
 from database import Base
-from models.agent_model import AgentModel, AgentToolModel
+from models.agent_model import AgentModel, AgentToolModel, AgentAnalyticsModel
 from models.auth_model import UserModel
 from models.billing_models import BillingPlanModel, ChargeModel, TransactionModel, WalletModel, TransactionStatus, TransactionType
 from models.chat_model import ChatModel, ChatUploadModel, MessageModel
@@ -15,6 +15,7 @@ __all__ = [
   "Base",
   "AgentModel",
   "AgentToolModel",
+  "AgentAnalyticsModel",
   "BillingPlanModel",
   "ChargeModel",
   "DocumentStatus",
