@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,3 +33,13 @@ class AgentModel(CRUD):
   is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
   settings: Mapped[dict] = mapped_column(JSONB, nullable=False)
   version: Mapped[str] = mapped_column(String(255), nullable=False)
+  updated_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now(), nullable=False)
+
+  def __repr__(self) -> str:
+    return (
+      f"<Agent(id={self.id}, name={self.name}, model_id={self.model_id}), "
+      f"organization_id={self.organization_id}, user_id={self.user_id}, "
+      f"description={self.description}, is_active={self.is_active}, "
+      f"settings={self.settings}, version={self.version}, "
+      f"updated_at={self.updated_at})>"
+    )
