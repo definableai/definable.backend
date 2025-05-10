@@ -7,7 +7,7 @@ from agno.tools.firecrawl import FirecrawlTools
 from common.logger import logger
 from config.settings import settings
 
-
+# Reader interface
 class FirecrawlService(FirecrawlReader):
   def __init__(self, params: Optional[Dict[str,Any]] = None):
     super().__init__(api_key=settings.firecrawl_api_key, params=params)
@@ -31,6 +31,7 @@ class FirecrawlService(FirecrawlReader):
 # Create a singleton instance
 firecrawl = FirecrawlService()
 
+# Tool interface
 class Firecrawl(FirecrawlTools):
   def __init__(self, params: Optional[Dict[str,Any]] = None):
     super().__init__(api_key=settings.firecrawl_api_key, params=params)
