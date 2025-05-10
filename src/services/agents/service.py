@@ -2,7 +2,6 @@ from http import HTTPStatus
 from uuid import UUID
 
 from fastapi import Depends, HTTPException
-from fastapi.responses import JSONResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,15 +26,15 @@ class AgentService:
 
   async def post_create(
     self,
-    model_id: UUID,
+    org_id: UUID,
     data: AgentCreate,
     session: AsyncSession = Depends(get_db),
-    user: dict = Depends(RBAC("agents", "create")),
-  ) -> JSONResponse:
+    user: dict = Depends(RBAC("agents", "write")),
+  ) -> AgentResponse:
     """Create a new agent."""
     try:
       # Check if the model exists
-      query = select(LLMModel).where(LLMModel.id == model_id)
+      query = select(LLMModel).where(LLMModel.id == data.model_id)
       model = await session.scalar(query)
 
       if not model:
@@ -52,13 +51,13 @@ class AgentService:
 
       # Extract data
       user_id = user["id"]
-      org_id = user["org_id"]
+      org_id = org_id
 
       # Create the agent instance
       agent = AgentModel(
         name=data.name,
         description=data.description,
-        model_id=model_id,
+        model_id=data.model_id,
         is_active=data.is_active,
         version=data.version,
         settings=data.settings or {},
@@ -84,10 +83,8 @@ class AgentService:
         updated_at=agent.updated_at,
         tools=[],  # No tools are added during creation
       )
-      return JSONResponse(
-        content=response_data.model_dump(),
-        status_code=HTTPStatus.CREATED,
-      )
+
+      return response_data
     except Exception as e:
       await session.rollback()
       self.logger.error(f"Error creating agent: {e}")
