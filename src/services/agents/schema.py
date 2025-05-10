@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -63,3 +63,15 @@ class PaginatedAgentResponse(BaseModel):
   agents: List[AgentResponse]
   total: int
   has_more: bool
+
+class AgentAnalyticsSchema(BaseModel):
+  """Agent analytics schema."""
+
+  org_id: UUID
+  user_id: UUID
+  memory: Optional[Dict[str, Any]] = None
+  agent_data: Optional[Dict[str, Any]] = None
+  session_data: Optional[Dict[str, Any]] = None
+
+  class Config:
+    from_attributes = True

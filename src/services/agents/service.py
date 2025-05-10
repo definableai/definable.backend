@@ -1,25 +1,29 @@
+from http import HTTPStatus
+from typing import Union
 from uuid import UUID
 
-from fastapi import Depends
-from sqlalchemy import func, select, text
+from fastapi import Depends, HTTPException
+from fastapi.responses import JSONResponse
+from sqlalchemy import Select, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies.security import RBAC, JWTBearer
-from models import AgentModel
+from models import AgentModel, AgentAnalyticsModel, MessageModel, UserModel
 from services.__base.acquire import Acquire
 
-from .schema import AgentResponse, PaginatedAgentResponse
+from .schema import AgentAnalyticsSchema, AgentResponse, PaginatedAgentResponse
 
 
 class AgentService:
   """Agent service."""
 
-  http_exposed = ["get=list", "get=list_all"]
+  http_exposed = ["get=list", "get=list_all", "post=analytics"]
 
   def __init__(self, acquire: Acquire):
     """Initialize service."""
     self.acquire = acquire
+    self.logger = acquire.logger
 
   async def get_list(
     self,
@@ -119,3 +123,78 @@ class AgentService:
     has_more = len(rows) > limit
 
     return PaginatedAgentResponse(agents=agents, total=total or 0, has_more=has_more)
+
+  async def post_analytics(
+    self,
+    agent_id: UUID,
+    session_id: UUID,
+    data: AgentAnalyticsSchema,
+    session: AsyncSession = Depends(get_db),
+  ) -> JSONResponse:
+    """Post analytics data."""
+    try:
+      # Check if the agent exists
+      await self._if_exists(AgentModel, agent_id, session, "Agent not found")
+
+      # Check if the session exists
+      await self._if_exists(MessageModel, session_id, session, "Session not found")
+
+      # Check if the user exists
+      await self._if_exists(UserModel, data.user_id, session, "User not found")
+
+      analytics = AgentAnalyticsModel(
+        agent_id=agent_id,
+        session_id=session_id,
+        user_id=data.user_id,
+        org_id=data.org_id,
+        memory=data.memory,
+        agent_data=data.agent_data,
+        session_data=data.session_data,
+      )
+
+      # Add the instance to the session and commit
+      session.add(analytics)
+      await session.commit()
+
+      return JSONResponse(
+        content={
+          "message": "Analytics data posted successfully",
+        },
+        status_code=HTTPStatus.CREATED,
+      )
+
+    except Exception as e:
+      await session.rollback()
+      self.logger.error(f"Error posting analytics data: {e}")
+      raise HTTPException(
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+        detail="Error posting analytics data",
+      )
+
+  ### PRIVATE METHODS ###
+
+  async def _if_exists(
+    self,
+    model: Union[AgentModel, MessageModel, UserModel],
+    record_id: UUID,
+    session: AsyncSession,
+    error_message: str = "Record not found",
+  ) -> bool:
+    """Generic function to check if a record exists in the database"""
+
+    try:
+      query: Select = select(model).where(model.id == record_id)
+      record = await session.scalar(query)
+      if not record:
+        raise HTTPException(
+          status_code=HTTPStatus.NOT_FOUND,
+          detail=error_message,
+        )
+      return True
+    except Exception as e:
+      self.logger.error(f"Error checking if record exists: {e}")
+      raise HTTPException(
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+        detail="Error checking record",
+      )
+
