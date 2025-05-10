@@ -18,14 +18,14 @@ from .schema import AgentCreate, AgentResponse, PaginatedAgentResponse
 class AgentService:
   """Agent service."""
 
-  http_exposed = ["get=list", "get=list_all"]
+  http_exposed = ["post=create", "get=list", "get=list_all"]
 
   def __init__(self, acquire: Acquire):
     """Initialize service."""
     self.acquire = acquire
     self.logger = acquire.logger
 
-  async def post(
+  async def post_create(
     self,
     model_id: UUID,
     data: AgentCreate,
