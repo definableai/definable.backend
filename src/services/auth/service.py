@@ -45,9 +45,14 @@ class AuthService:
       raise HTTPException(status_code=400, detail="Invalid signature")
 
     data = json.loads(body.decode("utf-8"))
+    self.logger.debug(f"Received event: {data}")
 
     if data["action"] == "CREATE":
       user = data["user"]
+
+      if user["untrusted_metadata"].get("temp"):
+        return JSONResponse(content={"message": "User created from temp"})
+
       if len(user["emails"]) == 0:
         return JSONResponse(content={"message": "No email found"})
 

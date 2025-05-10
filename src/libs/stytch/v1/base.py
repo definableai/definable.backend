@@ -126,7 +126,7 @@ class StytchBase:
         password,
         name=Name(first_name=first_name, last_name=last_name),
         session_duration_minutes=1440,
-        untrusted_metadata={"message": "created from postman"},
+        untrusted_metadata={"temp": True},
       )
       return LibResponse.success_response(response)
     except Exception as e:

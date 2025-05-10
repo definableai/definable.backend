@@ -3,10 +3,9 @@
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
+from logger import log
 from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
-
-from .logger import log
 
 
 class BaseCustomError(Exception):

@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 
 from fastapi import Depends, HTTPException
 from fastapi.responses import JSONResponse
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +24,7 @@ class OrganizationService:
   def __init__(self, acquire: Acquire):
     """Initialize service."""
     self.acquire = acquire
+    self.logger = acquire.logger
 
   async def post_create_org(
     self,
@@ -108,6 +110,8 @@ class OrganizationService:
       .outerjoin(OrganizationMemberModel, OrganizationModel.id == OrganizationMemberModel.organization_id)
       .where(OrganizationMemberModel.user_id == user.get("id"))
     )
+    # self.logger.debug(f"Getting organizations for user {user.get('id')}")
+    logger.debug(f"Getting organizations for user {user.get('id')}")
     result = await session.execute(query)
     orgs = result.unique().scalars().all()
 

@@ -29,7 +29,7 @@ class JWTBearer(HTTPBearer):
         response = await stytch_base.authenticate_user(credentials.credentials)
         if response.success and response.data.status_code == 200:
           user = response.model_dump()["data"]["user"]
-          logger.debug("Got user data: %s", user)
+          logger.info(f"Got user data: {user}")
           return {"id": user["trusted_metadata"]["external_user_id"], "user_data": user}
         else:
           raise HTTPException(status_code=403, detail="Invalid authorization")
