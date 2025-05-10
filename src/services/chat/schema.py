@@ -75,10 +75,35 @@ class ChatSessionResponse(ChatSessionBase):
     from_attributes = True
 
 
+class ChatUploadData(BaseModel):
+  """Upload data model."""
+
+  id: UUID
+  message_id: UUID
+  filename: str
+  file_size: int
+  content_type: str
+  url: str
+
+
+class AllUploads(BaseModel):
+  """Model for all uploads in a chat session."""
+
+  uploads: List[ChatUploadData] = []
+
+
+class UploadsByMessage(BaseModel):
+  """Model for uploads organized by message ID."""
+
+  # Key is message_id as string, value is list of uploads
+  message_uploads: Dict[str, List[ChatUploadData]] = {}
+
+
 class ChatSessionWithMessages(ChatSessionResponse):
   """Chat session with messages schema."""
 
   messages: List[MessageResponse] = []
+  uploads: List[ChatUploadData] = []
 
 
 class BulkDeleteRequest(BaseModel):
