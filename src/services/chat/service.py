@@ -4,8 +4,7 @@ import tempfile
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import AsyncGenerator, Dict, List, Optional, Union
-from uuid import UUID
-import uuid
+from uuid import UUID, uuid4
 
 from agno.media import File, Image
 from fastapi import Depends, HTTPException, UploadFile, status
@@ -21,10 +20,14 @@ from libs.chats.v1 import LLMFactory, generate_chat_name, generate_prompts_strea
 from libs.s3.v1 import S3Client
 from libs.speech.v1 import transcribe
 from libs.vectorstore.v1 import retrieve
-from models import ChatModel, ChatUploadModel, LLMModel, MessageModel
-from models.agent_model import AgentModel
-from models.kb_model import KnowledgeBaseModel
-from models.agent_model import AgentModel
+from models import (
+  AgentModel,
+  ChatModel,
+  ChatUploadModel,
+  KnowledgeBaseModel,
+  LLMModel,
+  MessageModel,
+)
 from services.__base.acquire import Acquire
 
 from .schema import (
@@ -650,7 +653,7 @@ class ChatService:
   ) -> ChatFileUploadResponse:
     """Upload a file to the public S3 bucket."""
     file_content = await file.read()
-    salt = str(uuid.uuid4())
+    salt = str(uuid4())
     file_name = None
     if file.filename:
       _, extension = file.filename.rsplit(".", 1)
