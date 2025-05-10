@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -17,9 +17,11 @@ class AgentBase(BaseModel):
 
 class AgentCreate(AgentBase):
   """Create agent schema."""
-
-  pass
-
+  name: str = Field(..., min_length=1, max_length=255)
+  description: Optional[str] = None
+  is_active: bool = True
+  version: str = Field(default="v1")
+  settings: Dict[str, Any] = Field(default_factory=dict)
 
 class AgentUpdate(BaseModel):
   """Update agent schema."""
