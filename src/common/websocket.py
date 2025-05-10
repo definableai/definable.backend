@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import Depends, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from common.logger import log
+from common.logger import logger
 from database import get_db
 
 
@@ -37,7 +37,7 @@ class WebSocketManager:
   def __init__(self):
     self._connections: Dict[str, WebSocketConnection] = {}  # channel_id -> connection
     self._org_connections: Dict[str, Set[str]] = {}  # org_id -> set of channel_ids
-    self._logger = log.bind(service="websocket")
+    self._logger = logger.bind(service="websocket")
 
   async def connect(self, websocket: WebSocket, org_id: UUID, user_id: UUID, permissions: list, session: AsyncSession = Depends(get_db)) -> None:
     """Handle new WebSocket connection."""

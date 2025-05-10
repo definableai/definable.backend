@@ -14,6 +14,7 @@ import httpx
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config.settings import settings
 from database import get_db
 from dependencies.security import RBAC, JWTBearer
 from libs.chats.v1 import LLMFactory, generate_chat_name, generate_prompts_stream
@@ -23,6 +24,7 @@ from libs.vectorstore.v1 import retrieve
 from models import ChatModel, ChatUploadModel, LLMModel, MessageModel
 from models.agent_model import AgentModel
 from models.kb_model import KnowledgeBaseModel
+from models.agent_model import AgentModel
 from services.__base.acquire import Acquire
 
 from .schema import (
@@ -480,13 +482,13 @@ class ChatService:
             detail="Agent not found",
           )
 
-        agent_base_url = agent.settings.get("url") or None
-        if not agent_base_url or not agent.is_active:
+        if not agent.is_active:
           raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Agent is not active",
           )
 
+        agent_version = agent.version
         # Create the user's message
         user_message = MessageModel(
           chat_session_id=chat_id,
@@ -501,7 +503,7 @@ class ChatService:
         await session.refresh(user_message)
 
         request_id = user_message.id
-
+        agent_base_url = settings.agent_base_url
         # Function to generate streaming response
         async def generate_agent_response() -> AsyncGenerator[str, None]:
           full_response = ""
@@ -509,9 +511,10 @@ class ChatService:
           try:
             # Send a message to the agent with a higher timeout
             async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:  # Set timeout to 30 seconds
-              url = f"{agent_base_url}/invoke"
+              url = f"{agent_base_url}/{agent_id}/{agent_version}/invoke"
               params: dict = {
                 "user_id": str(user_id),
+                "org_id": str(org_id),
               }
               payload = {"query": message_data.content}  # Adjust payload to match the agent's expected input
               headers = {"x-request-id": str(request_id)}

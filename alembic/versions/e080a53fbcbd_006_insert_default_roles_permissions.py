@@ -72,6 +72,8 @@ def upgrade() -> None:
     ("claude-3.7-sonnet", "anthropic", "claude-3-7-sonnet-latest", True),
     ("claude-3.5-sonnet", "anthropic", "claude-3-5-sonnet-latest", True),
     ("claude-3.5-haiku", "anthropic", "claude-3-5-haiku-latest", True),
+    ("deepseek-chat", "deepseek", "deepseek-chat", True),
+    ("deepseek-reason", "deepseek", "deepseek-reason", True),
   ]
 
   for name, provider, version, is_active in llm_models:

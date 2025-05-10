@@ -9,6 +9,7 @@ load_dotenv()
 class Settings(BaseSettings):
   """Settings class."""
 
+  agent_base_url: str
   app_name: str
   jwt_secret: str
   master_api_key: str
