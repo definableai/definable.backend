@@ -22,6 +22,7 @@ from libs.s3.v1 import S3Client
 from libs.speech.v1 import transcribe
 from models import ChatModel, ChatUploadModel, LLMModel, MessageModel
 from models.agent_model import AgentModel
+from models.prompt_model import PromptModel
 from services.__base.acquire import Acquire
 
 from .schema import (
@@ -275,9 +276,10 @@ class ChatService:
     self,
     org_id: UUID,
     message_data: MessageCreate,
-    chat_id: Optional[UUID] = None,
-    model_id: Optional[UUID] = None,
     agent_id: Optional[UUID] = None,
+    chat_id: Optional[UUID] = None,
+    instruction_id: Optional[UUID] = None,
+    model_id: Optional[UUID] = None,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("chats", "write")),
   ) -> StreamingResponse:
@@ -326,15 +328,27 @@ class ChatService:
           )
 
       # get the parent id from the last message of the chat session
-      query = select(
-        MessageModel
-        ).where(
+      query = (
+        select(MessageModel)
+        .where(
           MessageModel.chat_session_id == chat_id,
           MessageModel.role != MessageRole.USER,
-        ).order_by(MessageModel.created_at.desc())
+        )
+        .order_by(MessageModel.created_at.desc())
+      )
       result = await session.execute(query)
       last_message = result.scalars().first()
       parent_id = last_message.id if last_message else None
+
+      # if instruction_id is provided, check if instruction exists
+      if instruction_id:
+        query = select(PromptModel).where(PromptModel.id == instruction_id)
+        result = await session.execute(query)
+        instruction = result.scalar_one_or_none()
+        if not instruction:
+          raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instruction not found")
+        # get the prompt from the instruction
+        prompt = instruction.content
 
       # if chatting with a LLM model
       if model_id:
@@ -405,6 +419,7 @@ class ChatService:
             chat_session_id=chat_id,
             message=message_data.content,
             assets=files,
+            prompt=prompt,
           ):
             buffer.append(token.content)
             full_response += token.content
@@ -486,6 +501,7 @@ class ChatService:
 
         request_id = user_message.id
         agent_base_url = settings.agent_base_url
+
         # Function to generate streaming response
         async def generate_agent_response() -> AsyncGenerator[str, None]:
           full_response = ""
@@ -507,23 +523,11 @@ class ChatService:
                   yield f"data: {json.dumps({'error': error_detail})}\n\n"
                   return
 
-                # Stream the response in chunks
+                # Simplified streaming - pass through chunks as-is
                 async for chunk in response.aiter_text():
-                  try:
-                    # Decode the chunk if it contains nested JSON
-                    if chunk.startswith("data: {"):
-                      chunk = json.loads(chunk[6:])["message"]  # Extract the inner message
-
-                    buffer.append(chunk)
-                    full_response += chunk
-                    if len(buffer) >= self.chunk_size:
-                      d = {"message": "".join(buffer)}
-                      yield f"data: {json.dumps(d)}\n\n"
-                      buffer = []
-                  except Exception as e:
-                    self.logger.error(f"Error processing chunk: {e}", exc_info=True)
-                    yield f"data: {json.dumps({'error': 'Error processing chunk'})}\n\n"
-                    return
+                  if "DONE" in chunk:
+                    break
+                  yield chunk
 
             # Yield any remaining data in the buffer
             if buffer:
