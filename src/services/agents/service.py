@@ -327,56 +327,13 @@ class AgentService:
       query = select(AgentModel).where(AgentModel.category_id == category.id, AgentModel.is_active.is_(True))
       agents = (await session.scalars(query)).all()
 
-      # Get tools for these agents
-      agent_ids = [agent.id for agent in agents]
-      query = (
-        select(
-          AgentToolModel,
-          ToolModel,
-        )
-        .join(
-          ToolModel,
-          AgentToolModel.tool_id == ToolModel.id,
-        )
-        .where(
-          AgentToolModel.agent_id.in_(agent_ids),
-        )
-      )
-      tools = await session.execute(query)
-
-      # Organize tools by agent_id
-      tools_by_agent: dict[UUID, list[ToolModel]] = {}
-      for agent_tool, tool in tools:
-        if agent_tool.agent_id not in tools_by_agent:
-          tools_by_agent[agent_tool.agent_id] = []
-        tools_by_agent[agent_tool.agent_id].append(tool)
-
-      # Build agent responses
-      agent_responses = []
-      for agent in agents:
-        agent_tools = tools_by_agent.get(agent.id, [])
-        agent_responses.append(
-          AgentResponse(
-            id=agent.id,
-            name=agent.name,
-            description=agent.description,
-            model_id=agent.model_id,
-            is_active=agent.is_active,
-            settings=agent.settings,
-            version=agent.version,
-            organization_id=agent.organization_id,
-            updated_at=agent.updated_at,
-            tools=[
-              AgentToolResponse(id=tool.id, name=tool.name, description=tool.description, category_id=tool.category_id, is_active=tool.is_active)
-              for tool in agent_tools
-            ],
-            properties=agent.properties,
-            category=category.name,
-          )
-        )
-
       result.append(
-        AgentCategoryResponse(id=category.id, name=category.name, description=category.description, agent_count=len(agents), agents=agent_responses)
+        AgentCategoryResponse(
+          id=category.id,
+          name=category.name,
+          description=category.description,
+          agent_count=len(agents)
+        )
       )
 
     return result

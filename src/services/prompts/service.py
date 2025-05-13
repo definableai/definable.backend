@@ -269,17 +269,6 @@ class PromptService:
 
     return PaginatedPromptResponse(prompts=prompt_responses, total=total, has_more=has_more)
 
-  def _highlight_search_terms(self, text: str, query: str) -> str:
-    """Simple search term highlighting for UI presentation."""
-    if not text or not query:
-      return text
-
-    # Basic highlighting - replace with your preferred method
-    for term in query.split():
-      if len(term) > 2:  # Only highlight terms longer than 2 characters
-        text = text.replace(term, f"<mark>{term}</mark>")
-    return text
-
   async def post_create_prompt(
     self,
     org_id: UUID,
@@ -477,3 +466,15 @@ class PromptService:
       prompt_responses.append(PromptResponse(**response_data))
 
     return PaginatedPromptResponse(prompts=prompt_responses, total=total, has_more=has_more)
+
+  ### PRIVATE METHODS ###
+  def _highlight_search_terms(self, text: str, query: str) -> str:
+    """Simple search term highlighting for UI presentation."""
+    if not text or not query:
+      return text
+
+    # Basic highlighting - replace with your preferred method
+    for term in query.split():
+      if len(term) > 2:  # Only highlight terms longer than 2 characters
+        text = text.replace(term, f"<mark>{term}</mark>")
+    return text
