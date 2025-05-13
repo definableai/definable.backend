@@ -197,7 +197,13 @@ class ChatService:
     for msg in messages:
       prompt_data = None
       if msg.prompt_id:
-        prompt_data = await self._get_prompt(msg.prompt_id, session)
+        prompt_model = await self._get_prompt(msg.prompt_id, session)
+        prompt_data = PromptData(
+          id=prompt_model.id,
+          title=prompt_model.title,
+          description=prompt_model.description,
+          content=prompt_model.content,
+        )
 
       message_responses.append(
         MessageResponse(
@@ -336,9 +342,7 @@ class ChatService:
           )
       # if instruction_id is provided, check if instruction exists
       if instruction_id:
-        query = select(PromptModel).where(PromptModel.id == instruction_id)
-        result = await session.execute(query)
-        instruction = result.scalar_one_or_none()
+        instruction = await self._get_prompt(instruction_id, session)
         if not instruction:
           raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instruction not found")
         # get the prompt from the instruction
@@ -816,7 +820,7 @@ class ChatService:
     except Exception as e:
       self.logger.error(f"Error updating chat name: {str(e)}")
 
-  async def _get_prompt(self, prompt_id: UUID, session: AsyncSession) -> PromptData:
+  async def _get_prompt(self, prompt_id: UUID, session: AsyncSession) -> PromptModel:
     """Get a prompt from the database."""
     try:
       query = select(PromptModel).where(PromptModel.id == prompt_id)
@@ -827,15 +831,11 @@ class ChatService:
           status_code=status.HTTP_404_NOT_FOUND,
           detail="Prompt not found",
         )
-      return PromptData(
-        id=prompt.id,
-        title=prompt.title,
-        description=prompt.description,
-        content=prompt.content,
-      )
+      return prompt
 
     except Exception as e:
+      self.logger.error(f"Error getting prompt: {str(e)}")
       raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail=f"Error getting prompt: {str(e)}",
+        detail="Error getting prompt",
       )
