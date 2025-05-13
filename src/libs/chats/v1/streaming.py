@@ -1,5 +1,5 @@
 import asyncio
-from typing import AsyncGenerator, List, Sequence, Type, Union
+from typing import AsyncGenerator, List, Optional, Sequence, Type, Union
 from uuid import UUID
 
 from agno.agent import Agent, RunResponse
@@ -45,6 +45,7 @@ class LLMFactory:
     llm: str,
     provider: str,
     message: str,
+    prompt: Optional[str] = None,
     assets: Sequence[Union[File, Image]] = [],
     memory_size: int = 100,
   ) -> AsyncGenerator[RunResponse, None]:
@@ -78,6 +79,7 @@ class LLMFactory:
       add_history_to_messages=True,
       session_id=str(chat_session_id),
       num_history_responses=memory_size,
+      instructions=prompt,
     )
     async for token in await agent.arun(message, files=files or None, images=images or None):
       yield token

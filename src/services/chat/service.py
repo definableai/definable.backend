@@ -22,6 +22,7 @@ from libs.s3.v1 import S3Client
 from libs.speech.v1 import transcribe
 from models import ChatModel, ChatUploadModel, LLMModel, MessageModel
 from models.agent_model import AgentModel
+from models.prompt_model import PromptModel
 from services.__base.acquire import Acquire
 
 from .schema import (
@@ -37,6 +38,7 @@ from .schema import (
   MessageCreate,
   MessageResponse,
   MessageRole,
+  PromptData,
   TextInput,
 )
 
@@ -191,7 +193,18 @@ class ChatService:
         uploads_by_message[msg_id] = []
       uploads_by_message[msg_id].append(upload_data)
 
+    # Process each message and include prompt_data if prompt_id exists
     for msg in messages:
+      prompt_data = None
+      if msg.prompt_id:
+        prompt_model = await self._get_prompt(msg.prompt_id, session)
+        prompt_data = PromptData(
+          id=prompt_model.id,
+          title=prompt_model.title,
+          description=prompt_model.description,
+          content=prompt_model.content,
+        )
+
       message_responses.append(
         MessageResponse(
           id=msg.id,
@@ -201,6 +214,7 @@ class ChatService:
           parent_message_id=msg.parent_message_id,
           model_id=msg.model_id,
           agent_id=msg.agent_id,
+          prompt_data=prompt_data,  # Include the prompt_data here
           metadata=msg._metadata,
           created_at=msg.created_at.isoformat(),
         )
@@ -275,9 +289,10 @@ class ChatService:
     self,
     org_id: UUID,
     message_data: MessageCreate,
-    chat_id: Optional[UUID] = None,
-    model_id: Optional[UUID] = None,
     agent_id: Optional[UUID] = None,
+    chat_id: Optional[UUID] = None,
+    instruction_id: Optional[UUID] = None,
+    model_id: Optional[UUID] = None,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("chats", "write")),
   ) -> StreamingResponse:
@@ -285,6 +300,7 @@ class ChatService:
     is_new_chat = False
     db_session = None
     user_id = user["id"]
+    prompt = None
 
     try:
       if not model_id and not agent_id:
@@ -324,14 +340,23 @@ class ChatService:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Chat session not found",
           )
+      # if instruction_id is provided, check if instruction exists
+      if instruction_id:
+        instruction = await self._get_prompt(instruction_id, session)
+        if not instruction:
+          raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instruction not found")
+        # get the prompt from the instruction
+        prompt = instruction.content
 
       # get the parent id from the last message of the chat session
-      query = select(
-        MessageModel
-        ).where(
+      query = (
+        select(MessageModel)
+        .where(
           MessageModel.chat_session_id == chat_id,
           MessageModel.role != MessageRole.USER,
-        ).order_by(MessageModel.created_at.desc())
+        )
+        .order_by(MessageModel.created_at.desc())
+      )
       result = await session.execute(query)
       last_message = result.scalars().first()
       parent_id = last_message.id if last_message else None
@@ -354,6 +379,7 @@ class ChatService:
           parent_message_id=parent_id,
           model_id=model_id,
           content=message_data.content,
+          prompt_id=instruction_id or None,
           role=MessageRole.USER,
           created_at=datetime.now(timezone.utc),
         )
@@ -390,9 +416,8 @@ class ChatService:
           await session.commit()
 
         # Store the chat_id and is_new_chat at a higher scope for access in the async generator
-        if chat_id and is_new_chat:
-          stored_chat_id = chat_id
-          stored_is_new_chat = is_new_chat
+        stored_chat_id = chat_id
+        stored_is_new_chat = is_new_chat
 
         # generate a streaming response
         async def generate_model_response() -> AsyncGenerator[str, None]:
@@ -405,6 +430,7 @@ class ChatService:
             chat_session_id=chat_id,
             message=message_data.content,
             assets=files,
+            prompt=prompt,
           ):
             buffer.append(token.content)
             full_response += token.content
@@ -434,12 +460,12 @@ class ChatService:
 
           response_message = full_response
           await self._update_chat_name(
-            stored_chat_id,
             response_message,
             stored_is_new_chat,
             org_id,
             user_id,
             session,
+            stored_chat_id,
           )
 
         return StreamingResponse(
@@ -486,6 +512,7 @@ class ChatService:
 
         request_id = user_message.id
         agent_base_url = settings.agent_base_url
+
         # Function to generate streaming response
         async def generate_agent_response() -> AsyncGenerator[str, None]:
           full_response = ""
@@ -507,23 +534,11 @@ class ChatService:
                   yield f"data: {json.dumps({'error': error_detail})}\n\n"
                   return
 
-                # Stream the response in chunks
+                # Simplified streaming - pass through chunks as-is
                 async for chunk in response.aiter_text():
-                  try:
-                    # Decode the chunk if it contains nested JSON
-                    if chunk.startswith("data: {"):
-                      chunk = json.loads(chunk[6:])["message"]  # Extract the inner message
-
-                    buffer.append(chunk)
-                    full_response += chunk
-                    if len(buffer) >= self.chunk_size:
-                      d = {"message": "".join(buffer)}
-                      yield f"data: {json.dumps(d)}\n\n"
-                      buffer = []
-                  except Exception as e:
-                    self.logger.error(f"Error processing chunk: {e}", exc_info=True)
-                    yield f"data: {json.dumps({'error': 'Error processing chunk'})}\n\n"
-                    return
+                  if "DONE" in chunk:
+                    break
+                  yield chunk
 
             # Yield any remaining data in the buffer
             if buffer:
@@ -754,17 +769,19 @@ class ChatService:
 
   async def _update_chat_name(
     self,
-    chat_id: UUID,
     response_text: str,
     is_new_chat: bool,
     org_id: UUID,
     user_id: UUID,
     session: AsyncSession,
+    chat_id: Optional[UUID] = None,
   ):
     """Background task to update the chat name after the response is sent."""
 
     try:
       if not is_new_chat:
+        return
+      if not chat_id:
         return
 
       # Get the chat
@@ -802,3 +819,24 @@ class ChatService:
 
     except Exception as e:
       self.logger.error(f"Error updating chat name: {str(e)}")
+
+  async def _get_prompt(self, prompt_id: UUID, session: AsyncSession) -> PromptModel:
+    """Get a prompt from the database."""
+    try:
+      query = select(PromptModel).where(PromptModel.id == prompt_id)
+      result = await session.execute(query)
+      prompt = result.scalar_one_or_none()
+      if not prompt:
+        self.logger.error(f"Prompt not found: {prompt_id}")
+        raise HTTPException(
+          status_code=status.HTTP_404_NOT_FOUND,
+          detail="Prompt not found",
+        )
+      return prompt
+
+    except Exception as e:
+      self.logger.error(f"Error getting prompt: {str(e)}")
+      raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Error getting prompt",
+      )
