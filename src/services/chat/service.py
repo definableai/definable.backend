@@ -827,6 +827,7 @@ class ChatService:
       result = await session.execute(query)
       prompt = result.scalar_one_or_none()
       if not prompt:
+        self.logger.error(f"Prompt not found: {prompt_id}")
         raise HTTPException(
           status_code=status.HTTP_404_NOT_FOUND,
           detail="Prompt not found",
