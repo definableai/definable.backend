@@ -59,17 +59,10 @@ def upgrade() -> None:
     ],
   )
 
-  # Create full-text search index (added for efficient search)
-  op.execute("""
-      CREATE INDEX idx_prompts_search ON prompts
-      USING gin(to_tsvector('english', title || ' ' || content || ' ' || COALESCE(description, '')))
-  """)
-
 
 def downgrade() -> None:
   op.drop_constraint("fk_agents_category_id", "agents", type_="foreignkey")
   op.drop_index("idx_agents_category_id", table_name="agents")
-  op.drop_index("idx_prompts_search", table_name="prompts")
   op.drop_column("agents", "category_id")
   op.drop_column("agents", "properties")
   op.drop_table("agents_category")

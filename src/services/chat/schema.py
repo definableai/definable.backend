@@ -23,6 +23,16 @@ class MessageCreate(BaseModel):
   content: str
   file_uploads: Optional[List[str]] = None
 
+class PromptData(BaseModel):
+  """Prompt response data"""
+
+  id: UUID
+  title: str
+  description: str
+  content: str
+
+  class Config:
+    from_attributes = True
 
 class MessageResponse(BaseModel):
   """Message response schema."""
@@ -32,6 +42,7 @@ class MessageResponse(BaseModel):
   role: MessageRole
   chat_session_id: UUID
   parent_message_id: Optional[UUID] = None
+  prompt_data: Optional[PromptData] = None
   model_id: Optional[UUID] = None
   agent_id: Optional[UUID] = None
   metadata: Dict[str, Any] = {}

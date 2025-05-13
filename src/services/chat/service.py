@@ -38,6 +38,7 @@ from .schema import (
   MessageCreate,
   MessageResponse,
   MessageRole,
+  PromptData,
   TextInput,
 )
 
@@ -192,7 +193,12 @@ class ChatService:
         uploads_by_message[msg_id] = []
       uploads_by_message[msg_id].append(upload_data)
 
+    # Process each message and include prompt_data if prompt_id exists
     for msg in messages:
+      prompt_data = None
+      if msg.prompt_id:
+        prompt_data = await self._get_prompt(msg.prompt_id, session)
+
       message_responses.append(
         MessageResponse(
           id=msg.id,
@@ -202,6 +208,7 @@ class ChatService:
           parent_message_id=msg.parent_message_id,
           model_id=msg.model_id,
           agent_id=msg.agent_id,
+          prompt_data=prompt_data,  # Include the prompt_data here
           metadata=msg._metadata,
           created_at=msg.created_at.isoformat(),
         )
@@ -287,6 +294,7 @@ class ChatService:
     is_new_chat = False
     db_session = None
     user_id = user["id"]
+    prompt = None
 
     try:
       if not model_id and not agent_id:
@@ -326,6 +334,15 @@ class ChatService:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Chat session not found",
           )
+      # if instruction_id is provided, check if instruction exists
+      if instruction_id:
+        query = select(PromptModel).where(PromptModel.id == instruction_id)
+        result = await session.execute(query)
+        instruction = result.scalar_one_or_none()
+        if not instruction:
+          raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instruction not found")
+        # get the prompt from the instruction
+        prompt = instruction.content
 
       # get the parent id from the last message of the chat session
       query = (
@@ -339,16 +356,6 @@ class ChatService:
       result = await session.execute(query)
       last_message = result.scalars().first()
       parent_id = last_message.id if last_message else None
-
-      # if instruction_id is provided, check if instruction exists
-      if instruction_id:
-        query = select(PromptModel).where(PromptModel.id == instruction_id)
-        result = await session.execute(query)
-        instruction = result.scalar_one_or_none()
-        if not instruction:
-          raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instruction not found")
-        # get the prompt from the instruction
-        prompt = instruction.content
 
       # if chatting with a LLM model
       if model_id:
@@ -368,6 +375,7 @@ class ChatService:
           parent_message_id=parent_id,
           model_id=model_id,
           content=message_data.content,
+          prompt_id=instruction_id or None,
           role=MessageRole.USER,
           created_at=datetime.now(timezone.utc),
         )
@@ -404,9 +412,8 @@ class ChatService:
           await session.commit()
 
         # Store the chat_id and is_new_chat at a higher scope for access in the async generator
-        if chat_id and is_new_chat:
-          stored_chat_id = chat_id
-          stored_is_new_chat = is_new_chat
+        stored_chat_id = chat_id
+        stored_is_new_chat = is_new_chat
 
         # generate a streaming response
         async def generate_model_response() -> AsyncGenerator[str, None]:
@@ -449,12 +456,12 @@ class ChatService:
 
           response_message = full_response
           await self._update_chat_name(
-            stored_chat_id,
             response_message,
             stored_is_new_chat,
             org_id,
             user_id,
             session,
+            stored_chat_id,
           )
 
         return StreamingResponse(
@@ -758,17 +765,19 @@ class ChatService:
 
   async def _update_chat_name(
     self,
-    chat_id: UUID,
     response_text: str,
     is_new_chat: bool,
     org_id: UUID,
     user_id: UUID,
     session: AsyncSession,
+    chat_id: Optional[UUID] = None,
   ):
     """Background task to update the chat name after the response is sent."""
 
     try:
       if not is_new_chat:
+        return
+      if not chat_id:
         return
 
       # Get the chat
@@ -806,3 +815,27 @@ class ChatService:
 
     except Exception as e:
       self.logger.error(f"Error updating chat name: {str(e)}")
+
+  async def _get_prompt(self, prompt_id: UUID, session: AsyncSession) -> PromptData:
+    """Get a prompt from the database."""
+    try:
+      query = select(PromptModel).where(PromptModel.id == prompt_id)
+      result = await session.execute(query)
+      prompt = result.scalar_one_or_none()
+      if not prompt:
+        raise HTTPException(
+          status_code=status.HTTP_404_NOT_FOUND,
+          detail="Prompt not found",
+        )
+      return PromptData(
+        id=prompt.id,
+        title=prompt.title,
+        description=prompt.description,
+        content=prompt.content,
+      )
+
+    except Exception as e:
+      raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Error getting prompt: {str(e)}",
+      )

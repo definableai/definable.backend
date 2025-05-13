@@ -63,9 +63,30 @@ def upgrade() -> None:
   op.create_index("idx_prompts_organization_id", "prompts", ["organization_id"])
   op.create_index("idx_prompts_is_public", "prompts", ["is_public"])
   op.create_index("idx_prompts_is_featured", "prompts", ["is_featured"])
+  # Create full-text search index (added for efficient search)
+  op.execute("""
+      CREATE INDEX idx_prompts_search ON prompts
+      USING gin(to_tsvector('english', title || ' ' || content || ' ' || COALESCE(description, '')))
+  """)
+
+  # Add prompt_id column to messages table
+  op.add_column("messages", sa.Column("prompt_id", postgresql.UUID(), nullable=True))
+  op.create_foreign_key("fk_messages_prompt_id", "messages", "prompts", ["prompt_id"], ["id"], ondelete="SET NULL")
 
 
 def downgrade() -> None:
+  # Drop the foreign key and column first
+  op.drop_constraint("fk_messages_prompt_id", "messages", type_="foreignkey")
+  op.drop_column("messages", "prompt_id")
+
+  # Drop indexes first
+  op.drop_index("idx_prompts_search", table_name="prompts")
+  op.drop_index("idx_prompts_is_featured", table_name="prompts")
+  op.drop_index("idx_prompts_is_public", table_name="prompts")
+  op.drop_index("idx_prompts_organization_id", table_name="prompts")
+  op.drop_index("idx_prompts_creator_id", table_name="prompts")
+  op.drop_index("idx_prompts_category_id", table_name="prompts")
+
   # Drop tables
   op.drop_table("prompts")
   op.drop_table("prompt_categories")

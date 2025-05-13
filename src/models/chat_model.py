@@ -45,6 +45,7 @@ class MessageModel(CRUD):
   content: Mapped[str] = mapped_column(Text, nullable=False)
   model_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("models.id"), nullable=True)
   agent_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("agents.id"), nullable=True)
+  prompt_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("prompts.id"), nullable=True)
   _metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column("metadata", JSONB, default={})
 
   def __repr__(self) -> str:
