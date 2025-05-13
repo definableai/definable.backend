@@ -74,7 +74,6 @@ class AgentCategoryResponse(BaseModel):
     name: str
     description: Optional[str]
     agent_count: int
-    agents: List[AgentResponse]
 
     class Config:
         from_attributes = True

@@ -287,8 +287,8 @@ class ChatService:
 
   async def post_send_message(
     self,
-    org_id: UUID,
     message_data: MessageCreate,
+    org_id: UUID,
     agent_id: Optional[UUID] = None,
     chat_id: Optional[UUID] = None,
     instruction_id: Optional[UUID] = None,
