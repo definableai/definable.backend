@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import sys
 from uuid import UUID, uuid4
 from typing import List, Dict, Any, Optional, Union
-from datetime import datetime, timedelta
+import datetime
 
 from pydantic import BaseModel
 
@@ -75,7 +75,7 @@ class MockPromptModel:
         self.category_id = category_id or uuid4()
         self.category = category or MockPromptCategoryModel(id=self.category_id)
         self.metadata = metadata or {}
-        self.created_at = created_at or datetime.now()
+        self.created_at = created_at or datetime.datetime.now()
 
 @pytest.fixture
 def mock_user():
@@ -509,52 +509,35 @@ class TestPromptService:
         expected_prompts = [p for p in mock_prompts if p.organization_id == org_id or p.is_public]
         expected_count = len(expected_prompts)
         
-        # Use the method patching approach to avoid SQLAlchemy complexities
-        async def patched_method(org_id, category_id=None, include_public=True, 
-                                 is_featured=None, offset=0, limit=20, session=None, user=None):
-            # Verify the correct parameters are passed
-            assert session == mock_db_session
-            assert user == mock_user
-            
-            # Return a properly structured response with our expected data
-            prompt_responses = [
-                PromptResponse(
-                    id=prompt.id,
-                    title=prompt.title,
-                    content=prompt.content,
-                    description=prompt.description,
-                    is_public=prompt.is_public,
-                    is_featured=prompt.is_featured,
-                    category=PromptCategoryResponse.model_validate(prompt.category),
-                    creator_id=prompt.creator_id,
-                    organization_id=prompt.organization_id,
-                    created_at=prompt.created_at
-                )
-                for prompt in expected_prompts
-            ]
-            
-            # Make DB interactions look real
-            await session.execute(MagicMock())
-            
-            return PaginatedPromptResponse(
-                prompts=prompt_responses,
-                total=expected_count,
-                has_more=False
-            )
+        # Mock database to return the filtered prompts
+        all_mock = MagicMock(return_value=expected_prompts)
+        scalars_mock = MagicMock()
+        scalars_mock.all = all_mock
         
-        # Patch the service method
-        with patch.object(prompt_service, 'get_list_prompts', patched_method):
-            # Execute the service method
-            response = await prompt_service.get_list_prompts(
-                org_id=org_id,
-                session=mock_db_session,
-                user=mock_user
-            )
+        execute_mock = AsyncMock()
+        execute_mock.unique = MagicMock()
+        execute_mock.unique.return_value = MagicMock()
+        execute_mock.unique.return_value.scalars = MagicMock(return_value=scalars_mock)
+        
+        # Mock count query
+        mock_db_session.scalar = AsyncMock(return_value=expected_count)
+        
+        # Set up the mock database session
+        mock_db_session.execute = AsyncMock(return_value=execute_mock)
+        
+        # Execute the actual service method
+        response = await prompt_service.get_list_prompts(
+            org_id=org_id,
+            session=mock_db_session,
+            user=mock_user
+        )
         
         # Assert that the response contains the expected data
         assert isinstance(response, PaginatedPromptResponse)
         assert len(response.prompts) == expected_count
         assert response.total == expected_count
+        assert mock_db_session.execute.called  # Verify database was queried
+        assert mock_db_session.scalar.called   # Verify count was queried
         
     async def test_get_list_prompts_with_category_filter(self, prompt_service, mock_db_session, mock_user, mock_prompts, mock_category):
         """Test listing prompts filtered by category."""
@@ -567,53 +550,35 @@ class TestPromptService:
                           and (p.organization_id == org_id or p.is_public)]
         filtered_count = len(filtered_prompts)
         
-        # Use the method patching approach
-        async def patched_method(org_id, category_id=None, include_public=True, 
-                                 is_featured=None, offset=0, limit=20, session=None, user=None):
-            # Verify the correct parameters are passed
-            assert session == mock_db_session
-            assert user == mock_user
-            assert category_id == mock_category.id  # Make sure category filter is used
-            
-            # Return a properly structured response with our filtered data
-            prompt_responses = [
-                PromptResponse(
-                    id=prompt.id,
-                    title=prompt.title,
-                    content=prompt.content,
-                    description=prompt.description,
-                    is_public=prompt.is_public,
-                    is_featured=prompt.is_featured,
-                    category=PromptCategoryResponse.model_validate(prompt.category),
-                    creator_id=prompt.creator_id,
-                    organization_id=prompt.organization_id,
-                    created_at=prompt.created_at
-                )
-                for prompt in filtered_prompts
-            ]
-            
-            # Make DB interactions look real
-            await session.execute(MagicMock())
-            
-            return PaginatedPromptResponse(
-                prompts=prompt_responses,
-                total=filtered_count,
-                has_more=False
-            )
+        # Mock database to return the filtered prompts
+        all_mock = MagicMock(return_value=filtered_prompts)
+        scalars_mock = MagicMock()
+        scalars_mock.all = all_mock
         
-        # Patch the service method
-        with patch.object(prompt_service, 'get_list_prompts', patched_method):
-            # Execute the service method
-            response = await prompt_service.get_list_prompts(
-                org_id=org_id,
-                category_id=category_id,
-                session=mock_db_session,
-                user=mock_user
+        execute_mock = AsyncMock()
+        execute_mock.unique = MagicMock()
+        execute_mock.unique.return_value = MagicMock()
+        execute_mock.unique.return_value.scalars = MagicMock(return_value=scalars_mock)
+        
+        # Mock count query
+        mock_db_session.scalar = AsyncMock(return_value=filtered_count)
+        
+        # Set up the mock database session
+        mock_db_session.execute = AsyncMock(return_value=execute_mock)
+        # Execute the actual service method
+        response = await prompt_service.get_list_prompts(
+            org_id=org_id,
+            category_id=category_id,
+            session=mock_db_session,
+            user=mock_user
             )
         
         # Assert that the filtered data is correct
+        assert isinstance(response, PaginatedPromptResponse)
         assert len(response.prompts) == filtered_count
         assert response.total == filtered_count
+        assert mock_db_session.execute.called  # Verify database was queried
+        assert mock_db_session.scalar.called   # Verify count was queried
     
     async def test_post_create_prompt_category_not_found(self, prompt_service, mock_db_session, mock_user):
         """Test creating a prompt with a non-existent category."""
@@ -656,7 +621,7 @@ class TestPromptService:
             None                                       # Second check is for prompt
         ]
         
-        # Execute and assert
+        # Execute and Assert
         with pytest.raises(HTTPException) as exc_info:
             await prompt_service.put_update_prompt(
                 org_id=org_id,
@@ -736,202 +701,876 @@ class TestPromptService:
         assert response.total == len(mock_prompts)
         assert response.has_more == False
     
-    async def test_post_create_prompt_success(self, prompt_service, mock_db_session, mock_user, mock_category):
-        """Test creating a new prompt successfully."""
-        # Setup
-        org_id = uuid4()
-        category_id = mock_category.id
-        prompt_data = PromptCreate(
-            title="New Prompt",
-            content="This is a new prompt content",
-            description="A test prompt",
-            is_public=True,
-            is_featured=False
-        )
+# ============================================================================
+# INTEGRATION TESTS - RUN WITH: INTEGRATION_TEST=1 pytest tests/services/test_prompts.py
+# ============================================================================
+
+import os
+import pytest_asyncio
+from sqlalchemy import select, text
+import datetime
+
+# Define a function to check if we're running integration tests
+def is_integration_test():
+    """Check if we're running in integration test mode.
+    
+    This is controlled by the INTEGRATION_TEST environment variable.
+    Set it to 1 or true to run integration tests.
+    """
+    integration_env = os.environ.get("INTEGRATION_TEST", "").lower()
+    return integration_env in ("1", "true", "yes")
+
+# Only import these modules for integration tests
+if is_integration_test():
+    from sqlalchemy import select, text
+    from database import get_db
+    from dependencies.security import RBAC, JWTBearer
+    from models import PromptCategoryModel, PromptModel
+    from src.database import Base
+
+@pytest_asyncio.fixture
+async def setup_test_db_integration(db_session):
+    """Setup the test database for prompt integration tests."""
+    # Skip if not running integration tests
+    if not is_integration_test():
+        pytest.skip("Integration tests are skipped. Set INTEGRATION_TEST=1 to run them.")
         
-        # Create a mock for the new prompt that will be created by the service
-        new_prompt = MockPromptModel(
-            title=prompt_data.title,
-            content=prompt_data.content,
-            description=prompt_data.description,
-            is_public=prompt_data.is_public,
-            is_featured=prompt_data.is_featured,
-            category=mock_category,
-            category_id=category_id,
-            organization_id=org_id,
-            creator_id=mock_user["id"]
-        )
-        
-        # We'll patch the actual service method to simulate its behavior
-        # This is a more reliable approach than trying to mock all SQLAlchemy machinery
-        original_method = prompt_service.post_create_prompt
-        
-        async def patched_method(org_id, category_id, prompt_data, session, user):
-            # Verify the incoming parameters match what we expect
-            assert org_id == org_id
-            assert category_id == category_id
-            assert prompt_data.title == "New Prompt"
-            assert prompt_data.content == "This is a new prompt content"
-            assert session == mock_db_session
+    # Create necessary database objects
+    async for session in db_session:
+        try:
+            # Create required tables if they don't exist
+            # Create prompt_categories table
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS prompt_categories (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    name VARCHAR(255) NOT NULL UNIQUE,
+                    description TEXT,
+                    icon_url TEXT,
+                    display_order INTEGER DEFAULT 0,
+                    is_active BOOLEAN DEFAULT true,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
             
-            # Simulate checking if category exists
-            query = select(PromptCategoryModel).where(PromptCategoryModel.id == category_id)
-            result = await session.execute(query)
-            category = result.scalars().first()
+            # Create prompts table
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS prompts (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    title VARCHAR(255) NOT NULL,
+                    content TEXT NOT NULL,
+                    description TEXT,
+                    is_public BOOLEAN DEFAULT false,
+                    is_featured BOOLEAN DEFAULT false,
+                    creator_id UUID NOT NULL,
+                    organization_id UUID NOT NULL,
+                    category_id UUID NOT NULL REFERENCES prompt_categories(id),
+                    metadata JSONB DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
             
-            # Add the new prompt to the session and simulate commit/refresh
-            mock_prompt = PromptModel(**prompt_data.model_dump(), creator_id=user["id"], 
-                                      organization_id=org_id, category_id=category_id)
-            session.add(mock_prompt)
+            # Clean up any existing test data first
+            await session.execute(text("DELETE FROM prompts WHERE title LIKE 'Test Integration%'"))
+            await session.execute(text("DELETE FROM prompt_categories WHERE name LIKE 'Test Integration%'"))
+            
             await session.commit()
-            await session.refresh(mock_prompt)
             
-            # Return the expected response format
-            return PromptResponse(
-                id=new_prompt.id,
-                title=prompt_data.title,
-                content=prompt_data.content,
-                description=prompt_data.description,
-                is_public=prompt_data.is_public,
-                is_featured=prompt_data.is_featured,
-                category=PromptCategoryResponse(
-                    id=mock_category.id,
-                    name=mock_category.name,
-                    description=mock_category.description,
-                    icon_url=mock_category.icon_url,
-                    display_order=mock_category.display_order,
-                    is_active=mock_category.is_active
-                ),
-                creator_id=user["id"],
-                organization_id=org_id,
-                created_at=new_prompt.created_at
-            )
+            yield
+            
+            # Clean up after tests
+            await session.execute(text("DELETE FROM prompts WHERE title LIKE 'Test Integration%'"))
+            await session.execute(text("DELETE FROM prompt_categories WHERE name LIKE 'Test Integration%'"))
+            await session.commit()
+            
+        except Exception as e:
+            print(f"Error in setup: {e}")
+            await session.rollback()
+            raise
+        finally:
+            # Only process the first yielded session
+            break
+
+@pytest.fixture
+def test_integration_user():
+    """Create a test user for integration tests."""
+    user_id = uuid4()
+    org_id = uuid4()
+    return {
+        "id": user_id,
+        "email": f"test-integration-{user_id}@example.com",
+        "first_name": "Test",
+        "last_name": "Integration",
+        "org_id": org_id
+    }
+
+@pytest.mark.asyncio
+class TestPromptServiceIntegration:
+    """Integration tests for Prompt service using a real database."""
+    
+    # Skip if not in integration test mode
+    pytestmark = pytest.mark.skipif(
+        not is_integration_test(),
+        reason="Integration tests are skipped. Set INTEGRATION_TEST=1 to run them."
+    )
+    
+    async def test_category_crud_integration(self, prompt_service, db_session, test_integration_user, setup_test_db_integration):
+        """Test complete CRUD operations for categories with integration database."""
+        # Get the actual session from the generator
+        async for session in db_session:
+            try:
+                # 1. Create category
+                category_data = PromptCategoryCreate(
+                    name="Test Integration Category",
+                    description="Test integration description",
+                    icon_url="https://example.com/icon.png",
+                    display_order=1
+                )
+                
+                response = await prompt_service.post_create_category(
+                    category_data=category_data,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                # Verify creation
+                assert response is not None
+                assert response.name == category_data.name
+                assert response.description == category_data.description
+                assert response.id is not None
+                category_id = response.id
+                
+                # 2. Retrieve the category
+                get_response = await prompt_service.get_get_category(
+                    category_id=category_id,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                assert get_response.id == category_id
+                assert get_response.name == category_data.name
+                
+                # 3. Update the category
+                update_data = PromptCategoryUpdate(
+                    name="Test Integration Category Updated",
+                    description="Updated description"
+                )
+                
+                update_response = await prompt_service.put_update_category(
+                    category_id=category_id,
+                    category_data=update_data,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                assert update_response.name == update_data.name
+                assert update_response.description == update_data.description
+                
+                # 4. Delete the category
+                delete_response = await prompt_service.delete_delete_category(
+                    category_id=category_id,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                assert delete_response is not None
+                assert "deleted successfully" in delete_response["message"]
+                
+                # Verify deletion
+                with pytest.raises(HTTPException) as exc_info:
+                    await prompt_service.get_get_category(
+                        category_id=category_id,
+                        session=session,
+                        user=test_integration_user
+                    )
+                
+                assert exc_info.value.status_code == 404
+                
+            except Exception as e:
+                await session.rollback()
+                raise
+            finally:
+                # Only process the first yielded session
+                break
+    
+    async def test_prompt_crud_integration(self, prompt_service, db_session, test_integration_user, setup_test_db_integration):
+        """Test complete CRUD operations for prompts with integration database."""
+        # Get the actual session from the generator
+        async for session in db_session:
+            try:
+                # 1. Create a category first
+                category_data = PromptCategoryCreate(
+                    name="Test Integration Prompt Category",
+                    description="Category for prompt testing"
+                )
+                
+                category = await prompt_service.post_create_category(
+                    category_data=category_data,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                # 2. Create a prompt
+                prompt_data = PromptCreate(
+                    title="Test Integration Prompt",
+                    content="This is a test prompt content for integration test",
+                    description="Test prompt description",
+                    is_public=True,
+                    is_featured=False
+                )
+                
+                prompt_response = await prompt_service.post_create_prompt(
+                    org_id=test_integration_user["org_id"],
+                    category_id=category.id,
+                    prompt_data=prompt_data,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                # Verify creation
+                assert prompt_response is not None
+                assert prompt_response.title == prompt_data.title
+                assert prompt_response.content == prompt_data.content
+                assert prompt_response.category.id == category.id
+                prompt_id = prompt_response.id
+                
+                # 3. Update the prompt
+                update_data = PromptUpdate(
+                    title="Test Integration Prompt Updated",
+                    content="Updated content for integration test",
+                    is_featured=True
+                )
+                
+                update_response = await prompt_service.put_update_prompt(
+                    org_id=test_integration_user["org_id"],
+                    category_id=category.id,
+                    prompt_id=prompt_id,
+                    prompt_data=update_data,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                assert update_response.title == update_data.title
+                assert update_response.content == update_data.content
+                assert update_response.is_featured == update_data.is_featured
+                
+                # 4. Delete the prompt
+                delete_response = await prompt_service.delete_delete_prompt(
+                    org_id=test_integration_user["org_id"],
+                    prompt_id=prompt_id,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                assert delete_response is not None
+                assert "deleted successfully" in delete_response["message"]
+                
+                # Clean up the category
+                await prompt_service.delete_delete_category(
+                    category_id=category.id,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+            except Exception as e:
+                await session.rollback()
+                raise
+            finally:
+                # Only process the first yielded session
+                break
+    
+    async def test_pagination_integration(self, prompt_service, db_session, test_integration_user, setup_test_db_integration):
+        """Test prompt pagination with real database."""
+        # Get the actual session from the generator
+        async for session in db_session:
+            try:
+                # 1. Create a category
+                category_data = PromptCategoryCreate(
+                    name="Test Integration Pagination Category",
+                    description="Category for pagination testing"
+                )
+                
+                category = await prompt_service.post_create_category(
+                    category_data=category_data,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                # 2. Create multiple prompts (11 prompts for testing pagination)
+                for i in range(11):
+                    prompt_data = PromptCreate(
+                        title=f"Test Integration Pagination Prompt {i}",
+                        content=f"Content for pagination prompt {i}",
+                        description=f"Description {i}",
+                        is_public=i % 2 == 0,  # Alternate between public and private
+                        is_featured=i % 3 == 0  # Every third prompt is featured
+                    )
+                    
+                    await prompt_service.post_create_prompt(
+                        org_id=test_integration_user["org_id"],
+                        category_id=category.id,
+                        prompt_data=prompt_data,
+                        session=session,
+                        user=test_integration_user
+                    )
+                
+                # 3. Test pagination with default limit (10)
+                page_1 = await prompt_service.get_list_prompts(
+                    org_id=test_integration_user["org_id"],
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                assert page_1.total == 11
+                assert len(page_1.prompts) == 10
+                assert page_1.has_more == True
+                
+                # 4. Test second page
+                page_2 = await prompt_service.get_list_prompts(
+                    org_id=test_integration_user["org_id"],
+                    offset=1,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                assert page_2.total == 11
+                assert len(page_2.prompts) == 1
+                assert page_2.has_more == False
+                
+                # 5. Test with smaller limit
+                small_page = await prompt_service.get_list_prompts(
+                    org_id=test_integration_user["org_id"],
+                    limit=5,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                assert small_page.total == 11
+                assert len(small_page.prompts) == 5
+                assert small_page.has_more == True
+                
+                # 6. Test with category filter
+                category_filter = await prompt_service.get_list_prompts(
+                    org_id=test_integration_user["org_id"],
+                    category_id=category.id,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                assert category_filter.total == 11
+                
+                # 7. Test with featured filter
+                featured_filter = await prompt_service.get_list_prompts(
+                    org_id=test_integration_user["org_id"],
+                    is_featured=True,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                # Should have 4 featured prompts (every third of 11)
+                assert featured_filter.total == 4
+                
+                # Clean up
+                for prompt in page_1.prompts:
+                    await prompt_service.delete_delete_prompt(
+                        org_id=test_integration_user["org_id"],
+                        prompt_id=prompt.id,
+                        session=session,
+                        user=test_integration_user
+                    )
+                
+                for prompt in page_2.prompts:
+                    await prompt_service.delete_delete_prompt(
+                        org_id=test_integration_user["org_id"],
+                        prompt_id=prompt.id,
+                        session=session,
+                        user=test_integration_user
+                    )
+                
+                await prompt_service.delete_delete_category(
+                    category_id=category.id,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+            except Exception as e:
+                await session.rollback()
+                raise
+            finally:
+                # Only process the first yielded session
+                break
+
+    async def test_public_prompts_integration(self, prompt_service, db_session, test_integration_user, setup_test_db_integration):
+        """Test listing public prompts from different organizations."""
+        # Get the actual session from the generator
+        async for session in db_session:
+            try:
+                # 1. Create a category
+                category_data = PromptCategoryCreate(
+                    name="Test Integration Public Category",
+                    description="Category for public prompts testing"
+                )
+                
+                category = await prompt_service.post_create_category(
+                    category_data=category_data,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                # 2. Create a second user in a different organization
+                second_user = {
+                    "id": uuid4(),
+                    "email": "second-test@example.com",
+                    "first_name": "Second",
+                    "last_name": "User",
+                    "org_id": uuid4()  # Different org
+                }
+                
+                # 3. Create prompts in both organizations
+                # Create 3 prompts in user 1's org (2 public, 1 private)
+                for i in range(3):
+                    prompt_data = PromptCreate(
+                        title=f"Test Integration User1 Prompt {i}",
+                        content=f"Content for user1 prompt {i}",
+                        description=f"Description {i}",
+                        is_public=i < 2,  # First 2 are public
+                        is_featured=False
+                    )
+                    
+                    await prompt_service.post_create_prompt(
+                        org_id=test_integration_user["org_id"],
+                        category_id=category.id,
+                        prompt_data=prompt_data,
+                        session=session,
+                        user=test_integration_user
+                    )
+                
+                # Create 3 prompts in user 2's org (1 public, 2 private)
+                for i in range(3):
+                    prompt_data = PromptCreate(
+                        title=f"Test Integration User2 Prompt {i}",
+                        content=f"Content for user2 prompt {i}",
+                        description=f"Description {i}",
+                        is_public=i == 0,  # Only first is public
+                        is_featured=False
+                    )
+                    
+                    await prompt_service.post_create_prompt(
+                        org_id=second_user["org_id"],
+                        category_id=category.id,
+                        prompt_data=prompt_data,
+                        session=session,
+                        user=second_user
+                    )
+                
+                # 4. Test that user 1 can see their prompts plus user 2's public prompts
+                user1_prompts = await prompt_service.get_list_prompts(
+                    org_id=test_integration_user["org_id"],
+                    include_public=True,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                # Should see 4 prompts: 3 from own org + 1 public from other org
+                assert user1_prompts.total == 4
+                
+                # 5. Test user 2 can see their prompts plus user 1's public prompts
+                user2_prompts = await prompt_service.get_list_prompts(
+                    org_id=second_user["org_id"],
+                    include_public=True,
+                    session=session,
+                    user=second_user
+                )
+                
+                # Should see 5 prompts: 3 from own org + 2 public from other org
+                assert user2_prompts.total == 5
+                
+                # 6. Test that include_public=False filters correctly
+                user1_private_only = await prompt_service.get_list_prompts(
+                    org_id=test_integration_user["org_id"],
+                    include_public=False,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                # Should only see 3 prompts from own org
+                assert user1_private_only.total == 3
+                
+                # Clean up test data
+                # We can use list_all_prompts to get all prompts for cleanup
+                all_prompts = await prompt_service.get_list_all_prompts(
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                for prompt in all_prompts.prompts:
+                    try:
+                        await prompt_service.delete_delete_prompt(
+                            org_id=prompt.organization_id,
+                            prompt_id=prompt.id,
+                            session=session,
+                            user=test_integration_user if prompt.organization_id == test_integration_user["org_id"] else second_user
+                        )
+                    except Exception:
+                        # If delete fails for any reason, continue with cleanup
+                        pass
+                
+                await prompt_service.delete_delete_category(
+                    category_id=category.id,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+            except Exception as e:
+                await session.rollback()
+                raise
+            finally:
+                # Only process the first yielded session
+                break
+
+    async def test_create_prompt_success_integration(self, prompt_service, db_session, test_integration_user, setup_test_db_integration):
+        """Test creating a new prompt successfully using integration testing."""
+        # Get the actual session from the generator
+        async for session in db_session:
+            try:
+                # 1. Create a category first
+                category_data = PromptCategoryCreate(
+                    name="Test Integration Create Success Category",
+                    description="Category for create prompt success testing"
+                )
+                
+                category = await prompt_service.post_create_category(
+                    category_data=category_data,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                # 2. Create a prompt with all fields
+                prompt_data = PromptCreate(
+                    title="Test Integration Create Success Prompt",
+                    content="This is a test prompt content for integration test",
+                    description="Test prompt description",
+                    is_public=True,
+                    is_featured=True,
+                    metadata={"tags": ["test", "integration"], "version": 1}
+                )
+                
+                prompt_response = await prompt_service.post_create_prompt(
+                    org_id=test_integration_user["org_id"],
+                    category_id=category.id,
+                    prompt_data=prompt_data,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                # Verify creation with all fields
+                assert prompt_response is not None
+                assert prompt_response.title == prompt_data.title
+                assert prompt_response.content == prompt_data.content
+                assert prompt_response.description == prompt_data.description
+                assert prompt_response.is_public == prompt_data.is_public
+                assert prompt_response.is_featured == prompt_data.is_featured
+                assert prompt_response.metadata == prompt_data.metadata
+                assert prompt_response.category.id == category.id
+                assert prompt_response.creator_id == test_integration_user["id"]
+                assert prompt_response.organization_id == test_integration_user["org_id"]
+                
+                # Clean up
+                await prompt_service.delete_delete_prompt(
+                    org_id=test_integration_user["org_id"],
+                    prompt_id=prompt_response.id,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                await prompt_service.delete_delete_category(
+                    category_id=category.id,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+            except Exception as e:
+                await session.rollback()
+                raise
+            finally:
+                # Only process the first yielded session
+                break
+    
+    async def test_create_prompt_minimal_fields_integration(self, prompt_service, db_session, test_integration_user, setup_test_db_integration):
+        """Test creating a prompt with only required fields using integration testing."""
+        # Get the actual session from the generator
+        async for session in db_session:
+            try:
+                # 1. Create a category first
+                category_data = PromptCategoryCreate(
+                    name="Test Integration Minimal Fields Category",
+                    description="Category for minimal fields testing"
+                )
+                
+                category = await prompt_service.post_create_category(
+                    category_data=category_data,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                # 2. Create a prompt with only required fields
+                prompt_data = PromptCreate(
+                    title="Test Integration Minimal Prompt",
+                    content="This is a minimal prompt content"
+                    # All other fields are optional
+                )
+                
+                prompt_response = await prompt_service.post_create_prompt(
+                    org_id=test_integration_user["org_id"],
+                    category_id=category.id,
+                    prompt_data=prompt_data,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                # Verify creation with default values
+                assert prompt_response is not None
+                assert prompt_response.title == prompt_data.title
+                assert prompt_response.content == prompt_data.content
+                assert prompt_response.description is None
+                assert prompt_response.is_public is False  # Default value
+                assert prompt_response.is_featured is False  # Default value
+                assert prompt_response.metadata == {}
+                assert prompt_response.category.id == category.id
+                
+                # Clean up
+                await prompt_service.delete_delete_prompt(
+                    org_id=test_integration_user["org_id"],
+                    prompt_id=prompt_response.id,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                await prompt_service.delete_delete_category(
+                    category_id=category.id,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+            except Exception as e:
+                await session.rollback()
+                raise
+            finally:
+                # Only process the first yielded session
+                break
+
+    async def test_update_prompt_success_integration(self, prompt_service, db_session, test_integration_user, setup_test_db_integration):
+        """Test updating a prompt successfully using integration testing."""
+        # Get the actual session from the generator
+        async for session in db_session:
+            try:
+                # 1. Create a category first
+                category_data = PromptCategoryCreate(
+                    name="Test Integration Update Prompt Category",
+                    description="Category for update prompt testing"
+                )
+                
+                category = await prompt_service.post_create_category(
+                    category_data=category_data,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                # 2. Create a prompt to update
+                original_prompt_data = PromptCreate(
+                    title="Test Integration Original Prompt",
+                    content="This is the original content",
+                    description="Original description",
+                    is_public=False,
+                    is_featured=False
+                )
+                
+                original_prompt = await prompt_service.post_create_prompt(
+                    org_id=test_integration_user["org_id"],
+                    category_id=category.id,
+                    prompt_data=original_prompt_data,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                # 3. Update the prompt
+                update_data = PromptUpdate(
+                    title="Test Integration Updated Prompt",
+                    content="This is the updated content",
+                    is_public=True,
+                    is_featured=True,
+                    metadata={"updated": True, "version": 2}
+                )
+                
+                updated_prompt = await prompt_service.put_update_prompt(
+                    org_id=test_integration_user["org_id"],
+                    category_id=category.id,
+                    prompt_id=original_prompt.id,
+                    prompt_data=update_data,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                # 4. Verify updates took effect
+                assert updated_prompt.title == update_data.title
+                assert updated_prompt.title != original_prompt_data.title
+                assert updated_prompt.content == update_data.content
+                assert updated_prompt.content != original_prompt_data.content
+                assert updated_prompt.is_public == update_data.is_public
+                assert updated_prompt.is_public != original_prompt_data.is_public
+                assert updated_prompt.is_featured == update_data.is_featured
+                assert updated_prompt.is_featured != original_prompt_data.is_featured
+                assert updated_prompt.metadata == update_data.metadata
+                
+                # Description wasn't updated, so it should remain the same
+                assert updated_prompt.description == original_prompt_data.description
+                
+                # Clean up
+                await prompt_service.delete_delete_prompt(
+                    org_id=test_integration_user["org_id"],
+                    prompt_id=updated_prompt.id,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+                await prompt_service.delete_delete_category(
+                    category_id=category.id,
+                    session=session,
+                    user=test_integration_user
+                )
+                
+            except Exception as e:
+                await session.rollback()
+                raise
+            finally:
+                # Only process the first yielded session
+                break
+
+# ============================================================================
+# ADDITIONAL UNIT TESTS - Not requiring database integration
+# ============================================================================
+
+@pytest.mark.asyncio
+class TestPromptServiceEdgeCases:
+    """Test edge cases in the Prompt service."""
+    
+    async def test_get_list_categories_empty(self, prompt_service, mock_db_session, mock_user):
+        """Test listing categories when none exist."""
+        # Setup - return empty list
+        mock_db_session.execute.return_value.scalars.return_value.all.return_value = []
         
-        # Set up our mock db_session to return the category
-        mock_db_session.execute.return_value.scalars.return_value.first.return_value = mock_category
-        
-        # Patch the service method
-        with patch.object(prompt_service, 'post_create_prompt', patched_method):
-            # Execute the service method
-            response = await prompt_service.post_create_prompt(
-                org_id=org_id,
-                category_id=category_id,
-                prompt_data=prompt_data,
+        # Execute
+        response = await prompt_service.get_list_categories(
+            active_only=True,
                 session=mock_db_session,
                 user=mock_user
             )
         
-        # Verify session was called correctly
-        assert mock_db_session.add.called
-        assert mock_db_session.commit.called
-        assert mock_db_session.refresh.called
-        
-        # Verify response matches expected values
-        assert response.title == prompt_data.title
-        assert response.content == prompt_data.content
-        assert response.description == prompt_data.description
-        assert response.is_public == prompt_data.is_public
-        assert response.is_featured == prompt_data.is_featured
-        assert response.category.id == mock_category.id
-        assert response.category.name == mock_category.name
+        # Assert
+        assert isinstance(response, list)
+        assert len(response) == 0
     
-    async def test_put_update_prompt_success(self, prompt_service, mock_db_session, mock_user, mock_prompt, mock_category):
-        """Test updating a prompt successfully."""
+    async def test_list_prompts_empty_result(self, prompt_service, mock_db_session, mock_user):
+        """Test listing prompts when no prompts exist."""
+        # Setup
+        org_id = uuid4()
+        
+        # Mock to return empty results and zero count
+        mock_db_session.execute.return_value.unique.return_value.scalars.return_value.all.return_value = []
+        mock_db_session.scalar.return_value = 0
+        
+        # Execute
+        response = await prompt_service.get_list_prompts(
+            org_id=org_id,
+            session=mock_db_session,
+            user=mock_user
+        )
+        
+        # Assert
+        assert isinstance(response, PaginatedPromptResponse)
+        assert response.total == 0
+        assert len(response.prompts) == 0
+        assert response.has_more is False
+    
+    async def test_update_prompt_all_fields(self, prompt_service, mock_db_session, mock_user, mock_prompt, mock_category):
+        """Test updating all fields of a prompt."""
         # Setup
         org_id = mock_prompt.organization_id
         category_id = mock_category.id
         prompt_id = mock_prompt.id
         
-        # Set the prompt's category
+        # Associate the mock prompt with the category
         mock_prompt.category_id = category_id
         mock_prompt.category = mock_category
         
-        # Create update data
+        # Create update data for all fields
+        new_metadata = {"tags": ["test", "updated"], "version": 2}
         prompt_data = PromptUpdate(
-            title="Updated Prompt Title",
-            content="Updated content",
-            is_public=True
+            title="Completely Updated Title",
+            content="Completely updated content with new information",
+            description="New detailed description",
+            is_public=not mock_prompt.is_public,
+            is_featured=not mock_prompt.is_featured,
+            metadata=new_metadata
         )
         
-        # Store original values to confirm updates
-        original_title = mock_prompt.title
-        original_content = mock_prompt.content
-        original_is_public = mock_prompt.is_public
+        # Mock database to return category and prompt
+        mock_db_session.execute.return_value.scalars.return_value.first.return_value = mock_category
+        mock_db_session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = mock_prompt
+        mock_db_session.execute.return_value.unique.return_value.scalar_one.return_value = mock_prompt
         
-        # We'll patch the actual service method
-        async def patched_method(org_id, category_id, prompt_id, prompt_data, session, user):
-            # Verify the incoming parameters match what we expect
-            assert org_id == org_id
-            assert category_id == category_id
-            assert prompt_id == prompt_id
-            assert prompt_data.title == "Updated Prompt Title"
-            assert session == mock_db_session
-            
-            # Simulate checking if category exists
-            category_query = select(PromptCategoryModel).where(PromptCategoryModel.id == category_id)
-            result = await session.execute(category_query)
-            category = result.scalars().first()
-            
-            # Simulate getting the prompt
-            query = select(PromptModel).where(PromptModel.id == prompt_id, 
-                                             PromptModel.organization_id == org_id,
-                                             PromptModel.category_id == category_id)
-            result = await session.execute(query)
-            
-            # Update the prompt
-            update_data = prompt_data.model_dump(exclude_unset=True)
-            for field, value in update_data.items():
-                setattr(mock_prompt, field, value)
-            
-            # Simulate commit and refresh
-            await session.commit()
-            await session.refresh(mock_prompt)
-            
-            # Return the expected response
-            return PromptResponse(
-                id=mock_prompt.id,
-                title=mock_prompt.title,
-                content=mock_prompt.content,
-                description=mock_prompt.description,
-                is_public=mock_prompt.is_public,
-                is_featured=mock_prompt.is_featured,
-                category=PromptCategoryResponse(
-                    id=mock_category.id,
-                    name=mock_category.name,
-                    description=mock_category.description,
-                    icon_url=mock_category.icon_url,
-                    display_order=mock_category.display_order,
-                    is_active=mock_category.is_active
-                ),
-                creator_id=mock_prompt.creator_id,
-                organization_id=mock_prompt.organization_id,
-                created_at=mock_prompt.created_at
-            )
+        # Execute
+        response = await prompt_service.put_update_prompt(
+            org_id=org_id,
+            category_id=category_id,
+            prompt_id=prompt_id,
+            prompt_data=prompt_data,
+            session=mock_db_session,
+            user=mock_user
+        )
         
-        # Patch the service method
-        with patch.object(prompt_service, 'put_update_prompt', patched_method):
-            # Execute the service method
-            response = await prompt_service.put_update_prompt(
-                org_id=org_id,
-                category_id=category_id,
-                prompt_id=prompt_id,
-                prompt_data=prompt_data,
-                session=mock_db_session,
-                user=mock_user
-            )
-        
-        # Verify commit and refresh were called
-        assert mock_db_session.commit.called
-        assert mock_db_session.refresh.called
-        
-        # Verify the prompt was updated
+        # Assert all fields were updated
         assert mock_prompt.title == prompt_data.title
-        assert mock_prompt.title != original_title
         assert mock_prompt.content == prompt_data.content
-        assert mock_prompt.content != original_content
+        assert mock_prompt.description == prompt_data.description
         assert mock_prompt.is_public == prompt_data.is_public
+        assert mock_prompt.is_featured == prompt_data.is_featured
+        assert mock_prompt.metadata == prompt_data.metadata
+    
+    async def test_prompt_update_metadata_merge(self, prompt_service, mock_db_session, mock_user, mock_prompt, mock_category):
+        """Test updating prompt metadata with merge functionality."""
+        # Setup
+        org_id = mock_prompt.organization_id
+        category_id = mock_category.id
+        prompt_id = mock_prompt.id
         
-        # Verify response matches expected values
-        assert response.title == prompt_data.title
-        assert response.content == prompt_data.content
-        assert response.is_public == prompt_data.is_public 
+        # Associate the mock prompt with the category and set initial metadata
+        mock_prompt.category_id = category_id
+        mock_prompt.category = mock_category
+        mock_prompt.metadata = {"tags": ["original"], "count": 5}
+        
+        # Create update with partial metadata
+        prompt_data = PromptUpdate(
+            metadata={"tags": ["updated"], "new_field": "value"}
+        )
+        
+        # Mock database to return category and prompt
+        mock_db_session.execute.return_value.scalars.return_value.first.return_value = mock_category
+        mock_db_session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = mock_prompt
+        mock_db_session.execute.return_value.unique.return_value.scalar_one.return_value = mock_prompt
+        
+        # Execute
+        response = await prompt_service.put_update_prompt(
+            org_id=org_id,
+            category_id=category_id,
+            prompt_id=prompt_id,
+            prompt_data=prompt_data,
+            session=mock_db_session,
+            user=mock_user
+        )
+        
+        # Assert metadata was updated (replaced, not merged)
+        assert mock_prompt.metadata == prompt_data.metadata
+        assert "count" not in mock_prompt.metadata
+        assert mock_prompt.metadata["tags"] == ["updated"]
+        assert mock_prompt.metadata["new_field"] == "value" 

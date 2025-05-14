@@ -2,83 +2,96 @@ import os
 import sys
 from pathlib import Path
 import pytest
+import asyncio
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import AsyncSession
-from unittest.mock import AsyncMock, MagicMock
-from dotenv import load_dotenv
-
-# Add the project root directory to Python path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 
 # Load test environment variables
-env_test_path = ".env.test"
+env_test_path = os.path.join(os.path.dirname(__file__), ".env.test")
 load_dotenv(dotenv_path=env_test_path)
 
-# Create module-wide mocks for database
-mock_settings = MagicMock()
-mock_settings.database_url = os.environ.get("DATABASE_URL")
-mock_settings.jwt_secret = os.environ.get("JWT_SECRET")
-mock_settings.jwt_expire_minutes = int(os.environ.get("JWT_EXPIRE_MINUTES", "30"))
-mock_settings.app_name = os.environ.get("APP_NAME")
-mock_settings.master_api_key = os.environ.get("MASTER_API_KEY")
-mock_settings.environment = os.environ.get("ENVIRONMENT")
-mock_settings.frontend_url = os.environ.get("FRONTEND_URL")
+# Import project modules after environment setup
+from src.database import Base
+from src.config.settings import settings
 
-# Mock the database modules
-mock_get_db = AsyncMock()
-mock_async_session = AsyncMock()
-mock_Base = MagicMock()
-mock_CRUD = MagicMock()
+# Create test database engine
+TEST_DATABASE_URL = "postgresql+asyncpg://testuser:testpassword@localhost:5432/zyeta_test"
+test_engine = create_async_engine(TEST_DATABASE_URL, echo=True)
+TestingSessionLocal = sessionmaker(
+    bind=test_engine, 
+    class_=AsyncSession, 
+    expire_on_commit=False, 
+    autocommit=False, 
+    autoflush=False
+)
 
-# Create module mocks with attributes
-database_mock = MagicMock()
-database_mock.get_db = mock_get_db
-database_mock.Base = mock_Base
-database_mock.CRUD = mock_CRUD
-database_mock.async_session = mock_async_session
 
-src_database_mock = MagicMock()
-src_database_mock.get_db = mock_get_db
-src_database_mock.Base = mock_Base
-src_database_mock.CRUD = mock_CRUD
-src_database_mock.async_session = mock_async_session
+@pytest.fixture(scope="session")
+def event_loop():
+    """Create event loop for pytest-asyncio."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
 
-config_settings_mock = MagicMock()
-config_settings_mock.settings = mock_settings
 
-# Assign to sys.modules
-sys.modules["database"] = database_mock
-sys.modules["src.database"] = src_database_mock
-sys.modules["config.settings"] = config_settings_mock
+@pytest.fixture(scope="session")
+async def setup_test_db():
+    """Create test database schema."""
+    # Drop test database if it exists, then create it
+    async with test_engine.begin() as conn:
+        await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
+        
+    # Create all tables
+    async with test_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    
+    yield
+    
+    # Clean up after tests complete
+    async with test_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+
+@pytest.fixture
+async def db_session(setup_test_db):
+    """Create a test database session."""
+    async with TestingSessionLocal() as session:
+        yield session
+        await session.rollback()
 
 
 @pytest.fixture
 def app():
-  """Create a FastAPI application instance."""
-  return FastAPI()
+    """Create a FastAPI application instance."""
+    from src.app import app as application
+    return application
 
 
 @pytest.fixture
 def client(app):
-  """Create a TestClient instance."""
-  return TestClient(app)
+    """Create a TestClient instance."""
+    return TestClient(app)
 
 
 @pytest.fixture
-def mock_db_session():
-  """Create a mock database session."""
-  session = AsyncMock(spec=AsyncSession)
-  session.execute = AsyncMock()
-  session.add = MagicMock()
-  session.commit = AsyncMock()
-  session.refresh = AsyncMock()
-  session.rollback = AsyncMock()
-  return session
+def request_context():
+    """Create a request context."""
+    return {}
 
 
 @pytest.fixture
 def auth_headers():
-  """Return headers with a valid test token."""
-  return {"Authorization": "Bearer test_token_for_testing_only"}
+    """Return headers with a valid test token."""
+    return {"Authorization": "Bearer test_token_for_testing_only"}
+
+
+@pytest.fixture
+def generate_id():
+    """Generate a random id for test resources."""
+    import uuid
+    return lambda: str(uuid.uuid4())[:8]
