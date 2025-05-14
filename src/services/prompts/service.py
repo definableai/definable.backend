@@ -2,7 +2,7 @@ from typing import Dict, List, Optional
 from uuid import UUID
 
 from fastapi import Depends, HTTPException
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -181,6 +181,7 @@ class PromptService:
   async def get_list_prompts(
     self,
     org_id: UUID,
+    search_query: Optional[str] = None,
     category_id: Optional[UUID] = None,
     include_public: bool = True,
     is_featured: Optional[bool] = None,
@@ -189,50 +190,82 @@ class PromptService:
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("prompts", "read")),
   ) -> PaginatedPromptResponse:
-    """Get prompts with pagination."""
-    self.logger.info(f"Listing prompts for org: {org_id}, category: {category_id}, include_public: {include_public}, is_featured: {is_featured}")
-    # Base query for prompts
+    """Get prompts with pagination and optional full-text search."""
+    self.logger.info(
+      f"Listing prompts for org: {org_id}, "
+      f"search: {search_query}, category: {category_id}, "
+      f"include_public: {include_public}, is_featured: {is_featured}"
+    )
+
+    # Base query with category eager loading
     base_query = select(PromptModel).options(joinedload(PromptModel.category))
 
-    # Add conditions based on the include_public flag
+    # Organization and visibility filters
     if include_public:
-      query = base_query.where(or_(PromptModel.organization_id == org_id, PromptModel.is_public))
+      base_query = base_query.where(or_(PromptModel.organization_id == org_id, PromptModel.is_public))
     else:
-      query = base_query.where(PromptModel.organization_id == org_id)
+      base_query = base_query.where(PromptModel.organization_id == org_id)
 
-    # Apply filters
+    # Apply full-text search if query provided
+    if search_query:
+      search_condition = text(
+        "to_tsvector('english', prompts.title || ' ' || prompts.content || ' ' || COALESCE(prompts.description, '')) "
+        "@@ plainto_tsquery('english', :query)"
+      ).bindparams(query=search_query)
+      base_query = base_query.where(search_condition)
+
+    # Additional filters
     if category_id:
-      query = query.where(PromptModel.category_id == category_id)
+      base_query = base_query.where(PromptModel.category_id == category_id)
 
     if is_featured is not None:
-      query = query.where(PromptModel.is_featured == is_featured)
+      base_query = base_query.where(PromptModel.is_featured == is_featured)
 
-    # Get total count
-    count_query = select(func.count()).select_from(query.subquery())
+    # Get total count (optimized)
+    count_query = select(func.count()).select_from(base_query.subquery())
     total = await session.scalar(count_query) or 0
     self.logger.debug(f"Total matching prompts: {total}")
 
+    # Apply sorting (by search relevance if searching, else by creation date)
+    if search_query:
+      base_query = base_query.order_by(
+        text(
+          "ts_rank_cd(to_tsvector('english', prompts.title || ' ' || prompts.content || ' ' || COALESCE(prompts.description, '')), "
+          "plainto_tsquery('english', :query)) DESC"
+        ).bindparams(query=search_query)
+      )
+    else:
+      base_query = base_query.order_by(PromptModel.created_at.desc())
+
     # Apply pagination
-    query = query.order_by(PromptModel.created_at.desc())
-    query = query.offset(offset * limit).limit(limit + 1)
+    query = base_query.offset(offset * limit).limit(limit + 1)
 
     # Execute query
     result = await session.execute(query)
     prompts = result.unique().scalars().all()
 
-    # Check if there are more prompts
+    # Pagination handling
     has_more = len(prompts) > limit
-    prompts = prompts[:limit]  # Remove the extra item used to check for more
+    prompts = prompts[:limit]
     self.logger.debug(f"Retrieved {len(prompts)} prompts, has_more: {has_more}")
 
-    # Convert to response models
-    prompt_responses = [
-      PromptResponse(**{
+    # Convert to response models with search highlighting if applicable
+    prompt_responses = []
+    for prompt in prompts:
+      response_data = {
         **{k: v for k, v in prompt.__dict__.items() if k not in ["_sa_instance_state", "category"]},
         "category": PromptCategoryResponse.model_validate(prompt.category),
-      })
-      for prompt in prompts
-    ]
+      }
+
+      # Add search highlighting if searching
+      if search_query:
+        response_data["title"] = self._highlight_search_terms(prompt.title, search_query)
+        if prompt.description:
+          response_data["description"] = self._highlight_search_terms(
+            prompt.description[:300] + "..." if len(prompt.description) > 300 else prompt.description, search_query
+          )
+
+      prompt_responses.append(PromptResponse(**response_data))
 
     return PaginatedPromptResponse(prompts=prompt_responses, total=total, has_more=has_more)
 
@@ -356,6 +389,7 @@ class PromptService:
 
   async def get_list_all_prompts(
     self,
+    search_query: Optional[str] = None,
     category_id: Optional[UUID] = None,
     is_featured: Optional[bool] = None,
     offset: int = 0,
@@ -363,43 +397,84 @@ class PromptService:
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(JWTBearer()),
   ) -> PaginatedPromptResponse:
-    """Get all public prompts with pagination."""
-    self.logger.info(f"Listing all public prompts, category: {category_id}, is_featured: {is_featured}")
-    # Base query for public prompts
-    base_query = select(PromptModel).options(joinedload(PromptModel.category)).where(PromptModel.is_public)
+    """Get all public prompts with pagination and optional full-text search."""
+    self.logger.info(f"Listing all public prompts, search: {search_query}, category: {category_id}, is_featured: {is_featured}")
 
-    # Apply filters
+    # Base query for public prompts with category eager loading
+    base_query = select(PromptModel).options(joinedload(PromptModel.category))
+    base_query = base_query.where(PromptModel.is_public)
+
+    # Apply full-text search if query provided
+    if search_query:
+      search_condition = text(
+        "to_tsvector('english', prompts.title || ' ' || prompts.content || ' ' || COALESCE(prompts.description, '')) "
+        "@@ plainto_tsquery('english', :query)"
+      ).bindparams(query=search_query)
+      base_query = base_query.where(search_condition)
+
+    # Additional filters
     if category_id:
       base_query = base_query.where(PromptModel.category_id == category_id)
 
     if is_featured is not None:
       base_query = base_query.where(PromptModel.is_featured == is_featured)
 
-    # Get total count
+    # Get total count (optimized)
     count_query = select(func.count()).select_from(base_query.subquery())
     total = await session.scalar(count_query) or 0
     self.logger.debug(f"Total matching public prompts: {total}")
 
+    # Apply sorting (by search relevance if searching, else by creation date)
+    if search_query:
+      base_query = base_query.order_by(
+        text(
+          "ts_rank_cd(to_tsvector('english', prompts.title || ' ' || prompts.content || ' ' || COALESCE(prompts.description, '')), "
+          "plainto_tsquery('english', :query)) DESC"
+        ).bindparams(query=search_query)
+      )
+    else:
+      base_query = base_query.order_by(PromptModel.created_at.desc())
+
     # Apply pagination
-    query = base_query.order_by(PromptModel.created_at.desc())
-    query = query.offset(offset * limit).limit(limit + 1)
+    query = base_query.offset(offset * limit).limit(limit + 1)
 
     # Execute query
     result = await session.execute(query)
     prompts = result.unique().scalars().all()
 
-    # Check if there are more prompts
+    # Pagination handling
     has_more = len(prompts) > limit
-    prompts = prompts[:limit]  # Remove the extra item used to check for more
+    prompts = prompts[:limit]
     self.logger.debug(f"Retrieved {len(prompts)} public prompts, has_more: {has_more}")
 
-    # Convert to response models
-    prompt_responses = [
-      PromptResponse(**{
+    # Convert to response models with search highlighting if applicable
+    prompt_responses = []
+    for prompt in prompts:
+      response_data = {
         **{k: v for k, v in prompt.__dict__.items() if k not in ["_sa_instance_state", "category"]},
         "category": PromptCategoryResponse.model_validate(prompt.category),
-      })
-      for prompt in prompts
-    ]
+      }
+
+      # Add search highlighting if searching
+      if search_query:
+        response_data["title"] = self._highlight_search_terms(prompt.title, search_query)
+        if prompt.description:
+          response_data["description"] = self._highlight_search_terms(
+            prompt.description[:300] + "..." if len(prompt.description) > 300 else prompt.description, search_query
+          )
+
+      prompt_responses.append(PromptResponse(**response_data))
 
     return PaginatedPromptResponse(prompts=prompt_responses, total=total, has_more=has_more)
+
+  ### PRIVATE METHODS ###
+  def _highlight_search_terms(self, text: str, query: str) -> str:
+    """Simple search term highlighting for UI presentation."""
+    if not text or not query:
+      return text
+
+    # Basic highlighting - replace with your preferred method
+    for term in query.split():
+      if len(term) > 2:  # Only highlight terms longer than 2 characters
+        text = text.replace(term, f"<mark>{term}</mark>")
+    return text

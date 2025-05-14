@@ -54,6 +54,8 @@ class AgentResponse(AgentBase):
   organization_id: UUID
   updated_at: datetime
   tools: List[AgentToolResponse]
+  category: Optional[str] = None
+  properties: dict = Field(default_factory=dict)
 
   class Config:
     from_attributes = True
@@ -65,3 +67,13 @@ class PaginatedAgentResponse(BaseModel):
   agents: List[AgentResponse]
   total: int
   has_more: bool
+
+class AgentCategoryResponse(BaseModel):
+    """Agent category response schema."""
+    id: UUID
+    name: str
+    description: Optional[str]
+    agent_count: int
+
+    class Config:
+        from_attributes = True
