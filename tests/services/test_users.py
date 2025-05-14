@@ -2,28 +2,23 @@ import pytest
 import pytest_asyncio
 import sys
 import os
-from uuid import UUID, uuid4
-from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from uuid import uuid4
 
-from unittest.mock import AsyncMock, MagicMock, patch
-from fastapi import HTTPException, status
+from unittest.mock import MagicMock
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
 from src.services.users.service import UserService
 from src.services.users.schema import (
     InviteSignup,
-    OrganizationInfo,
     StytchUser,
-    UserDetailResponse,
-    UserListResponse,
 )
 from src.services.__base.acquire import Acquire
 
 # Define a function to check if we're running integration tests
 def is_integration_test():
     """Check if we're running in integration test mode.
-    
+
     This is controlled by the INTEGRATION_TEST environment variable.
     Set it to 1 or true to run integration tests.
     """
@@ -40,11 +35,7 @@ class TestAcquire(Acquire):
 # Only import these modules for integration tests
 if is_integration_test():
     from sqlalchemy import select, text
-    from database import get_db
-    from dependencies.security import RBAC, JWTBearer
-    from models import UserModel, OrganizationModel, OrganizationMemberModel, RoleModel
-    from src.database import Base
-    from src.libs.stytch.v1 import stytch_base  # Import Stytch for integration tests
+    from models import OrganizationMemberModel
 else:
     # Mock modules to prevent SQLAlchemy issues when running without integration flag
     sys.modules["database"] = MagicMock()
@@ -83,18 +74,18 @@ async def setup_test_db_integration(db_session):
     # Skip if not running integration tests
     if not is_integration_test():
         pytest.skip("Integration tests are skipped. Set INTEGRATION_TEST=1 to run them.")
-    
+
     test_org_id = None
     test_role_id = None
     test_user_id = None
     test_stytch_id = None
     session = None
-    
+
     # Get session from the generator without exhausting it
     try:
         session_gen = db_session.__aiter__()
         session = await session_gen.__anext__()
-        
+
         # Create necessary database tables if they don't exist
         await session.execute(text("""
             CREATE TABLE IF NOT EXISTS users (
@@ -107,7 +98,7 @@ async def setup_test_db_integration(db_session):
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
         """))
-        
+
         await session.execute(text("""
             CREATE TABLE IF NOT EXISTS organizations (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -119,7 +110,7 @@ async def setup_test_db_integration(db_session):
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
         """))
-        
+
         await session.execute(text("""
             CREATE TABLE IF NOT EXISTS roles (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -131,7 +122,7 @@ async def setup_test_db_integration(db_session):
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
         """))
-        
+
         await session.execute(text("""
             CREATE TABLE IF NOT EXISTS organization_members (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -145,17 +136,25 @@ async def setup_test_db_integration(db_session):
                 UNIQUE (organization_id, user_id)
             )
         """))
-        
+
         # Commit the table creation
         await session.commit()
-        
+
         # Clean up any existing test data first
-        await session.execute(text("DELETE FROM organization_members WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'test-integration-%@example.com')"))
+        await session.execute(
+            text("""
+                DELETE FROM organization_members
+                WHERE user_id IN (
+                    SELECT id FROM users
+                    WHERE email LIKE 'test-integration-%@example.com'
+                )
+            """)
+        )
         await session.execute(text("DELETE FROM users WHERE email LIKE 'test-integration-%@example.com'"))
         await session.execute(text("DELETE FROM roles WHERE name = 'MEMBER'"))
         await session.execute(text("DELETE FROM organizations WHERE name LIKE 'Test Integration%'"))
         await session.commit()
-        
+
         # Create a test organization
         test_org_id = uuid4()
         await session.execute(
@@ -165,7 +164,7 @@ async def setup_test_db_integration(db_session):
             """),
             {"id": str(test_org_id)}
         )
-        
+
         # Create role with the organization_id set correctly
         test_role_id = uuid4()
         await session.execute(
@@ -175,7 +174,7 @@ async def setup_test_db_integration(db_session):
             """),
             {"id": str(test_role_id), "org_id": str(test_org_id)}
         )
-        
+
         # Create a test user directly in database
         test_user_id = uuid4()
         test_stytch_id = f"test-stytch-id-{test_user_id}"
@@ -186,7 +185,7 @@ async def setup_test_db_integration(db_session):
             """),
             {"id": str(test_user_id), "stytch_id": test_stytch_id}
         )
-        
+
         # Connect user to organization
         member_id = uuid4()
         await session.execute(
@@ -201,15 +200,15 @@ async def setup_test_db_integration(db_session):
                 "role_id": str(test_role_id)
             }
         )
-        
+
         await session.commit()
-        
+
     except Exception as e:
         print(f"Error in setup: {e}")
         if session:
             await session.rollback()
         raise
-        
+
     # Return test data to tests
     yield {
         "org_id": test_org_id,
@@ -218,16 +217,27 @@ async def setup_test_db_integration(db_session):
         "stytch_id": test_stytch_id,
         "db_session": db_session  # Return the session generator for test use
     }
-    
+
     # Clean up after tests
     try:
         # Get a new session for cleanup
         async for cleanup_session in db_session:
             try:
-                await cleanup_session.execute(text("DELETE FROM organization_members WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'test-integration-%@example.com')"))
-                await cleanup_session.execute(text("DELETE FROM users WHERE email LIKE 'test-integration-%@example.com'"))
-                await cleanup_session.execute(text("DELETE FROM roles WHERE name = 'MEMBER'"))
-                await cleanup_session.execute(text("DELETE FROM organizations WHERE name LIKE 'Test Integration%'"))
+                await cleanup_session.execute(
+                    text("""
+                        DELETE FROM invitations
+                        WHERE email LIKE 'test-integration-%@example.com'
+                    """)
+                )
+                await cleanup_session.execute(
+                    text("""
+                        DELETE FROM organization_members
+                        WHERE user_id IN (
+                            SELECT id FROM users
+                            WHERE email LIKE 'test-integration-%@example.com'
+                        )
+                    """)
+                )
                 await cleanup_session.commit()
                 break  # Only process the first yielded session
             except Exception as e:
@@ -239,31 +249,31 @@ async def setup_test_db_integration(db_session):
 @pytest.mark.asyncio
 class TestUserServiceIntegration:
     """Integration tests for User service with real database."""
-    
+
     # Skip if not in integration test mode
     pytestmark = pytest.mark.skipif(
         not is_integration_test(),
         reason="Integration tests are skipped. Set INTEGRATION_TEST=1 to run them."
     )
-    
+
     async def test_get_me_integration(self, users_service, setup_test_db_integration):
         """Test getting current user details with integration database."""
         # Get setup data
         test_data = setup_test_db_integration
         db_session = test_data["db_session"]
-        
+
         # Get a new session
         async for session in db_session:
             try:
                 # Setup current user
                 current_user = {"id": test_data["user_id"]}
-                
+
                 # Execute
                 response = await users_service.get_me(
                     current_user=current_user,
                     session=session
                 )
-                
+
                 # Assert
                 assert response is not None
                 assert response.id == test_data["user_id"]
@@ -273,20 +283,20 @@ class TestUserServiceIntegration:
                 assert len(response.organizations) == 1
                 assert response.organizations[0].id == test_data["org_id"]
                 assert response.organizations[0].role_id == test_data["role_id"]
-                
+
                 # Only process the first session
                 break
             except Exception as e:
                 print(f"Error in test_get_me_integration: {e}")
                 raise
-    
+
     async def test_get_list_integration(self, users_service, setup_test_db_integration):
         """Test listing users with integration database."""
         # Get setup data
         test_data = setup_test_db_integration
         db_session = test_data["db_session"]
         org_id = test_data["org_id"]
-        
+
         # Get a new session
         async for session in db_session:
             try:
@@ -307,7 +317,7 @@ class TestUserServiceIntegration:
                             "stytch_id": stytch_id
                         }
                     )
-                    
+
                     # Connect user to organization
                     member_id = uuid4()
                     await session.execute(
@@ -322,12 +332,12 @@ class TestUserServiceIntegration:
                             "role_id": str(test_data["role_id"])
                         }
                     )
-                
+
                 await session.commit()
-                
+
                 # Setup current user
                 current_user = {"id": test_data["user_id"]}
-                
+
                 # Execute
                 response = await users_service.get_list(
                     org_id=org_id,
@@ -336,12 +346,12 @@ class TestUserServiceIntegration:
                     session=session,
                     user=current_user
                 )
-                
+
                 # Assert
                 assert response is not None
                 assert response.total == 4  # Original user + 3 new ones
                 assert len(response.users) == 4
-                
+
                 # Test pagination
                 paginated_response = await users_service.get_list(
                     org_id=org_id,
@@ -350,23 +360,23 @@ class TestUserServiceIntegration:
                     session=session,
                     user=current_user
                 )
-                
+
                 assert paginated_response.total == 4
                 assert len(paginated_response.users) == 2
-                
+
                 # Only process the first session
                 break
             except Exception as e:
                 print(f"Error in test_get_list_integration: {e}")
                 raise
-    
+
     async def test_post_invite_integration(self, users_service, setup_test_db_integration):
         """Test inviting a user with integration database and real Stytch credentials."""
         # Get setup data
         test_data = setup_test_db_integration
         db_session = test_data["db_session"]
         org_id = test_data["org_id"]
-        
+
         # Get a new session
         async for session in db_session:
             try:
@@ -378,10 +388,10 @@ class TestUserServiceIntegration:
                     last_name="User",
                     role="MEMBER"
                 )
-                
+
                 # Execute with the current user from test data
                 current_user = {"id": test_data["user_id"]}
-                
+
                 # Call the service method with real Stytch credentials
                 response = await users_service.post_invite(
                     user_data=user_data,
@@ -389,25 +399,25 @@ class TestUserServiceIntegration:
                     token_payload=current_user,
                     session=session
                 )
-                
+
                 # Assert successful response
                 assert isinstance(response, JSONResponse)
                 assert response.status_code == 200
                 assert "User invited successfully" in response.body.decode('utf-8')
-                
+
                 # Only process the first session
                 break
             except Exception as e:
                 print(f"Error in test_post_invite_integration: {e}")
                 raise
-    
+
     async def test_get_user_details_integration(self, users_service, setup_test_db_integration):
         """Test getting user details directly."""
         # Get setup data
         test_data = setup_test_db_integration
         db_session = test_data["db_session"]
         user_id = test_data["user_id"]
-        
+
         # Get a new session
         async for session in db_session:
             try:
@@ -416,7 +426,7 @@ class TestUserServiceIntegration:
                     user_id=user_id,
                     session=session
                 )
-                
+
                 # Assert
                 assert result is not None
                 assert result.id == user_id
@@ -424,26 +434,26 @@ class TestUserServiceIntegration:
                 assert result.first_name == "Integration"
                 assert result.last_name == "Test"
                 assert len(result.organizations) == 1
-                
+
                 # Only process the first session
                 break
             except Exception as e:
                 print(f"Error in test_get_user_details_integration: {e}")
                 raise
-                
+
     async def test_get_user_details_no_organizations_integration(self, users_service, setup_test_db_integration):
         """Test getting user details when user has no organizations."""
         # Get setup data
         test_data = setup_test_db_integration
         db_session = test_data["db_session"]
-        
+
         # Get a new session
         async for session in db_session:
             try:
                 # Create a user without organization memberships
                 user_id = uuid4()
                 stytch_id = f"test-stytch-id-no-org-{user_id}"
-                
+
                 await session.execute(
                     text("""
                         INSERT INTO users (id, email, first_name, last_name, stytch_id)
@@ -458,13 +468,13 @@ class TestUserServiceIntegration:
                     }
                 )
                 await session.commit()
-                
+
                 # Execute the internal method directly
                 result = await users_service._get_user_details(
                     user_id=user_id,
                     session=session
                 )
-                
+
                 # Assert
                 assert result is not None
                 assert result.id == user_id
@@ -472,7 +482,7 @@ class TestUserServiceIntegration:
                 assert result.first_name == "NoOrg"
                 assert result.last_name == "User"
                 assert len(result.organizations) == 0
-                
+
                 # Only process the first session
                 break
             except Exception as e:
@@ -484,37 +494,37 @@ class TestUserServiceIntegration:
         # Get setup data
         test_data = setup_test_db_integration
         db_session = test_data["db_session"]
-        
+
         # Get a new session
         async for session in db_session:
             try:
                 # Generate a UUID that doesn't exist
                 non_existent_id = uuid4()
-                
+
                 # Execute and verify exception
                 with pytest.raises(HTTPException) as excinfo:
                     await users_service._get_user_details(
                         user_id=non_existent_id,
                         session=session
                     )
-                
+
                 # Verify the exception
                 assert excinfo.value.status_code == 404
                 assert "User not found" in excinfo.value.detail
-                
+
                 # Only process the first session
                 break
             except Exception as e:
                 print(f"Error in test_get_user_details_user_not_found_integration: {e}")
                 raise
-    
+
     async def test_setup_user_integration(self, users_service, setup_test_db_integration):
         """Test setting up a user with integration database."""
         # Get setup data
         test_data = setup_test_db_integration
         db_session = test_data["db_session"]
         org_id = test_data["org_id"]
-        
+
         # Get a new session
         async for session in db_session:
             try:
@@ -525,7 +535,7 @@ class TestUserServiceIntegration:
                     first_name="New",
                     last_name="Integration"
                 )
-                
+
                 # Execute
                 result = await users_service._setup_user(
                     user_data=stytch_user,
@@ -533,26 +543,26 @@ class TestUserServiceIntegration:
                     role="MEMBER",
                     session=session
                 )
-                
+
                 # Assert
                 assert result is not None
                 assert result.email == stytch_user.email
                 assert result.first_name == stytch_user.first_name
                 assert result.last_name == stytch_user.last_name
                 assert result.stytch_id == stytch_user.stytch_id
-                
+
                 # Only process the first session
                 break
             except Exception as e:
                 print(f"Error in test_setup_user_integration: {e}")
                 raise
-    
+
     async def test_setup_existing_user_integration(self, users_service, setup_test_db_integration):
         """Test setting up an existing user with a new organization."""
         # Get setup data
         test_data = setup_test_db_integration
         db_session = test_data["db_session"]
-        
+
         # Get a new session
         async for session in db_session:
             try:
@@ -566,11 +576,11 @@ class TestUserServiceIntegration:
                     {"id": str(new_org_id)}
                 )
                 await session.commit()
-                
+
                 # Use existing user
                 existing_user_id = test_data["user_id"]
                 existing_stytch_id = test_data["stytch_id"]
-                
+
                 # Create StytchUser from existing user
                 stytch_user = StytchUser(
                     email="test-integration-user@example.com",
@@ -578,7 +588,7 @@ class TestUserServiceIntegration:
                     first_name="Integration",
                     last_name="Test"
                 )
-                
+
                 # Execute _setup_user
                 result = await users_service._setup_user(
                     user_data=stytch_user,
@@ -586,10 +596,10 @@ class TestUserServiceIntegration:
                     role="MEMBER",
                     session=session
                 )
-                
+
                 # Assert we got the existing user back
                 assert result.id == existing_user_id
-                
+
                 # Verify new organization membership was created
                 query = select(OrganizationMemberModel).where(
                     OrganizationMemberModel.user_id == existing_user_id,
@@ -599,20 +609,20 @@ class TestUserServiceIntegration:
                 membership = result.scalar_one_or_none()
                 assert membership is not None
                 assert membership.status == "active"
-                
+
                 # Only process the first session
                 break
             except Exception as e:
                 print(f"Error in test_setup_existing_user_integration: {e}")
                 raise
-                
+
     async def test_setup_organization_integration(self, users_service, setup_test_db_integration):
         """Test setting up an organization directly."""
         # Get setup data
         test_data = setup_test_db_integration
         db_session = test_data["db_session"]
         user_id = test_data["user_id"]
-        
+
         # Get a new session
         async for session in db_session:
             try:
@@ -626,7 +636,7 @@ class TestUserServiceIntegration:
                     {"id": str(new_org_id)}
                 )
                 await session.commit()
-                
+
                 # Execute the internal method directly
                 await users_service._setup_organization(
                     user_id=user_id,
@@ -634,7 +644,7 @@ class TestUserServiceIntegration:
                     role="MEMBER",
                     session=session
                 )
-                
+
                 # Verify organization membership was created
                 query = select(OrganizationMemberModel).where(
                     OrganizationMemberModel.user_id == user_id,
@@ -642,30 +652,30 @@ class TestUserServiceIntegration:
                 )
                 result = await session.execute(query)
                 membership = result.scalar_one_or_none()
-                
+
                 # Assert
                 assert membership is not None
                 assert membership.status == "active"
-                
+
                 # Only process the first session
                 break
             except Exception as e:
                 print(f"Error in test_setup_organization_integration: {e}")
                 raise
-                
+
     async def test_organization_not_found_integration(self, users_service, setup_test_db_integration):
         """Test setup organization with non-existent org."""
         # Get setup data
         test_data = setup_test_db_integration
         db_session = test_data["db_session"]
         user_id = test_data["user_id"]
-        
+
         # Get a new session
         async for session in db_session:
             try:
                 # Generate a UUID that doesn't exist
                 non_existent_org_id = uuid4()
-                
+
                 # Execute and verify exception
                 with pytest.raises(HTTPException) as excinfo:
                     await users_service._setup_organization(
@@ -674,17 +684,17 @@ class TestUserServiceIntegration:
                         role="MEMBER",
                         session=session
                     )
-                
+
                 # Verify the exception
                 assert excinfo.value.status_code == 404
                 assert "Organization not found" in excinfo.value.detail
-                
+
                 # Only process the first session
                 break
             except Exception as e:
                 print(f"Error in test_organization_not_found_integration: {e}")
                 raise
-                
+
     async def test_role_not_found_integration(self, users_service, setup_test_db_integration):
         """Test setup organization with non-existent role."""
         # Get setup data
@@ -692,13 +702,13 @@ class TestUserServiceIntegration:
         db_session = test_data["db_session"]
         user_id = test_data["user_id"]
         org_id = test_data["org_id"]
-        
+
         # Get a new session
         async for session in db_session:
             try:
                 # Use a role name that doesn't exist
                 non_existent_role = "NONEXISTENT_ROLE"
-                
+
                 # Execute and verify exception
                 with pytest.raises(HTTPException) as excinfo:
                     await users_service._setup_organization(
@@ -707,13 +717,13 @@ class TestUserServiceIntegration:
                         role=non_existent_role,
                         session=session
                     )
-                
+
                 # Verify the exception
                 assert excinfo.value.status_code == 500
                 assert "Role not found" in excinfo.value.detail
-                
+
                 # Only process the first session
                 break
             except Exception as e:
                 print(f"Error in test_role_not_found_integration: {e}")
-                raise 
+                raise

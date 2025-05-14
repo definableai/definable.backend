@@ -1,10 +1,7 @@
 import os
-import sys
-from pathlib import Path
 import pytest
 import asyncio
 from dotenv import load_dotenv
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
@@ -16,16 +13,15 @@ load_dotenv(dotenv_path=env_test_path)
 
 # Import project modules after environment setup
 from src.database import Base
-from src.config.settings import settings
 
 # Create test database engine
 TEST_DATABASE_URL = "postgresql+asyncpg://testuser:testpassword@localhost:5432/zyeta_test"
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=True)
 TestingSessionLocal = sessionmaker(
-    bind=test_engine, 
-    class_=AsyncSession, 
-    expire_on_commit=False, 
-    autocommit=False, 
+    bind=test_engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autocommit=False,
     autoflush=False
 )
 
@@ -45,13 +41,13 @@ async def setup_test_db():
     async with test_engine.begin() as conn:
         await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
         await conn.execute(text("CREATE SCHEMA public"))
-        
+
     # Create all tables
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    
+
     yield
-    
+
     # Clean up after tests complete
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
