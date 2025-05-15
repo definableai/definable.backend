@@ -48,18 +48,43 @@ class PromptService:
   async def get_list_categories(
     self, active_only: bool = True, session: AsyncSession = Depends(get_db), user: dict = Depends(JWTBearer())
   ) -> List[PromptCategoryResponse]:
-    """Get all prompt categories."""
+    """Get all prompt categories with prompt counts."""
     self.logger.info(f"Listing categories with active_only={active_only}")
-    query = select(PromptCategoryModel)
+
+    # Subquery to count prompts per category
+    prompt_count = select(PromptModel.category_id, func.count(PromptModel.id).label("prompt_count")).group_by(PromptModel.category_id).subquery()
+
+    # Main query with left join to include prompt counts
+    query = select(
+      PromptCategoryModel,
+      prompt_count.c.prompt_count,
+    ).join(
+      prompt_count,
+      PromptCategoryModel.id == prompt_count.c.category_id,
+      isouter=True,
+    )
+
     if active_only:
       query = query.where(PromptCategoryModel.is_active)
+
     query = query.order_by(PromptCategoryModel.display_order)
 
     result = await session.execute(query)
-    categories = result.scalars().all()
-    self.logger.debug(f"Found {len(categories)} categories")
+    categories_with_counts = result.all()
+    self.logger.debug(f"Found {len(categories_with_counts)} categories")
 
-    return [PromptCategoryResponse.model_validate(category) for category in categories]
+    # Map results to the response model
+    return [
+      PromptCategoryResponse(
+        id=category.id,
+        name=category.name,
+        description=category.description,
+        icon_url=category.icon_url,
+        display_order=category.display_order,
+        count=prompt_count if prompt_count is not None else 0,
+      )
+      for category, prompt_count in categories_with_counts
+    ]
 
   async def post_create_category(
     self, category_data: PromptCategoryCreate, session: AsyncSession = Depends(get_db), user: dict = Depends(JWTBearer())
@@ -165,18 +190,34 @@ class PromptService:
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(JWTBearer()),
   ) -> PromptCategoryResponse:
-    """Get a prompt category by ID."""
+    """Get a prompt category by ID with prompt count using JOIN."""
     self.logger.info(f"Fetching category with id: {category_id}")
-    query = select(PromptCategoryModel).where(PromptCategoryModel.id == category_id)
-    result = await session.execute(query)
-    category = result.scalars().first()
 
-    if not category:
+    # Subquery to count prompts per category
+    prompt_count_subquery = select(PromptModel.category_id, func.count(PromptModel.id).label("count")).group_by(PromptModel.category_id).subquery()
+
+    # Main query with LEFT JOIN to include prompt counts
+    query = (
+      select(PromptCategoryModel, prompt_count_subquery.c.count)
+      .join(prompt_count_subquery, PromptCategoryModel.id == prompt_count_subquery.c.category_id, isouter=True)
+      .where(PromptCategoryModel.id == category_id)
+    )
+
+    result = await session.execute(query)
+    category_with_count = result.first()
+
+    if not category_with_count or not category_with_count[0]:
       self.logger.warning(f"Category not found: {category_id}")
       raise HTTPException(status_code=404, detail="Category not found")
 
-    self.logger.debug(f"Retrieved category: {category.name}")
-    return PromptCategoryResponse.model_validate(category)
+    category, count = category_with_count
+    self.logger.debug(f"Retrieved category: {category.name} with {count or 0} prompts")
+
+    # Ensure the count is not None (default to 0 if no prompts)
+    validated_category = PromptCategoryResponse.model_validate(category)
+    validated_category.count = count if count is not None else 0
+
+    return validated_category
 
   async def get_list_prompts(
     self,
@@ -468,6 +509,7 @@ class PromptService:
     return PaginatedPromptResponse(prompts=prompt_responses, total=total, has_more=has_more)
 
   ### PRIVATE METHODS ###
+
   def _highlight_search_terms(self, text: str, query: str) -> str:
     """Simple search term highlighting for UI presentation."""
     if not text or not query:

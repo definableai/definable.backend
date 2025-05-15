@@ -35,6 +35,7 @@ class PromptCategoryResponse(PromptCategoryBase):
   """Prompt category response schema."""
 
   id: UUID
+  count: int = Field(default=0, description="Number of prompts in the category")
 
   class Config:
     from_attributes = True
