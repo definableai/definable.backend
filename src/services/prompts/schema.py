@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 from typing import Dict, List, Optional
 from uuid import UUID
 
@@ -68,6 +69,10 @@ class PromptUpdate(BaseModel):
   is_featured: Optional[bool] = None
   metadata: Optional[Dict] = None
 
+class SortBy(str, Enum):
+    RATING = "rating"
+    RECENT = "created_at"
+    ALPHABETICAL = "title"
 
 class PromptResponse(PromptBase):
   """Prompt response schema."""
@@ -77,9 +82,21 @@ class PromptResponse(PromptBase):
   organization_id: UUID
   created_at: datetime
   category: PromptCategoryResponse
+  rating: Optional[float] = Field(
+    default=None,
+    description="Average rating extracted from metadata (if available)",
+    examples=[4.5],
+  )
 
   class Config:
     from_attributes = True
+
+  @classmethod
+  def model_validate(cls, obj, **kwargs):
+    # Extract rating from metadata if it exists
+    if hasattr(obj, "metadata") and obj.metadata and "rating" in obj.metadata:
+      obj.rating = obj.metadata["rating"]
+    return super().model_validate(obj, **kwargs)
 
 
 class PaginatedPromptResponse(BaseModel):
