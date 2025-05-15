@@ -460,7 +460,7 @@ async def db_integration_setup(setup_test_db, db_session, test_model_data):
             text("SELECT * FROM llm_models WHERE name LIKE '%integration%'")
         )
         # fetchall() already returns a list in SQLAlchemy 2.0 with asyncpg, no need to await
-        rows = result.fetchall()  
+        rows = result.fetchall()
 
         # Convert rows to model objects
         for row in rows:
@@ -738,14 +738,14 @@ class TestLLMServiceErrorHandling:
                     )
                 """))
                 await session.commit()
-                
+
                 # First make sure the test record doesn't exist
                 await session.execute(text("""
-                    DELETE FROM llm_models WHERE name = 'error-test-model' 
+                    DELETE FROM llm_models WHERE name = 'error-test-model'
                     AND provider = 'test-provider' AND version = 'v1'
                 """))
                 await session.commit()
-                
+
                 # Setup test data
                 model_data = LLMCreate(
                     name="error-test-model",
@@ -767,14 +767,14 @@ class TestLLMServiceErrorHandling:
                                 VALUES (:name, :provider, :version, :is_active, :config)
                             """),
                             {
-                                "name": model_data.name, 
+                                "name": model_data.name,
                                 "provider": model_data.provider,
                                 "version": model_data.version,
                                 "is_active": model_data.is_active,
                                 "config": json.dumps(model_data.config or {})
                             }
                         )
-                        
+
                         # Verify the record exists within the transaction
                         check_result = await session.execute(
                             text("SELECT COUNT(*) FROM llm_models WHERE name = :name AND provider = :provider AND version = :version"),
@@ -782,7 +782,7 @@ class TestLLMServiceErrorHandling:
                         )
                         count = check_result.scalar()
                         assert count == 1, "Record should exist before rollback"
-                        
+
                         # Now simulate an error that should trigger rollback
                         raise Exception("Simulated database error")
                     except Exception as e:
@@ -848,11 +848,11 @@ class TestLLMServicePerformance:
                     )
                 """))
                 await session.commit()
-                
+
                 # Clean any existing test data
                 await session.execute(text("DELETE FROM llm_models WHERE provider = 'perf-test'"))
                 await session.commit()
-                
+
                 # Create 5 test models with different names
                 model_count = 5
                 created_models = []
