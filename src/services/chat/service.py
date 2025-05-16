@@ -76,7 +76,7 @@ class ChatService:
   ) -> JSONResponse:
     """Create a new chat session."""
     db_session = ChatModel(
-      title=data.title,
+      title=data.title or "New Chat",
       status=data.status,
       user_id=user["id"],
       org_id=user["org_id"],
@@ -340,6 +340,9 @@ class ChatService:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Chat session not found",
           )
+        # Flag to update the chat title if it's "New Chat"
+        is_new_chat = db_session.title == "New Chat"
+
       # if instruction_id is provided, check if instruction exists
       if instruction_id:
         instruction = await self._get_prompt(instruction_id, session)
@@ -417,7 +420,6 @@ class ChatService:
 
         # Store the chat_id and is_new_chat at a higher scope for access in the async generator
         stored_chat_id = chat_id
-        stored_is_new_chat = is_new_chat
 
         # generate a streaming response
         async def generate_model_response() -> AsyncGenerator[str, None]:
@@ -459,14 +461,15 @@ class ChatService:
           await session.refresh(ai_message)
 
           response_message = full_response
-          await self._update_chat_name(
-            response_message,
-            stored_is_new_chat,
-            org_id,
-            user_id,
-            session,
-            stored_chat_id,
-          )
+          if is_new_chat:
+            await self._update_chat_name(
+              response_message,
+              is_new_chat,
+              org_id,
+              user_id,
+              session,
+              stored_chat_id,
+            )
 
         return StreamingResponse(
           generate_model_response(),

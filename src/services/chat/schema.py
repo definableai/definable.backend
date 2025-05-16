@@ -55,7 +55,7 @@ class MessageResponse(BaseModel):
 class ChatSessionBase(BaseModel):
   """Base chat session schema."""
 
-  title: str
+  title: Optional[str] = None
   status: Optional[ChatStatus] = ChatStatus.ACTIVE
 
 
