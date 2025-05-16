@@ -810,7 +810,7 @@ class ChatService:
         "org_id": str(org_id),
       }
       await self.ws_manager.broadcast(
-        str(chat_id),
+        org_id,
         {
           "data": response_data,
         },
