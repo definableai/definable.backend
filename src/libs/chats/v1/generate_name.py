@@ -13,7 +13,10 @@ agent = Agent(
     api_key=settings.deepseek_api_key,
   ),
   name="Chat Name Generator",
-  instructions=("You are a research assistant that generates concise 2 to 5 words titles from a given message."),
+  instructions=(
+    "You are a research assistant that generates concise 2 to 5 words titles from a given message."
+    "If the message contains any greeting then do not generate the title just return 'New Chat'."
+  ),
   expected_output="A concise 2 to 5 words title",
 )
 
@@ -26,7 +29,7 @@ async def generate_chat_name(user_message: str) -> str:
       user_message (str): The user's message or input to base the chat name on.
 
   Returns:
-      str: The generated chat name, or a default name if generation fails.
+      str: The generated chat name, or a default name i.e. 'New Chat' if generation fails.
   """
   try:
     # Extract first 500 characters to focus on key content
@@ -79,11 +82,11 @@ async def generate_chat_name(user_message: str) -> str:
     print(f"Error generating chat name: {e}")
     return "New Chat"
 
+
 ### For testing Purpose ###
 async def main():
   # Example usage
-  user_input = (
-  """Document formats refer to the various methods of encoding documents for storage or transmission. Here are some common document formats:
+  user_input = """Document formats refer to the various methods of encoding documents for storage or transmission. Here are some common document formats:
 
 1. **PDF (Portable Document Format):**
    - Widely used for documents that require consistent formatting across different devices and platforms.
@@ -119,8 +122,7 @@ async def main():
    - Used for creating slideshows with text, images, videos, and animations.
 
 If you can specify or describe a document, I can provide more detailed information about its format or contents.
-  """
-  )
+  """  # noqa: E501
   chat_name = await generate_chat_name(user_input)
   print(chat_name)  # Directly print the chat name
 
