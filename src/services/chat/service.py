@@ -532,6 +532,7 @@ class ChatService:
               payload = {"query": message_data.content}  # Adjust payload to match the agent's expected input
               headers = {"x-request-id": str(request_id)}
               async with client.stream("POST", url, json=payload, headers=headers, params=params) as response:
+                self.logger.debug(f"Agent response: {response}")
                 if response.status_code != 200:
                   error_detail = f"Agent returned an error: {response.status_code}"
                   self.logger.error(error_detail)
