@@ -63,10 +63,16 @@ def upgrade() -> None:
   op.create_index("idx_prompts_organization_id", "prompts", ["organization_id"])
   op.create_index("idx_prompts_is_public", "prompts", ["is_public"])
   op.create_index("idx_prompts_is_featured", "prompts", ["is_featured"])
-  # Create full-text search index (added for efficient search)
+
+  # Add trigram indexes for substring search
+  op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
   op.execute("""
-      CREATE INDEX idx_prompts_search ON prompts
-      USING gin(to_tsvector('english', title || ' ' || content || ' ' || COALESCE(description, '')))
+    CREATE INDEX idx_prompts_title_trgm ON prompts
+    USING gin(title gin_trgm_ops)
+  """)
+  op.execute("""
+    CREATE INDEX idx_prompts_content_trgm ON prompts
+    USING gin(content gin_trgm_ops)
   """)
 
   # Add prompt_id column to messages table
@@ -80,7 +86,8 @@ def downgrade() -> None:
   op.drop_column("messages", "prompt_id")
 
   # Drop indexes first
-  op.drop_index("idx_prompts_search", table_name="prompts")
+  op.drop_index("idx_prompts_title_trgm", table_name="prompts")
+  op.drop_index("idx_prompts_content_trgm", table_name="prompts")
   op.drop_index("idx_prompts_is_featured", table_name="prompts")
   op.drop_index("idx_prompts_is_public", table_name="prompts")
   op.drop_index("idx_prompts_organization_id", table_name="prompts")
