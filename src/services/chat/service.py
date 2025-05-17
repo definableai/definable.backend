@@ -1,16 +1,16 @@
 import json
 import os
 import tempfile
+import uuid
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import AsyncGenerator, Dict, List, Optional, Union
 from uuid import UUID
-import uuid
 
+import httpx
 from agno.media import File, Image
 from fastapi import Depends, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse, StreamingResponse
-import httpx
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -523,7 +523,8 @@ class ChatService:
           try:
             # Send a message to the agent with a higher timeout
             async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:  # Set timeout to 30 seconds
-              url = f"{agent_base_url}/{agent_id}/{agent_version}/invoke"
+              slug = agent.name.lower().replace(" ", "-")
+              url = f"{agent_base_url}/{slug}/{agent_version}/invoke"
               params: dict = {
                 "user_id": str(user_id),
                 "org_id": str(org_id),
