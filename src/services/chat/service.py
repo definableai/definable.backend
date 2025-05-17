@@ -525,6 +525,7 @@ class ChatService:
             async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:  # Set timeout to 30 seconds
               slug = agent.name.lower().replace(" ", "-")
               url = f"{agent_base_url}/{slug}/{agent_version}/invoke"
+              print(f"Agent URL: {url}")
               params: dict = {
                 "user_id": str(user_id),
                 "org_id": str(org_id),
