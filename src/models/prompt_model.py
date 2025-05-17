@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, func, or_, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -41,3 +41,12 @@ class PromptModel(CRUD):
   category = relationship("PromptCategoryModel", back_populates="prompts")
   creator = relationship("UserModel", lazy="select")
   organization = relationship("OrganizationModel", lazy="select")
+
+  @classmethod
+  def get_search_query(cls, search_term: str):
+    """Generate hybrid search conditions"""
+    return or_(
+      text("to_tsvector('english', title || ' ' || content) @@ plainto_tsquery('english', :term)"),
+      func.similarity(cls.title, search_term) > 0.3,
+      func.similarity(cls.content, search_term) > 0.1,
+    ).params(term=search_term)
