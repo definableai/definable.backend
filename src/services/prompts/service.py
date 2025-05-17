@@ -1,3 +1,4 @@
+import re
 from typing import Dict, List, Optional
 from uuid import UUID
 
@@ -249,12 +250,22 @@ class PromptService:
     else:
       base_query = base_query.where(PromptModel.organization_id == org_id)
 
-    # Apply full-text search if query provided
+    # Apply search if query provided
     if search_query:
-      search_condition = text(
-        "to_tsvector('english', prompts.title || ' ' || prompts.content || ' ' || COALESCE(prompts.description, '')) "
-        "@@ plainto_tsquery('english', :query)"
-      ).bindparams(query=search_query)
+      # Unified search with improved substring matching
+      search_condition = or_(
+        # Full-text search
+        text(
+          "to_tsvector('english', prompts.title || ' ' || prompts.content || ' ' || COALESCE(prompts.description, '')) "
+          "@@ plainto_tsquery('english', :query)"
+        ).bindparams(query=search_query),
+        # Similarity search for partial matches
+        func.similarity(PromptModel.title, search_query) > 0.1,
+        func.similarity(PromptModel.content, search_query) > 0.05,
+        # ILIKE for substring matching in title and content
+        PromptModel.title.ilike(f"%{search_query}%"),
+        PromptModel.content.ilike(f"%{search_query}%"),  # Added for content
+      )
       base_query = base_query.where(search_condition)
 
     # Additional filters
@@ -314,6 +325,10 @@ class PromptService:
           response_data["description"] = self._highlight_search_terms(
             prompt.description[:300] + "..." if len(prompt.description) > 300 else prompt.description, search_query
           )
+        # Also highlight in content preview (first 200 chars)
+        if prompt.content:
+          content_preview = prompt.content[:200] + "..." if len(prompt.content) > 200 else prompt.content
+          response_data["content"] = self._highlight_search_terms(content_preview, search_query)
 
       prompt_responses.append(PromptResponse(**response_data))
 
@@ -455,17 +470,23 @@ class PromptService:
     base_query = select(PromptModel).options(joinedload(PromptModel.category))
     base_query = base_query.where(PromptModel.is_public)
 
-    # Search filter
+    # Apply search if provided
     if search_query:
-      base_query = base_query.where(
-        text("""
-                to_tsvector('english',
-                    prompts.title || ' ' ||
-                    prompts.content || ' ' ||
-                    COALESCE(prompts.description, '')
-                ) @@ plainto_tsquery('english', :query)
-            """).bindparams(query=search_query)
+      # Unified search with improved substring matching
+      search_condition = or_(
+        # Full-text search
+        text(
+          "to_tsvector('english', prompts.title || ' ' || prompts.content || ' ' || COALESCE(prompts.description, '')) "
+          "@@ plainto_tsquery('english', :query)"
+        ).bindparams(query=search_query),
+        # Similarity search for partial matches
+        func.similarity(PromptModel.title, search_query) > 0.1,
+        func.similarity(PromptModel.content, search_query) > 0.05,
+        # ILIKE for substring matching in title and content
+        PromptModel.title.ilike(f"%{search_query}%"),
+        PromptModel.content.ilike(f"%{search_query}%"),  # Added this line for content
       )
+      base_query = base_query.where(search_condition)  # Fixed indentation
 
     # Additional filters
     if category_id:
@@ -473,17 +494,12 @@ class PromptService:
     if is_featured is not None:
       base_query = base_query.where(PromptModel.is_featured == is_featured)
 
-    # Count total
-    total = await session.scalar(select(func.count()).select_from(base_query.subquery())) or 0
+    # Get total count
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total = await session.scalar(count_query) or 0
 
-    # Sorting logic
-    if sort_by == SortBy.RATING:
-      base_query = base_query.order_by(text("(prompts.metadata->>'rating')::float DESC NULLS LAST"))
-    elif sort_by == SortBy.RECENT:
-      base_query = base_query.order_by(PromptModel.created_at.desc())
-    elif sort_by == SortBy.ALPHABETICAL:
-      base_query = base_query.order_by(PromptModel.title.asc())
-    elif search_query:
+    # Apply sorting
+    if search_query:
       base_query = base_query.order_by(
         text("""
                 ts_rank_cd(
@@ -499,13 +515,15 @@ class PromptService:
     else:
       base_query = base_query.order_by(PromptModel.created_at.desc())
 
-    # Pagination
-    result = await session.execute(base_query.offset(offset).limit(limit + 1))
+# Apply pagination
+    query = base_query.offset(offset * limit).limit(limit + 1)
+    result = await session.execute(query)
+
     prompts = result.unique().scalars().all()
     has_more = len(prompts) > limit
     prompts = prompts[:limit]
 
-    # Build response
+    # Convert to response models
     prompt_responses = []
     for prompt in prompts:
       response_data = {
@@ -521,6 +539,10 @@ class PromptService:
             prompt.description[:300] + "..." if len(prompt.description) > 300 else prompt.description,
             search_query,
           )
+        # Also highlight in content preview (first 200 chars)
+        if prompt.content:
+          content_preview = prompt.content[:200] + "..." if len(prompt.content) > 200 else prompt.content
+          response_data["content"] = self._highlight_search_terms(content_preview, search_query)
 
       prompt_responses.append(PromptResponse(**response_data))
 
@@ -529,12 +551,12 @@ class PromptService:
   ### PRIVATE METHODS ###
 
   def _highlight_search_terms(self, text: str, query: str) -> str:
-    """Simple search term highlighting for UI presentation."""
+    """Highlight search terms in text with <mark> tags, supporting both whole words and partial matches."""
     if not text or not query:
       return text
 
-    # Basic highlighting - replace with your preferred method
-    for term in query.split():
-      if len(term) > 2:  # Only highlight terms longer than 2 characters
-        text = text.replace(term, f"<mark>{term}</mark>")
-    return text
+    # Case-insensitive replacement
+    pattern = re.compile(re.escape(query), re.IGNORECASE)
+    result = pattern.sub(lambda m: f"<mark>{m.group(0)}</mark>", text)
+
+    return result
