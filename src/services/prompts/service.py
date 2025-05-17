@@ -20,6 +20,7 @@ from .schema import (
   PromptCreate,
   PromptResponse,
   PromptUpdate,
+  SortBy,
 )
 
 
@@ -49,18 +50,43 @@ class PromptService:
   async def get_list_categories(
     self, active_only: bool = True, session: AsyncSession = Depends(get_db), user: dict = Depends(JWTBearer())
   ) -> List[PromptCategoryResponse]:
-    """Get all prompt categories."""
+    """Get all prompt categories with prompt counts."""
     self.logger.info(f"Listing categories with active_only={active_only}")
-    query = select(PromptCategoryModel)
+
+    # Subquery to count prompts per category
+    prompt_count = select(PromptModel.category_id, func.count(PromptModel.id).label("prompt_count")).group_by(PromptModel.category_id).subquery()
+
+    # Main query with left join to include prompt counts
+    query = select(
+      PromptCategoryModel,
+      prompt_count.c.prompt_count,
+    ).join(
+      prompt_count,
+      PromptCategoryModel.id == prompt_count.c.category_id,
+      isouter=True,
+    )
+
     if active_only:
       query = query.where(PromptCategoryModel.is_active)
+
     query = query.order_by(PromptCategoryModel.display_order)
 
     result = await session.execute(query)
-    categories = result.scalars().all()
-    self.logger.debug(f"Found {len(categories)} categories")
+    categories_with_counts = result.all()
+    self.logger.debug(f"Found {len(categories_with_counts)} categories")
 
-    return [PromptCategoryResponse.model_validate(category) for category in categories]
+    # Map results to the response model
+    return [
+      PromptCategoryResponse(
+        id=category.id,
+        name=category.name,
+        description=category.description,
+        icon_url=category.icon_url,
+        display_order=category.display_order,
+        count=prompt_count if prompt_count is not None else 0,
+      )
+      for category, prompt_count in categories_with_counts
+    ]
 
   async def post_create_category(
     self, category_data: PromptCategoryCreate, session: AsyncSession = Depends(get_db), user: dict = Depends(JWTBearer())
@@ -166,18 +192,34 @@ class PromptService:
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(JWTBearer()),
   ) -> PromptCategoryResponse:
-    """Get a prompt category by ID."""
+    """Get a prompt category by ID with prompt count using JOIN."""
     self.logger.info(f"Fetching category with id: {category_id}")
-    query = select(PromptCategoryModel).where(PromptCategoryModel.id == category_id)
-    result = await session.execute(query)
-    category = result.scalars().first()
 
-    if not category:
+    # Subquery to count prompts per category
+    prompt_count_subquery = select(PromptModel.category_id, func.count(PromptModel.id).label("count")).group_by(PromptModel.category_id).subquery()
+
+    # Main query with LEFT JOIN to include prompt counts
+    query = (
+      select(PromptCategoryModel, prompt_count_subquery.c.count)
+      .join(prompt_count_subquery, PromptCategoryModel.id == prompt_count_subquery.c.category_id, isouter=True)
+      .where(PromptCategoryModel.id == category_id)
+    )
+
+    result = await session.execute(query)
+    category_with_count = result.first()
+
+    if not category_with_count or not category_with_count[0]:
       self.logger.warning(f"Category not found: {category_id}")
       raise HTTPException(status_code=404, detail="Category not found")
 
-    self.logger.debug(f"Retrieved category: {category.name}")
-    return PromptCategoryResponse.model_validate(category)
+    category, count = category_with_count
+    self.logger.debug(f"Retrieved category: {category.name} with {count or 0} prompts")
+
+    # Ensure the count is not None (default to 0 if no prompts)
+    validated_category = PromptCategoryResponse.model_validate(category)
+    validated_category.count = count if count is not None else 0
+
+    return validated_category
 
   async def get_list_prompts(
     self,
@@ -186,14 +228,15 @@ class PromptService:
     category_id: Optional[UUID] = None,
     include_public: bool = True,
     is_featured: Optional[bool] = None,
+    sort_by: Optional[SortBy] = None,
     offset: int = 0,
     limit: int = 20,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("prompts", "read")),
   ) -> PaginatedPromptResponse:
-    """Get prompts with pagination and improved search."""
+    """Get prompts with enhanced sorting, pagination and optional full-text search."""
     self.logger.info(
-      f"Listing prompts for org: {org_id}, "
+      f"Listing prompts for org: {org_id}, sort_by: {sort_by}, "
       f"search: {search_query}, category: {category_id}, "
       f"include_public: {include_public}, is_featured: {is_featured}"
     )
@@ -237,8 +280,14 @@ class PromptService:
     total = await session.scalar(count_query) or 0
     self.logger.debug(f"Total matching prompts: {total}")
 
-    # Apply sorting (by search relevance if searching, else by creation date)
-    if search_query:
+    # Apply sorting
+    if sort_by == SortBy.RATING:
+      base_query = base_query.order_by(text("(prompts.metadata->>'rating')::float DESC NULLS LAST"))
+    elif sort_by == SortBy.RECENT:
+      base_query = base_query.order_by(PromptModel.created_at.desc())
+    elif sort_by == SortBy.ALPHABETICAL:
+      base_query = base_query.order_by(PromptModel.title.asc())
+    elif search_query:
       base_query = base_query.order_by(
         text(
           "ts_rank_cd(to_tsvector('english', prompts.title || ' ' || prompts.content || ' ' || COALESCE(prompts.description, '')), "
@@ -260,12 +309,13 @@ class PromptService:
     prompts = prompts[:limit]
     self.logger.debug(f"Retrieved {len(prompts)} prompts, has_more: {has_more}")
 
-    # Convert to response models with search highlighting if applicable
+    # Convert to response models
     prompt_responses = []
     for prompt in prompts:
       response_data = {
         **{k: v for k, v in prompt.__dict__.items() if k not in ["_sa_instance_state", "category"]},
         "category": PromptCategoryResponse.model_validate(prompt.category),
+        "rating": prompt.metadata["rating"] if prompt.metadata and "rating" in prompt.metadata else None,
       }
 
       # Add search highlighting if searching
@@ -407,15 +457,16 @@ class PromptService:
     search_query: Optional[str] = None,
     category_id: Optional[UUID] = None,
     is_featured: Optional[bool] = None,
+    sort_by: Optional[SortBy] = None,
     offset: int = 0,
     limit: int = 20,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(JWTBearer()),
   ) -> PaginatedPromptResponse:
-    """Get all public prompts with pagination and optional full-text search."""
-    self.logger.info(f"Listing all public prompts, search: {search_query}, category: {category_id}, is_featured: {is_featured}")
+    """Get all public prompts with enhanced sorting options."""
+    self.logger.info(f"Listing prompts - Sort: {sort_by}, Search: {search_query}, Category: {category_id}, Featured: {is_featured}")
 
-    # Base query for public prompts with category eager loading
+    # Base query with eager loading
     base_query = select(PromptModel).options(joinedload(PromptModel.category))
     base_query = base_query.where(PromptModel.is_public)
 
@@ -440,7 +491,6 @@ class PromptService:
     # Additional filters
     if category_id:
       base_query = base_query.where(PromptModel.category_id == category_id)
-
     if is_featured is not None:
       base_query = base_query.where(PromptModel.is_featured == is_featured)
 
@@ -451,17 +501,24 @@ class PromptService:
     # Apply sorting
     if search_query:
       base_query = base_query.order_by(
-        text(
-          "ts_rank_cd(to_tsvector('english', prompts.title || ' ' || prompts.content || ' ' || COALESCE(prompts.description, '')), "
-          "plainto_tsquery('english', :query)) DESC"
-        ).bindparams(query=search_query)
+        text("""
+                ts_rank_cd(
+                    to_tsvector('english',
+                        prompts.title || ' ' ||
+                        prompts.content || ' ' ||
+                        COALESCE(prompts.description, '')
+                    ),
+                    plainto_tsquery('english', :query)
+                ) DESC
+            """).bindparams(query=search_query)
       )
     else:
       base_query = base_query.order_by(PromptModel.created_at.desc())
 
-    # Apply pagination
+# Apply pagination
     query = base_query.offset(offset * limit).limit(limit + 1)
     result = await session.execute(query)
+    
     prompts = result.unique().scalars().all()
     has_more = len(prompts) > limit
     prompts = prompts[:limit]
@@ -472,14 +529,15 @@ class PromptService:
       response_data = {
         **{k: v for k, v in prompt.__dict__.items() if k not in ["_sa_instance_state", "category"]},
         "category": PromptCategoryResponse.model_validate(prompt.category),
+        "rating": prompt.metadata["rating"] if prompt.metadata and "rating" in prompt.metadata else None,
       }
 
-      # Add search highlighting if searching
       if search_query:
         response_data["title"] = self._highlight_search_terms(prompt.title, search_query)
         if prompt.description:
           response_data["description"] = self._highlight_search_terms(
-            prompt.description[:300] + "..." if len(prompt.description) > 300 else prompt.description, search_query
+            prompt.description[:300] + "..." if len(prompt.description) > 300 else prompt.description,
+            search_query,
           )
         # Also highlight in content preview (first 200 chars)
         if prompt.content:
