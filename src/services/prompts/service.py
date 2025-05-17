@@ -518,7 +518,7 @@ class PromptService:
 # Apply pagination
     query = base_query.offset(offset * limit).limit(limit + 1)
     result = await session.execute(query)
-    
+
     prompts = result.unique().scalars().all()
     has_more = len(prompts) > limit
     prompts = prompts[:limit]
