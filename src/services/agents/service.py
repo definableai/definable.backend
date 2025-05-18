@@ -3,7 +3,6 @@ from typing import List, Optional, Tuple
 from uuid import UUID
 
 from fastapi import Depends, HTTPException
-from fastapi.responses import StreamingResponse
 from httpx import AsyncClient, HTTPStatusError, Timeout
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -286,28 +285,24 @@ class AgentService:
       agent_slug = agent.name.lower().replace(" ", "-")
       agent_version = agent.version
 
-      async def generate():
-        async with AsyncClient(timeout=Timeout(60.0)) as client:
-          url = f"{settings.agent_base_url}/{agent_slug}/{agent_version}/hello"
-          async with client.stream("GET", url) as response:
-            if response.status_code != 200:
-              raise HTTPException(
-                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-                detail="Error calling the agent",
-              )
-
-            async for chunk in response.aiter_text():
-              yield chunk
-              if "DONE" in chunk:
-                break
-
-      return StreamingResponse(generate(), media_type="text/plain")
-
-    except HTTPStatusError as e:
-      raise HTTPException(
-        status_code=e.response.status_code,
-        detail=f"Agent returned error: {e.response.text}",
-      )
+      async with AsyncClient(timeout=Timeout(60.0)) as client:
+        url = f"{settings.agent_base_url}/{agent_slug}/{agent_version}/hello"
+        try:
+          response = await client.get(url)
+          response.raise_for_status()  # This will raise HTTPStatusError for non-200 status codes
+          return response.json()
+        except HTTPStatusError as e:
+          self.logger.error(f"Agent returned error: {e.response.status_code} - {e.response.text}")
+          raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail=f"Agent service returned error: {e.response.status_code} - {e.response.text}",
+          )
+        except ValueError as e:
+          self.logger.error(f"Invalid JSON response from agent: {e}")
+          raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail="Agent service returned invalid response format",
+          )
     except Exception:
       raise HTTPException(
         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
