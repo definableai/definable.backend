@@ -293,6 +293,9 @@ class ChatService:
     chat_id: Optional[UUID] = None,
     instruction_id: Optional[UUID] = None,
     model_id: Optional[UUID] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    top_p: Optional[float] = None,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("chats", "write")),
   ) -> StreamingResponse:
@@ -433,6 +436,9 @@ class ChatService:
             message=message_data.content,
             assets=files,
             prompt=prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
           ):
             buffer.append(token.content)
             full_response += token.content

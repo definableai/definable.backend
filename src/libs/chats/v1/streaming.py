@@ -48,7 +48,10 @@ class LLMFactory:
     prompt: Optional[str] = None,
     assets: Sequence[Union[File, Image]] = [],
     memory_size: int = 100,
-  ) -> AsyncGenerator[RunResponse, None]:
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    top_p: Optional[float] = None,
+) -> AsyncGenerator[RunResponse, None]:
     """Stream chat responses using Agno agent.
 
     Args:
@@ -72,7 +75,12 @@ class LLMFactory:
     model_class = self.get_model_class(provider)
     # Create agent with storage for memory retention
     agent = Agent(
-      model=model_class(id=llm),  # type: ignore
+      model=model_class(
+        id=llm,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p,
+      ), # type: ignore
       storage=self.storage,
       markdown=True,
       stream=True,
