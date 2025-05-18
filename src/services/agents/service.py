@@ -1,10 +1,10 @@
 from http import HTTPStatus
 from typing import List, Optional, Tuple
-from fastapi.responses import StreamingResponse
-from httpx import AsyncClient, HTTPStatusError, Timeout
 from uuid import UUID
 
 from fastapi import Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from httpx import AsyncClient, HTTPStatusError, Timeout
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -270,6 +270,7 @@ class AgentService:
     try:
       query = select(AgentModel).where(AgentModel.id == agent_id)
       agent = await session.scalar(query)
+
       if not agent:
         raise HTTPException(
           status_code=HTTPStatus.NOT_FOUND,
@@ -282,9 +283,12 @@ class AgentService:
           detail="Agent is not active",
         )
 
+      agent_slug = agent.name.lower().replace(" ", "-")
+      agent_version = agent.version
+
       async def generate():
         async with AsyncClient(timeout=Timeout(60.0)) as client:
-          url = f"{settings.agent_base_url}/hello"
+          url = f"{settings.agent_base_url}/{agent_slug}/{agent_version}/hello"
           async with client.stream("GET", url) as response:
             if response.status_code != 200:
               raise HTTPException(
@@ -327,14 +331,7 @@ class AgentService:
       query = select(AgentModel).where(AgentModel.category_id == category.id, AgentModel.is_active.is_(True))
       agents = (await session.scalars(query)).all()
 
-      result.append(
-        AgentCategoryResponse(
-          id=category.id,
-          name=category.name,
-          description=category.description,
-          agent_count=len(agents)
-        )
-      )
+      result.append(AgentCategoryResponse(id=category.id, name=category.name, description=category.description, agent_count=len(agents)))
 
     return result
 
