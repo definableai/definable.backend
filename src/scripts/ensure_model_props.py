@@ -4,9 +4,12 @@ Ensures the 'props' column exists in the models table and populates it with data
 Uses the script_run_tracker table to track execution.
 """
 
+import asyncio
 import json
 import os
+import platform
 import sys
+import time
 from typing import Optional
 
 from sqlalchemy import text
@@ -397,31 +400,12 @@ async def main():
 
 
 if __name__ == "__main__":
-  import asyncio
-  import platform
-  import time
-
-  # Use a different event loop policy on Windows
-  if platform.system() == "Windows":
-    try:
-      from asyncio import WindowsProactorEventLoopPolicy, set_event_loop_policy
-
-      set_event_loop_policy(WindowsProactorEventLoopPolicy())
-    except ImportError:
-      # Fallback for older Python versions or if the policy is not available
-      pass
-
-    # Import these only on Windows
-    import warnings
-
-    warnings.filterwarnings("ignore", category=RuntimeWarning)
-
   try:
     asyncio.run(main())
 
     # Give connections time to close properly
     if platform.system() == "Windows":
-      time.sleep(0.1)
+      time.sleep(1)
 
   except KeyboardInterrupt:
     logger.info("Script interrupted by user")
