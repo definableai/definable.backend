@@ -773,7 +773,9 @@ class BillingService:
       else:
         self.logger.warning(f"No matching transaction found for expired session: {session_obj.id}")
 
-    self.logger.debug(f"Looking for transaction with checkout_session_id: {session_id}", query=str(query))
+    # Only log the debug message if session_id is defined
+    if "session_id" in locals():
+      self.logger.debug(f"Looking for transaction with checkout_session_id: {session_id}", query=str(query))
 
   async def _get_or_create_stripe_customer(
     self,
