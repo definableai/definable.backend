@@ -572,7 +572,15 @@ class ChatService:
                 async for chunk in response.aiter_text():
                   if "DONE" in chunk:
                     break
-                  yield chunk
+                  try:
+                    # Parse the JSON chunk to extract the "message" content
+                    chunk_data = json.loads(chunk.replace("data: ", "").strip())
+                    message = chunk_data.get("message", "")
+                    full_response += message  # Append the message content to full_response
+                    yield chunk
+                  except json.JSONDecodeError:
+                    self.logger.error(f"Failed to parse chunk: {chunk}")
+                    yield f"data: {json.dumps({'error': 'Invalid chunk format'})}\n\n"
 
             # Yield any remaining data in the buffer
             if buffer:
