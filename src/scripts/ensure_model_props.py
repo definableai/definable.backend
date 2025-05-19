@@ -16,8 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(parent_dir)
 
-from database.postgres import async_session
 from common.logger import log as logger
+from database.postgres import async_session
 
 
 async def check_script_executed(db: AsyncSession, script_name: str) -> bool:
@@ -403,10 +403,13 @@ if __name__ == "__main__":
 
   # Use a different event loop policy on Windows
   if platform.system() == "Windows":
-    # Replace the default event loop with SelectorEventLoop
-    from asyncio import WindowsSelectorEventLoopPolicy, set_event_loop_policy
+    try:
+      from asyncio import WindowsProactorEventLoopPolicy, set_event_loop_policy
 
-    set_event_loop_policy(WindowsSelectorEventLoopPolicy())
+      set_event_loop_policy(WindowsProactorEventLoopPolicy())
+    except ImportError:
+      # Fallback for older Python versions or if the policy is not available
+      pass
 
     # Import these only on Windows
     import warnings
