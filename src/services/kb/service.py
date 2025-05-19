@@ -1,5 +1,4 @@
 from datetime import datetime
-from io import BytesIO
 from typing import Annotated, List, Optional
 from uuid import UUID
 
@@ -252,6 +251,8 @@ class KnowledgeBaseService:
       charge = usage["charge"]
       self.logger.info(f"Created initial charge for file upload: {charge.transaction_id}")
 
+      self.logger.info(f"document_data: {document_data}")
+
       # Get source type model
       source_type_model = await session.get(SourceTypeModel, 1)
       if not source_type_model:
@@ -263,13 +264,32 @@ class KnowledgeBaseService:
       file_metadata = document_data.get_metadata()
 
       # Calculate proper charge quantity based on file size or page count
-      # We'll update the initial charge based on actual file metrics
       file_content = await document_data.file.read()
       file_size_mb = len(file_content) / (1024 * 1024)
 
-      # Update charge with more accurate quantity based on file size
-      # 1 unit per MB with a minimum of 1 unit
-      charge_qty = max(1, int(file_size_mb))
+      # Extract PDF page count if it's a PDF file
+      if document_data.file.content_type == "application/pdf":
+        try:
+          from io import BytesIO
+
+          from pypdf import PdfReader
+
+          pdf_reader = PdfReader(BytesIO(file_content))
+          page_count = len(pdf_reader.pages)
+
+          # Update file metadata with accurate page count
+          file_metadata["pages"] = page_count
+
+          # Calculate charge based on page count instead of file size for PDFs
+          charge_qty = max(1, page_count)
+        except Exception as e:
+          self.logger.error(f"Error extracting PDF page count: {str(e)}")
+          # Fall back to file size-based charging
+          charge_qty = max(1, int(file_size_mb))
+      else:
+        # For non-PDF files, use file size
+        charge_qty = max(1, int(file_size_mb))
+
       file_metadata["charge_qty"] = charge_qty
 
       # Update charge with actual quantity and file information

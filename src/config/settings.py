@@ -41,6 +41,9 @@ class Settings(BaseSettings):
   stytch_secret: str
   stytch_environment: str
   stytch_webhook_secret: str
+  razorpay_key_id: str
+  razorpay_webhook_secret: str
+  razorpay_key_secret: str
 
   class Config:
     """Config class."""
