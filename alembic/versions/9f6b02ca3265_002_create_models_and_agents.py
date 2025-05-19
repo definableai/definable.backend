@@ -30,6 +30,7 @@ def upgrade():
     sa.Column("version", sa.String(50), nullable=False),
     sa.Column("is_active", sa.Boolean(), server_default="true", nullable=False),
     sa.Column("config", postgresql.JSONB(), nullable=False),
+    sa.Column("props", postgresql.JSONB(), nullable=False),
     sa.Column("created_at", sa.TIMESTAMP(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
     sa.Column("updated_at", sa.TIMESTAMP(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
     sa.PrimaryKeyConstraint("id"),

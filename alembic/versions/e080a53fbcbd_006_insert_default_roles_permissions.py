@@ -63,25 +63,7 @@ def upgrade() -> None:
     ("*_*", "Access to all resources", "*", "*"),
   ]
 
-  llm_models = [
-    ("gpt-4o", "openai", "gpt-4o", True),
-    ("gpt-4o-mini", "openai", "gpt-4o-mini", True),
-    ("gpt-3.5-turbo", "openai", "gpt-3.5-turbo", True),
-    ("o1-preview", "openai", "o1-preview", True),
-    ("o1", "openai", "o1", True),
-    ("claude-3.7-sonnet", "anthropic", "claude-3-7-sonnet-latest", True),
-    ("claude-3.5-sonnet", "anthropic", "claude-3-5-sonnet-latest", True),
-    ("claude-3.5-haiku", "anthropic", "claude-3-5-haiku-latest", True),
-    ("deepseek-chat", "deepseek", "deepseek-chat", True),
-    ("deepseek-reason", "deepseek", "deepseek-reason", True),
-  ]
-
-  for name, provider, version, is_active in llm_models:
-    op.execute(f"""
-      INSERT INTO models (id, name, provider, version, is_active, config, created_at, updated_at)
-      VALUES ('{str(uuid4())}', '{name}', '{provider}', '{version}', {is_active}, '{{}}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    """)
-
+  # Rest of the function remains unchanged
   permission_ids = {}
   for name, desc, resource, action in permissions:
     perm_id = str(uuid4())
@@ -163,4 +145,3 @@ def downgrade() -> None:
 
   op.execute("DELETE FROM permissions")
   op.execute("UPDATE messages SET model_id = NULL WHERE model_id IS NOT NULL")
-  op.execute("DELETE FROM models")

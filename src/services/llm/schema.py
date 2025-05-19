@@ -12,6 +12,7 @@ class LLMBase(BaseModel):
   version: str
   is_active: bool = True
   config: dict
+  props: dict
 
 
 class LLMCreate(LLMBase):
@@ -28,7 +29,7 @@ class LLMUpdate(BaseModel):
   version: Optional[str] = None
   is_active: Optional[bool] = None
   config: Optional[dict] = None
-
+  props: Optional[dict] = None
 
 class LLMResponse(LLMBase):
   """LLM response schema."""
