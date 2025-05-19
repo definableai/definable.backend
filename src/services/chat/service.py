@@ -639,8 +639,10 @@ class ChatService:
 
                   self.logger.info(f"Token usage: input={input_tokens}, output={output_tokens}")
 
-                  # Get pricing from model
-                  pricing = llm_model.model_metadata.get("credits_per_1000_tokens", {"input": 1, "output": 1})
+                  # Get pricing from model (with null check)
+                  pricing = {"input": 1, "output": 1}  # Default fallback values
+                  if llm_model and hasattr(llm_model, "model_metadata"):
+                    pricing = llm_model.model_metadata.get("credits_per_1000_tokens", {"input": 1, "output": 1})
 
                   # Calculate total tokens with model-specific weights
                   input_ratio = pricing.get("input", 1)
@@ -656,7 +658,6 @@ class ChatService:
                       "input_ratio": input_ratio,
                       "output_ratio": output_ratio,
                       "user_message_id": str(user_message.id),
-                      "ai_message_id": str(ai_message.id),
                     },
                     status="completed",
                   )
@@ -673,14 +674,6 @@ class ChatService:
                 await charge.update(additional_metadata={"billing_error": str(e), "fallback_billing": True})
               except Exception as charge_error:
                 self.logger.error(f"Failed to finalize charge: {str(charge_error)}")
-
-          # Update chat name if needed
-          nonlocal chat_id_for_update, is_new_chat_for_update
-          if chat_id_for_update is not None and is_new_chat_for_update:
-            await self._update_chat_name(chat_id_for_update, full_response, is_new_chat_for_update, org_id, user_id, session)
-          elif chat_id is not None:
-            # For existing chats, use the current chat_id
-            await self._update_chat_name(chat_id, full_response, False, org_id, user_id, session)
 
         return StreamingResponse(generate_agent_response(), media_type="text/event-stream")
 
