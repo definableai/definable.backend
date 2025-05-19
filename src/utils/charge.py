@@ -54,24 +54,18 @@ class Charge:
     # Verify wallet has enough funds
     wallet = await self._get_wallet(self.org_id, self.session, for_update=True)
 
-    # Only log balance details at debug level for development
-    self.logger.debug(f"Wallet balance: {wallet.balance}, required: {amount}")
-
     if wallet.balance < amount:
       self.logger.warning(f"Insufficient credits for charge {self.name}. Required: {amount}, Available: {wallet.balance}")
       raise HTTPException(status_code=402, detail="Insufficient credits")  # Payment Required
 
     # Create transaction
-    self.logger.debug("Creating transaction")
     transaction = await self._create_transaction(TransactionType.HOLD, TransactionStatus.PENDING, amount, f"Hold for {self.name}", metadata, qty)
 
-    # Log transaction ID at info level for production tracking
     self.logger.info(f"Created transaction {transaction.id} for charge {self.name}")
 
-    # Update wallet
-    wallet.hold = (wallet.hold or 0) + amount  # Ensure hold is not None
+    # Update wallet hold
+    wallet.hold = (wallet.hold or 0) + amount
 
-    # Explicitly flush and commit changes to ensure wallet update is persisted
     await self.session.flush()
     await self.session.commit()
 
@@ -80,34 +74,23 @@ class Charge:
     return self
 
   async def update(self, additional_metadata: Optional[Dict[str, Any]] = None, qty_increment: int = 0):
-    """
-    Complete charge by converting hold to debit or increment the quantity.
-
-    If qty_increment is provided, the transaction will be updated with the new quantity
-    and additional credits will be reserved, provided the wallet has sufficient balance.
-    """
-    # Directly attempt to get the transaction - will raise appropriate errors
+    """Complete charge by converting hold to debit or increment the quantity."""
     transaction = await self._get_transaction(for_update=True)
 
-    # Continue with validation and updates
     if not transaction or transaction.type != TransactionType.HOLD or transaction.status != TransactionStatus.PENDING:
       self.logger.warning(f"Invalid transaction update attempt for transaction_id: {self.transaction_id}")
       raise InvalidTransactionError("Invalid or already processed transaction")
 
-    # Get the wallet for updating
     wallet = await self._get_wallet(self.org_id, self.session, for_update=True)
     self.logger.info(f"Current wallet state: balance={wallet.balance}, hold={wallet.hold or 0}")
 
-    # If qty_increment is provided, update the transaction quantity and credits
     if qty_increment > 0:
       self.logger.info(f"Incrementing quantity for transaction {transaction.id} by {qty_increment}")
 
-      # Get charge details to calculate additional amount
       charge = await self._get_charge_details(self.name, self.session)
       additional_amount = charge.amount * qty_increment
 
-      # Calculate available balance (total balance minus current hold)
-      wallet_hold = wallet.hold or 0  # Handle None explicitly
+      wallet_hold = wallet.hold or 0
       available_balance = wallet.balance - wallet_hold
 
       if available_balance < additional_amount:
@@ -119,17 +102,14 @@ class Charge:
           status_code=402, detail=f"Insufficient available credits for additional quantity. Need {additional_amount}, have {available_balance}"
         )
 
-      # Update transaction metadata
       current_metadata = transaction.transaction_metadata or {}
       current_qty = int(current_metadata.get("qty", 1))
       new_qty = current_qty + qty_increment
       current_metadata["qty"] = new_qty
 
-      # Update transaction amount
       original_amount = transaction.credits
       transaction.credits = original_amount + additional_amount
 
-      # Update wallet hold - ensure not None and force update
       wallet.hold = (wallet.hold or 0) + additional_amount
 
       self.logger.info(f"Updated transaction {transaction.id} from qty={current_qty} to qty={new_qty}")
@@ -137,18 +117,15 @@ class Charge:
         f"Credits increased from {original_amount} to {transaction.credits}. Updated wallet: balance={wallet.balance}, hold={wallet.hold}"
       )
 
-      # Update transaction metadata with provided additional metadata
       if additional_metadata:
         transaction.transaction_metadata = {**current_metadata, **additional_metadata}
       else:
         transaction.transaction_metadata = current_metadata
 
-      # Ensure changes are committed to the database
       await self.session.flush()
       await self.session.commit()
       return self
 
-    # If no qty_increment, proceed with converting HOLD to DEBIT
     self.logger.info(f"Converting HOLD to DEBIT for transaction {transaction.id}")
     transaction.type = TransactionType.DEBIT
     transaction.status = TransactionStatus.COMPLETED
@@ -156,17 +133,14 @@ class Charge:
     if additional_metadata:
       transaction.transaction_metadata = {**(transaction.transaction_metadata or {}), **additional_metadata}
 
-    # Update wallet - reduce hold and balance, increment credits_spent
-    # Handle potential None values in wallet properties
     wallet.hold = (wallet.hold or 0) - transaction.credits
-    if wallet.hold < 0:  # Defensive check
+    if wallet.hold < 0:
       self.logger.warning(f"Negative hold detected: {wallet.hold}, resetting to 0")
       wallet.hold = 0
 
     wallet.balance -= transaction.credits
     wallet.credits_spent = (wallet.credits_spent or 0) + transaction.credits
 
-    # Ensure changes are committed
     await self.session.flush()
     await self.session.commit()
 
@@ -175,15 +149,12 @@ class Charge:
 
   async def delete(self, reason: Optional[str] = None):
     """Cancel charge by releasing hold."""
-    # Directly attempt to get the transaction - will raise appropriate errors
     transaction = await self._get_transaction(for_update=True)
 
-    # Continue with validation and updates
     if not transaction or transaction.type != TransactionType.HOLD or transaction.status != TransactionStatus.PENDING:
       self.logger.warning(f"Invalid transaction deletion attempt for transaction_id: {self.transaction_id}")
       raise InvalidTransactionError("Invalid or already processed transaction")
 
-    # Update transaction - change to RELEASE instead of creating a new transaction
     self.logger.info(f"Converting HOLD to RELEASE for transaction {transaction.id}")
     transaction.type = TransactionType.RELEASE
     transaction.status = TransactionStatus.COMPLETED
@@ -193,19 +164,153 @@ class Charge:
         transaction.transaction_metadata["release_reason"] = reason
       transaction.transaction_metadata["original_status"] = "CANCELLED"
 
-    # Update wallet - handle None values and ensure proper update
+    # Update wallet hold
     wallet = await self._get_wallet(self.org_id, self.session, for_update=True)
+    self.logger.info(f"Current wallet state: balance={wallet.balance}, hold={wallet.hold or 0}")
+    self.logger.info(f"Transaction credits: {transaction.credits}")
     wallet.hold = (wallet.hold or 0) - transaction.credits
-    if wallet.hold < 0:  # Defensive check
+    self.logger.info(f"Updated wallet hold: {wallet.hold}")
+    if wallet.hold < 0:
       self.logger.warning(f"Negative hold detected: {wallet.hold}, resetting to 0")
       wallet.hold = 0
 
-    # Ensure changes are committed
+    # Commit changes to the database
     await self.session.flush()
     await self.session.commit()
 
     self.logger.info(f"Hold released - Updated wallet: balance={wallet.balance}, hold={wallet.hold}")
     return self
+
+  async def calculate_and_update(self, content=None, metadata=None, status="completed", additional_metadata=None):
+    """
+    Calculate appropriate charge based on content type and measure,
+    then update the transaction with complete billing information.
+    """
+    self.logger.info(f"Starting calculate_and_update for charge: {self.name}")
+
+    try:
+      # Get charge details to determine the appropriate measure
+      charge_details = await self._get_charge_details(self.name, self.session)
+      self.logger.info(f"Charge details obtained for charge: {self.name}")
+
+      # Initialize metadata dictionary
+      meta = additional_metadata or {}
+      meta["processing_status"] = status
+
+      # Calculate quantity based on charge's measure type
+      measure_qty = 1  # Default
+      if charge_details.measure == "page" and metadata and "pages" in metadata:
+        measure_qty = metadata.get("pages", 1)
+        meta["page_count"] = measure_qty
+        self.logger.info(f"Page count calculated: {measure_qty}")
+      elif charge_details.measure == "token":
+        if metadata and "total_tokens" in metadata:
+          measure_qty = metadata.get("total_tokens", 0)
+          meta["token_count"] = measure_qty
+          self.logger.info(f"Token count calculated: {measure_qty}")
+          if "input_tokens" in metadata:
+            meta["input_tokens"] = metadata.get("input_tokens", 0)
+          if "output_tokens" in metadata:
+            meta["output_tokens"] = metadata.get("output_tokens", 0)
+        elif content:
+          measure_qty = len(content.split()) if isinstance(content, str) else 0
+          meta["token_count"] = measure_qty
+          self.logger.info(f"Token count calculated from content: {measure_qty}")
+      elif charge_details.measure == "sheet" and metadata and "sheet_count" in metadata:
+        measure_qty = metadata.get("sheet_count", 1)
+        meta["sheet_count"] = measure_qty
+        self.logger.info(f"Sheet count calculated: {measure_qty}")
+
+      # Include content length if provided
+      if content:
+        meta["content_length"] = len(content) if isinstance(content, str) else 0
+
+      # Add billing metric details for transparency
+      meta["measure_type"] = charge_details.measure
+      meta["unit_type"] = charge_details.unit
+
+      # Merge any additional metadata
+      if metadata:
+        meta.update({k: v for k, v in metadata.items() if k not in meta})
+
+      # 1. First update with qty_increment if needed
+      current_meta = (await self._get_transaction(for_update=True)).transaction_metadata or {}
+      current_qty = int(current_meta.get("qty", 1))
+      qty_increment = max(0, measure_qty - current_qty)
+
+      # Handle the case where quantity increment would exceed available credits
+      if qty_increment > 0:
+        self.logger.info(f"Updating transaction with qty_increment: {qty_increment}")
+        try:
+          await self.update(additional_metadata=meta, qty_increment=qty_increment)
+        except HTTPException as e:
+          if "Insufficient available credits" in str(e):
+            # Get wallet and just use all remaining balance
+            wallet = await self._get_wallet(self.org_id, self.session, for_update=True)
+            available_balance = wallet.balance - (wallet.hold or 0)
+
+            if available_balance > 0:
+              # Use all available balance regardless of quantity
+              self.logger.warning(f"Insufficient credits for full quantity. Using all available balance of {available_balance} credits")
+
+              # Calculate a custom transaction that uses exactly the available balance
+              transaction = await self._get_transaction(for_update=True)
+              original_amount = transaction.credits
+              additional_amount = available_balance  # Use all available balance
+
+              # Update metadata to indicate limited credits
+              meta["credits_limited"] = True
+              meta["requested_amount"] = charge_details.amount * qty_increment
+              meta["applied_amount"] = additional_amount
+              current_metadata = transaction.transaction_metadata or {}
+
+              # Update transaction
+              transaction.credits = original_amount + additional_amount
+              transaction.transaction_metadata = {**current_metadata, **meta}
+
+              # Update wallet
+              wallet.hold = (wallet.hold or 0) + additional_amount
+
+              await self.session.flush()
+              await self.session.commit()
+
+              self.logger.info(f"Credits increased from {original_amount} to {transaction.credits}. Used all available balance.")
+            else:
+              # If we can't increment at all, just add the metadata about the limitation
+              self.logger.warning("No credits available for quantity increment")
+              meta["credits_limited"] = True
+              meta["requested_amount"] = charge_details.amount * qty_increment
+              meta["applied_amount"] = 0
+          else:
+            # Re-raise if it's not a credits issue
+            raise
+
+      # 2. Then convert to DEBIT if status is completed (with empty qty_increment)
+      if status == "completed":
+        self.logger.info(f"Converting HOLD to DEBIT for charge: {self.name}")
+        await self.update(additional_metadata=meta)
+
+      self.logger.info(f"Completed calculate_and_update for charge: {self.name}")
+      return self
+    except Exception as e:
+      self.logger.error(f"Failed to calculate and update charge: {str(e)}")
+
+      # For credit-related errors, still try to complete the transaction
+      if isinstance(e, HTTPException) and "Insufficient" in str(e):
+        try:
+          meta = additional_metadata or {}
+          meta["processing_status"] = status
+          meta["credits_limited"] = True
+          meta["error"] = str(e)
+
+          # Convert the hold to a debit with whatever amount we originally held
+          self.logger.info(f"Completing transaction with limited credits due to: {str(e)}")
+          await self.update(additional_metadata=meta)
+          return self
+        except Exception as complete_error:
+          self.logger.error(f"Failed to complete charge with limited credits: {str(complete_error)}")
+          raise complete_error
+      raise
 
   # Helper methods
   @staticmethod
@@ -228,9 +333,9 @@ class Charge:
     wallet = result.scalar_one_or_none()
 
     if not wallet:
-      wallet = WalletModel(organization_id=org_id, balance=0, hold=0, credits_spent=0)
+      wallet = WalletModel(id=uuid4(), organization_id=org_id, balance=0, hold=0, credits_spent=0)
       session.add(wallet)
-      await session.flush()
+      await session.commit()
       await session.refresh(wallet)
 
     return wallet

@@ -11,7 +11,7 @@ import httpx
 from agno.media import File, Image
 from fastapi import Depends, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import settings
@@ -24,6 +24,7 @@ from models import ChatModel, ChatUploadModel, LLMModel, MessageModel
 from models.agent_model import AgentModel
 from models.prompt_model import PromptModel
 from services.__base.acquire import Acquire
+from utils.charge import Charge
 
 from .schema import (
   AllUploads,
@@ -304,6 +305,9 @@ class ChatService:
     db_session = None
     user_id = user["id"]
     prompt = None
+    charge = None
+
+    self.logger.info(f"Processing message request for model={model_id}, agent={agent_id}, chat={chat_id}")
 
     try:
       if not model_id and not agent_id:
@@ -312,9 +316,8 @@ class ChatService:
           detail="Either model_id or agent_id must be provided",
         )
 
-      # If chat_id is not provided, create a new chat session
+      # Handle chat session creation/verification
       if not chat_id:
-        # Create a new chat with default title
         db_session = ChatModel(
           title="New Chat",
           status=ChatStatus.ACTIVE,
@@ -326,8 +329,8 @@ class ChatService:
         await session.refresh(db_session)
         chat_id = db_session.id
         is_new_chat = True
+        self.logger.info(f"Created new chat: {chat_id}")
       else:
-        # Check if chat session exists
         query = select(ChatModel).where(
           and_(
             ChatModel.id == chat_id,
@@ -337,7 +340,6 @@ class ChatService:
         )
         result = await session.execute(query)
         db_session = result.scalar_one_or_none()
-
         if not db_session:
           raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -367,9 +369,9 @@ class ChatService:
       last_message = result.scalars().first()
       parent_id = last_message.id if last_message else None
 
-      # if chatting with a LLM model
+      # LLM processing logic
       if model_id:
-        # check if LLM model exists
+        # Get LLM model
         query = select(LLMModel).where(LLMModel.id == model_id)
         result = await session.execute(query)
         llm_model = result.scalar_one_or_none()
@@ -379,7 +381,19 @@ class ChatService:
             detail="LLM model not found",
           )
 
-        # Create the users message
+        # Initialize billing - simple HOLD with qty=1
+        try:
+          charge = Charge(name=llm_model.name, user_id=user_id, org_id=org_id, session=session)
+          await charge.create(qty=1, metadata={"chat_id": str(chat_id), "model": llm_model.name, "provider": llm_model.provider})
+        except Exception as billing_error:
+          self.logger.error(f"Billing initialization failed: {str(billing_error)}")
+          # Don't continue execution when billing fails - throw an appropriate error
+          if "Insufficient credits" in str(billing_error):
+            raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="Insufficient credits to use this model.")
+
+          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Billing error: {str(billing_error)}")
+
+        # Create user message
         user_message = MessageModel(
           chat_session_id=chat_id,
           parent_message_id=parent_id,
@@ -392,7 +406,9 @@ class ChatService:
         session.add(user_message)
         await session.commit()
         await session.refresh(user_message)
+        self.logger.info(f"Created user message: {user_message.id}")
 
+        # Handle file uploads if any
         files: List[Union[File, Image]] = []
         if message_data.file_uploads:
           # Fetch the file uploads from the database
@@ -420,6 +436,7 @@ class ChatService:
 
           # Commit the new file uploads
           await session.commit()
+          self.logger.info(f"Processed {len(files)} file uploads")
 
         # Store the chat_id and is_new_chat at a higher scope for access in the async generator
         stored_chat_id = chat_id
@@ -428,7 +445,9 @@ class ChatService:
         async def generate_model_response() -> AsyncGenerator[str, None]:
           full_response = ""
           buffer: list[str] = []
-          self.logger.debug(f"message_data.content: {message_data.content}")
+
+          # Stream the response
+          self.logger.debug(f"Sending message to {llm_model.provider} {llm_model.version}")
           async for token in self.llm_factory.chat(
             provider=llm_model.provider,
             llm=llm_model.version,
@@ -440,6 +459,7 @@ class ChatService:
             max_tokens=max_tokens,
             top_p=top_p,
           ):
+            # Handle streaming
             buffer.append(token.content)
             full_response += token.content
             if len(buffer) >= self.chunk_size:
@@ -447,13 +467,14 @@ class ChatService:
               yield f"data: {json.dumps(d)}\n\n"
               buffer = []
 
+          # Send remaining buffer
           if buffer:
             d = {"message": "".join(buffer)}
             yield f"data: {json.dumps(d)}\n\n"
 
           yield f"data: {json.dumps({'message': 'DONE'})}\n\n"
 
-          # Create ai message
+          # Create AI message
           ai_message = MessageModel(
             chat_session_id=chat_id,
             parent_message_id=user_message.id,
@@ -465,6 +486,7 @@ class ChatService:
           session.add(ai_message)
           await session.commit()
           await session.refresh(ai_message)
+          self.logger.info(f"Created AI response message: {ai_message.id}")
 
           response_message = full_response
           if is_new_chat:
@@ -579,20 +601,108 @@ class ChatService:
           except Exception as e:
             self.logger.error(f"Error during streaming response: {e}", exc_info=True)
             yield f"data: {json.dumps({'error': 'An error occurred during streaming'})}\n\n"
+          # Get token counts from Agno session data
+          if charge:
+            try:
+              # Query Agno session data
+              query = text("""
+                SELECT memory FROM __agno_chat_sessions
+                WHERE session_id = :session_id
+                ORDER BY created_at DESC LIMIT 1
+              """)
+              result = await session.execute(query, {"session_id": str(chat_id)})
+              memory_data = result.scalar_one_or_none()
+              if memory_data and "runs" in memory_data:
+                # Get the runs - handle both single object and array cases
+                runs = memory_data["runs"]
 
-    except Exception:
+                # Get the last run (most recent interaction)
+                last_run = runs[-1] if isinstance(runs, list) else runs
+
+                if "response" in last_run and "metrics" in last_run["response"]:
+                  metrics = last_run["response"]["metrics"]
+
+                  # Get the current run's index in the history
+                  run_index = len(metrics.get("input_tokens", [])) - 1 if isinstance(metrics.get("input_tokens", []), list) else 0
+
+                  # Extract tokens for the current exchange using the correct index
+                  input_tokens = (
+                    metrics.get("input_tokens", [0])[run_index]
+                    if isinstance(metrics.get("input_tokens", []), list)
+                    else metrics.get("input_tokens", 0)
+                  )
+                  output_tokens = (
+                    metrics.get("output_tokens", [0])[run_index]
+                    if isinstance(metrics.get("output_tokens", []), list)
+                    else metrics.get("output_tokens", 0)
+                  )
+
+                  self.logger.info(f"Token usage: input={input_tokens}, output={output_tokens}")
+
+                  # Get pricing from model (with null check)
+                  pricing = {"input": 1, "output": 1}  # Default fallback values
+                  if llm_model and hasattr(llm_model, "model_metadata"):
+                    pricing = llm_model.model_metadata.get("credits_per_1000_tokens", {"input": 1, "output": 1})
+
+                  # Calculate total tokens with model-specific weights
+                  input_ratio = pricing.get("input", 1)
+                  output_ratio = pricing.get("output", 1)
+                  weighted_total = (input_tokens * input_ratio) + (output_tokens * output_ratio)
+
+                  # Pass the pricing info to the charge calculation
+                  await charge.calculate_and_update(
+                    metadata={
+                      "input_tokens": input_tokens,
+                      "output_tokens": output_tokens,
+                      "total_tokens": int(weighted_total),  # Use weighted total
+                      "input_ratio": input_ratio,
+                      "output_ratio": output_ratio,
+                      "user_message_id": str(user_message.id),
+                    },
+                    status="completed",
+                  )
+                else:
+                  # Fallback if metrics not found
+                  await charge.update(additional_metadata={"billing_error": "No metrics in response"})
+              else:
+                await charge.update(additional_metadata={"billing_error": "No runs in memory"})
+
+            except Exception as e:
+              self.logger.error(f"Error finalizing chat billing: {str(e)}")
+              # Attempt to complete billing anyway
+              try:
+                await charge.update(additional_metadata={"billing_error": str(e), "fallback_billing": True})
+              except Exception as charge_error:
+                self.logger.error(f"Failed to finalize charge: {str(charge_error)}")
+
+        return StreamingResponse(generate_agent_response(), media_type="text/event-stream")
+
+      # Handle agent-based processing (if not using model_id)
+      if agent_id and not model_id:
+        # Return a placeholder error for now
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Agent-based chat not implemented yet")
+
+      # Default fallback in case no specific processing was handled
+      raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid processing method available for the provided parameters")
+
+    except Exception as e:
       from traceback import print_exc
 
       print_exc()
-      raise HTTPException(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail="Error sending message",
-      )
 
-    return StreamingResponse(
-      generate_agent_response(),
-      media_type="text/event-stream",
-    )
+      # Release charge if error occurs and it was successfully created
+      if "charge" in locals() and charge and hasattr(charge, "transaction_id") and charge.transaction_id:
+        try:
+          await charge.delete(reason=f"Error processing message: {str(e)}")
+        except Exception as release_error:
+          self.logger.error(f"Failed to release charge: {str(release_error)}")
+
+      # Re-raise HTTP exceptions with their original status code and message
+      if isinstance(e, HTTPException):
+        raise e
+
+      # Only convert non-HTTP exceptions to a 500 error
+      raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error sending message: {str(e)}")
 
   async def delete_session(
     self,
