@@ -100,15 +100,16 @@ def mock_db_session():
     session.scalar = AsyncMock()
 
     # Create a properly structured mock result for database queries
-    MagicMock()
+    all_mock = MagicMock()
+    first_mock = MagicMock()
     unique_mock = MagicMock()
     scalars_mock = MagicMock()
-    MagicMock()
-
+    
+    # Set up synchronous methods that don't need to be awaited
     scalars_mock.all = MagicMock(return_value=[])
     scalars_mock.first = MagicMock(return_value=None)
     unique_mock.scalar_one_or_none = MagicMock(return_value=None)
-    unique_mock.scalar_one = MagicMock(return_value=0) # Default count is 0
+    unique_mock.scalar_one = MagicMock(return_value=0)  # Default count is 0
     unique_mock.scalars = MagicMock(return_value=scalars_mock)
 
     execute_mock = AsyncMock()
@@ -116,6 +117,9 @@ def mock_db_session():
     execute_mock.scalar_one = MagicMock(return_value=0)
     execute_mock.scalars = MagicMock(return_value=scalars_mock)
     execute_mock.unique = MagicMock(return_value=unique_mock)
+    # Add all and first methods that aren't awaited
+    execute_mock.all = MagicMock(return_value=[])
+    execute_mock.first = MagicMock(return_value=None)
 
     session.execute = AsyncMock(return_value=execute_mock)
 
@@ -182,7 +186,8 @@ class TestPromptService:
         """Test listing active categories."""
         # Setup - return active categories only
         active_categories = [cat for cat in mock_categories if cat.is_active]
-        mock_db_session.execute.return_value.scalars.return_value.all.return_value = active_categories
+        # Use direct all() method instead of scalars().all()
+        mock_db_session.execute.return_value.all.return_value = [(cat, 5) for cat in active_categories]
 
         # Execute
         response = await prompt_service.get_list_categories(
@@ -199,7 +204,8 @@ class TestPromptService:
     async def test_get_list_categories_all(self, prompt_service, mock_db_session, mock_user, mock_categories):
         """Test listing all categories including inactive ones."""
         # Setup
-        mock_db_session.execute.return_value.scalars.return_value.all.return_value = mock_categories
+        # Use direct all() method instead of scalars().all()
+        mock_db_session.execute.return_value.all.return_value = [(cat, 5) for cat in mock_categories]
 
         # Execute
         response = await prompt_service.get_list_categories(
@@ -461,9 +467,10 @@ class TestPromptService:
         """Test getting a category by ID."""
         # Setup
         category_id = mock_category.id
-
-        # Mock database to return the category
-        mock_db_session.execute.return_value.scalars.return_value.first.return_value = mock_category
+        prompt_count = 5
+        
+        # Mock direct first() return instead of scalars().first()
+        mock_db_session.execute.return_value.first.return_value = (mock_category, prompt_count)
 
         # Execute
         response = await prompt_service.get_get_category(
@@ -473,19 +480,20 @@ class TestPromptService:
         )
 
         # Assert
-        assert response.id == mock_category.id
+        assert response.id == category_id
         assert response.name == mock_category.name
-        assert response.description == mock_category.description
+        assert response.count == prompt_count
+        assert mock_db_session.execute.called
 
     async def test_get_get_category_not_found(self, prompt_service, mock_db_session, mock_user):
         """Test getting a non-existent category."""
         # Setup
         category_id = uuid4()
+        
+        # Mock direct first() return as None
+        mock_db_session.execute.return_value.first.return_value = None
 
-        # Mock database to return no category
-        mock_db_session.execute.return_value.scalars.return_value.first.return_value = None
-
-        # Execute and assert
+        # Execute and Assert
         with pytest.raises(HTTPException) as exc_info:
             await prompt_service.get_get_category(
                 category_id=category_id,

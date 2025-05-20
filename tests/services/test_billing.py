@@ -473,6 +473,16 @@ async def setup_test_db_integration(db_session):
 
         # Create necessary database tables if they don't exist
         await session.execute(text("""
+            CREATE TABLE IF NOT EXISTS organizations (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                name VARCHAR(255) NOT NULL,
+                slug VARCHAR(255) UNIQUE NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        
+        await session.execute(text("""
             CREATE TABLE IF NOT EXISTS wallets (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 organization_id UUID NOT NULL,
@@ -515,7 +525,6 @@ async def setup_test_db_integration(db_session):
             )
         """))
 
-        # Create test user if needed
         await session.execute(text("""
             CREATE TABLE IF NOT EXISTS users (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -528,6 +537,19 @@ async def setup_test_db_integration(db_session):
             )
         """))
 
+        await session.execute(text("""
+            CREATE TABLE IF NOT EXISTS user_subscriptions (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID NOT NULL,
+                organization_id UUID NOT NULL,
+                subscription_id VARCHAR(255) NOT NULL,
+                subscription_data JSONB,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+
+        # Commit schema changes first
         await session.commit()
 
         # Clean up any existing test data
@@ -642,6 +664,16 @@ async def setup_test_db_integration(db_session):
         # Get a new session for cleanup
         async for cleanup_session in db_session:
             try:
+                # Delete test data
+                await cleanup_session.execute(
+                    text("""
+                        DELETE FROM user_subscriptions
+                        WHERE organization_id IN (
+                            SELECT id FROM organizations
+                            WHERE name LIKE 'Test Billing%'
+                        )
+                    """)
+                )
                 await cleanup_session.execute(
                     text("""
                         DELETE FROM transactions
@@ -660,7 +692,12 @@ async def setup_test_db_integration(db_session):
                         )
                     """)
                 )
-                await cleanup_session.execute(text("DELETE FROM organizations WHERE name LIKE 'Test Billing%'"))
+                await cleanup_session.execute(
+                    text("""
+                        DELETE FROM organizations
+                        WHERE name LIKE 'Test Billing%'
+                    """)
+                )
                 await cleanup_session.commit()
                 break  # Only process the first yielded session
             except Exception as e:
@@ -827,10 +864,29 @@ class TestBillingServiceIntegration:
                 )
                 await session.execute(
                     text("""
+                        DELETE FROM transactions
+                        WHERE organization_id IN (
+                            SELECT id FROM organizations
+                            WHERE name LIKE 'Test Billing%'
+                        )
+                    """)
+                )
+                await session.execute(
+                    text("""
+                        DELETE FROM wallets
+                        WHERE organization_id IN (
+                            SELECT id FROM organizations
+                            WHERE name LIKE 'Test Billing%'
+                        )
+                    """)
+                )
+                await session.execute(
+                    text("""
                         DELETE FROM organizations
                         WHERE name LIKE 'Test Billing%'
                     """)
                 )
+                await session.commit()
 
                 # Only process the first session
                 break

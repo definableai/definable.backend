@@ -77,13 +77,14 @@ class LLMModel(BaseModel):
 # Mock models
 class MockLLMModel:
     def __init__(self, model_id=None, name="gpt-4", provider="openai", version="v1",
-                 is_active=True, config=None):
+                 is_active=True, config=None, props=None):
         self.id = model_id or uuid4()
         self.name = name
         self.provider = provider
         self.version = version
         self.is_active = is_active
         self.config = config or {"temperature": 0.7, "max_tokens": 2048}
+        self.props = props or {}
 
     def __eq__(self, other):
         if not isinstance(other, MockLLMModel):
@@ -103,6 +104,7 @@ class MockResponse(BaseModel):
   version: Optional[str] = None
   is_active: Optional[bool] = None
   config: Optional[Dict[str, Any]] = None
+  props: Optional[Dict[str, Any]] = None
   created_at: Optional[Union[datetime, str]] = None
   updated_at: Optional[Union[datetime, str]] = None
   message: Optional[str] = None
@@ -190,7 +192,8 @@ class TestLLMService:
             provider="openai",
             version="v1",
             is_active=True,
-            config={"temperature": 0.7, "max_tokens": 2048}
+            config={"temperature": 0.7, "max_tokens": 2048},
+            props={}
         )
 
         # Mock database query to return None (model doesn't exist yet)
@@ -218,6 +221,7 @@ class TestLLMService:
         assert response.version == model_data.version
         assert response.is_active == model_data.is_active
         assert response.config == model_data.config
+        assert response.props == model_data.props
 
     async def test_post_add_already_exists(self, llm_service, mock_db_session, mock_llm_model):
         """Test creating a model that already exists."""
@@ -227,7 +231,8 @@ class TestLLMService:
             provider="openai",
             version="v1",
             is_active=True,
-            config={"temperature": 0.7, "max_tokens": 2048}
+            config={"temperature": 0.7, "max_tokens": 2048},
+            props={}
         )
 
         # Mock database query to return an existing model
@@ -250,7 +255,8 @@ class TestLLMService:
         update_data = LLMUpdate(
             name="gpt-4-turbo",
             is_active=False,
-            config={"temperature": 0.9}
+            config={"temperature": 0.9},
+            props={"updated": True}
         )
 
         # Mock database query to return the model
@@ -271,18 +277,20 @@ class TestLLMService:
         assert mock_llm_model.name == update_data.name
         assert mock_llm_model.is_active == update_data.is_active
         assert mock_llm_model.config == update_data.config
+        assert mock_llm_model.props == update_data.props
 
         # Check response
         assert isinstance(response, LLMResponse)
         assert response.name == update_data.name
         assert response.is_active == update_data.is_active
         assert response.config == update_data.config
+        assert response.props == update_data.props
 
     async def test_post_update_not_found(self, llm_service, mock_db_session):
         """Test updating a non-existent model."""
         # Setup
         model_id = uuid4()
-        update_data = LLMUpdate(name="new-name")
+        update_data = LLMUpdate(name="new-name", props={})
 
         # Mock database query to return None
         mock_db_session.execute.return_value.scalar_one_or_none.return_value = None
@@ -383,14 +391,16 @@ def test_model_data():
             "provider": "openai",
             "version": "v1",
             "is_active": True,
-            "config": {"temperature": 0.7, "max_tokens": 2048}
+            "config": {"temperature": 0.7, "max_tokens": 2048},
+            "props": {"integration_test": True}
         },
         {
             "name": "claude-integration",
             "provider": "anthropic",
             "version": "sonnet",
             "is_active": True,
-            "config": {"temperature": 0.5, "max_tokens": 4096}
+            "config": {"temperature": 0.5, "max_tokens": 4096},
+            "props": {"integration_test": True}
         }
     ]
 
@@ -422,6 +432,7 @@ async def db_integration_setup(setup_test_db, db_session, test_model_data):
                 version VARCHAR(100) NOT NULL,
                 is_active BOOLEAN DEFAULT TRUE,
                 config JSONB,
+                props JSONB DEFAULT '{}'::jsonb,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(name, provider, version)
@@ -440,8 +451,8 @@ async def db_integration_setup(setup_test_db, db_session, test_model_data):
             # Create models directly using SQL to avoid ORM issues
             await session.execute(
                 text("""
-                    INSERT INTO llm_models (name, provider, version, is_active, config)
-                    VALUES (:name, :provider, :version, :is_active, :config)
+                    INSERT INTO llm_models (name, provider, version, is_active, config, props)
+                    VALUES (:name, :provider, :version, :is_active, :config, :props)
                     RETURNING id
                 """),
                 {
@@ -449,7 +460,8 @@ async def db_integration_setup(setup_test_db, db_session, test_model_data):
                     "provider": model_data["provider"],
                     "version": model_data["version"],
                     "is_active": model_data["is_active"],
-                    "config": json.dumps(model_data["config"])
+                    "config": json.dumps(model_data["config"]),
+                    "props": json.dumps(model_data["props"])
                 }
             )
 
@@ -470,7 +482,8 @@ async def db_integration_setup(setup_test_db, db_session, test_model_data):
                 provider=row.provider,
                 version=row.version,
                 is_active=row.is_active,
-                config=row.config
+                config=row.config,
+                props=row.props
             )
             created_models.append(model)
 
@@ -563,7 +576,8 @@ class TestLLMServiceIntegration:
             provider="google",
             version="v1",
             is_active=True,
-            config={"temperature": 0.8, "max_tokens": 3072}
+            config={"temperature": 0.8, "max_tokens": 3072},
+            props={"integration_test": True}
         )
         db_session = db_integration_setup["db_session"]
 
@@ -583,6 +597,7 @@ class TestLLMServiceIntegration:
                 assert response.name == model_data.name
                 assert response.provider == model_data.provider
                 assert response.config == model_data.config
+                assert response.props == model_data.props
                 assert response.id is not None
 
                 # Verify in database
@@ -607,7 +622,8 @@ class TestLLMServiceIntegration:
         update_data = LLMUpdate(
             name="gpt-4-updated",
             is_active=False,
-            config={"temperature": 0.3}
+            config={"temperature": 0.3},
+            props={"updated": True, "integration_test": True}
         )
         db_session = db_integration_setup["db_session"]
 
@@ -628,6 +644,7 @@ class TestLLMServiceIntegration:
                 assert response.name == update_data.name
                 assert response.is_active == update_data.is_active
                 assert response.config["temperature"] == update_data.config["temperature"]
+                assert response.props == update_data.props
 
                 # Verify in database
                 query = select(LLMModel).where(LLMModel.id == model_id)
@@ -636,6 +653,7 @@ class TestLLMServiceIntegration:
                 assert db_model is not None
                 assert db_model.name == update_data.name
                 assert db_model.is_active == update_data.is_active
+                assert db_model.props == update_data.props
                 break
             except Exception as e:
                 print(f"Error in test_post_update_integration: {e}")
@@ -702,7 +720,8 @@ class TestLLMServiceErrorHandling:
                 name="invalid-model",
                 # provider is missing
                 version="v1",
-                config={}
+                config={},
+                props={}
             )
 
         # Test with invalid field type
@@ -712,7 +731,8 @@ class TestLLMServiceErrorHandling:
                 provider="openai",
                 version="v1",
                 is_active="not-a-boolean",  # Should be boolean
-                config={}
+                config={},
+                props={}
             )
 
     async def test_db_transaction_rollback(self, llm_service, db_session, monkeypatch):
@@ -732,6 +752,7 @@ class TestLLMServiceErrorHandling:
                         version VARCHAR(100) NOT NULL,
                         is_active BOOLEAN DEFAULT TRUE,
                         config JSONB,
+                        props JSONB DEFAULT '{}'::jsonb,
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                         UNIQUE(name, provider, version)
@@ -752,7 +773,8 @@ class TestLLMServiceErrorHandling:
                     provider="test-provider",
                     version="v1",
                     is_active=True,
-                    config={"temperature": 0.7}
+                    config={"temperature": 0.7},
+                    props={"test": True}
                 )
 
                 # Create a function that simulates a database error during transaction
@@ -763,15 +785,16 @@ class TestLLMServiceErrorHandling:
                         # Insert record
                         await session.execute(
                             text("""
-                                INSERT INTO llm_models (name, provider, version, is_active, config)
-                                VALUES (:name, :provider, :version, :is_active, :config)
+                                INSERT INTO llm_models (name, provider, version, is_active, config, props)
+                                VALUES (:name, :provider, :version, :is_active, :config, :props)
                             """),
                             {
                                 "name": model_data.name,
                                 "provider": model_data.provider,
                                 "version": model_data.version,
                                 "is_active": model_data.is_active,
-                                "config": json.dumps(model_data.config or {})
+                                "config": json.dumps(model_data.config or {}),
+                                "props": json.dumps(model_data.props or {})
                             }
                         )
 
@@ -842,6 +865,7 @@ class TestLLMServicePerformance:
                         version VARCHAR(100) NOT NULL,
                         is_active BOOLEAN DEFAULT TRUE,
                         config JSONB,
+                        props JSONB DEFAULT '{}'::jsonb,
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                         UNIQUE(name, provider, version)
@@ -861,16 +885,17 @@ class TestLLMServicePerformance:
                     # Insert directly with SQL to avoid ORM issues
                     result = await session.execute(
                         text("""
-                            INSERT INTO llm_models (name, provider, version, is_active, config)
-                            VALUES (:name, :provider, :version, :is_active, :config)
-                            RETURNING id, name, provider, version, is_active, config
+                            INSERT INTO llm_models (name, provider, version, is_active, config, props)
+                            VALUES (:name, :provider, :version, :is_active, :config, :props)
+                            RETURNING id, name, provider, version, is_active, config, props
                         """),
                         {
                             "name": f"perf-test-model-{i}",
                             "provider": "perf-test",
                             "version": f"v{i}",
                             "is_active": True,
-                            "config": json.dumps({"temperature": 0.7 + (i * 0.1)})
+                            "config": json.dumps({"temperature": 0.7 + (i * 0.1)}),
+                            "props": json.dumps({"perf_test": True})
                         }
                     )
                     model_row = result.fetchone()
