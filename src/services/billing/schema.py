@@ -92,7 +92,7 @@ class TransactionResponseSchema(BaseModel):
   organization_id: UUID4
   type: str
   status: str
-  amount_usd: float
+  amount_usd: Optional[float] = 0.0
   credits: int
   description: Optional[str]
   created_at: datetime
@@ -103,14 +103,24 @@ class TransactionResponseSchema(BaseModel):
 
 class TransactionWithInvoiceSchema(TransactionResponseSchema):
   has_invoice: bool = False
+  amount_usd: Optional[float] = 0.0
 
   @classmethod
   def from_transaction(cls, tx: TransactionModel):
-    # First create the base object using parent's from_orm method
-    base = cls.from_orm(tx)
-    # Set the has_invoice field based on stripe_invoice_id presence
-    base.has_invoice = tx.stripe_invoice_id is not None
-    return base
+    # Create the basic schema with all fields
+    schema = cls(
+      id=tx.id,
+      user_id=tx.user_id,
+      organization_id=tx.organization_id,
+      type=tx.type,
+      status=tx.status,
+      amount_usd=tx.amount_usd or 0.0,
+      credits=tx.credits,
+      description=tx.description,
+      created_at=tx.created_at,
+      has_invoice=tx.stripe_invoice_id is not None,
+    )
+    return schema
 
 
 class CreditBalanceResponseSchema(BaseModel):
