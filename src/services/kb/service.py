@@ -252,6 +252,8 @@ class KnowledgeBaseService:
       charge = usage["charge"]
       self.logger.info(f"Created initial charge for file upload: {charge.transaction_id}")
 
+      self.logger.info(f"document_data: {document_data}")
+
       # Get source type model
       source_type_model = await session.get(SourceTypeModel, 1)
       if not source_type_model:
@@ -263,12 +265,9 @@ class KnowledgeBaseService:
       file_metadata = document_data.get_metadata()
 
       # Calculate proper charge quantity based on file size or page count
-      # We'll update the initial charge based on actual file metrics
       file_content = await document_data.file.read()
       file_size_mb = len(file_content) / (1024 * 1024)
-
-      # Update charge with more accurate quantity based on file size
-      # 1 unit per MB with a minimum of 1 unit
+      # TODO : we need to get page counts in case of PDF, docs, excel ,etc
       charge_qty = max(1, int(file_size_mb))
       file_metadata["charge_qty"] = charge_qty
 
