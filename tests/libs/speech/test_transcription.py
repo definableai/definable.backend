@@ -125,7 +125,8 @@ class TestTranscription:
         assert "Source must be either a URL or bytes data" in str(excinfo.value)
 
     @pytest.mark.asyncio
-    async def test_transcribe_url_content_type_inference( mock_httpx_client, mock_temp_file):
+    async def test_transcribe_url_content_type_inference(self, mock_settings, mock_httpx_client, mock_temp_file,
+                                                         mock_open, mock_os_operations, mock_mimetypes):
         """Test content type inference from URL."""
         # Setup
         audio_url = "https://example.com/audio.mp3"
@@ -145,7 +146,7 @@ class TestTranscription:
             assert mock_temp_file.call_args[1]['suffix'] == ".mp3"
 
     @pytest.mark.asyncio
-    async def test_transcribe_url_download_error( mock_httpx_client):
+    async def test_transcribe_url_download_error(self, mock_httpx_client):
         """Test error handling for URL download failures."""
         # Setup
         audio_url = "https://example.com/audio.mp3"
@@ -158,7 +159,7 @@ class TestTranscription:
         assert "Download error" in str(excinfo.value)
 
     @pytest.mark.asyncio
-    async def test_transcribe_empty_file(mock_os_operations):
+    async def test_transcribe_empty_file(self, mock_settings, mock_temp_file, mock_httpx_client, mock_os_operations, mock_mimetypes):
         """Test error handling for empty files."""
         # Setup
         audio_url = "https://example.com/audio.mp3"
@@ -171,10 +172,12 @@ class TestTranscription:
         assert "Audio file is empty" in str(excinfo.value)
 
     @pytest.mark.asyncio
-    async def test_transcribe_api_error(mock_os_operations):
+    async def test_transcribe_api_error(self, mock_settings, mock_temp_file, mock_httpx_client, mock_os_operations, mock_mimetypes, mock_open):
         """Test error handling for OpenAI API errors."""
         # Setup
         audio_url = "https://example.com/audio.mp3"
+        mock_file = mock_temp_file.return_value.__enter__.return_value
+        mock_file.name = "/tmp/test_audio.mp3"
 
         # Mock the OpenAI API call with an error
         with patch("src.libs.speech.v1.transcription.client.audio.transcriptions.create",
@@ -189,11 +192,14 @@ class TestTranscription:
             mock_os_operations["unlink"].assert_called_once()  # Ensure temp file cleanup
 
     @pytest.mark.asyncio
-    async def test_transcribe_with_language_parameter():
-        """Test transcribing with custom language parameter."""
+    async def test_transcribe_with_language_parameter(self, mock_settings, mock_temp_file, mock_httpx_client,
+                                                      mock_os_operations, mock_mimetypes, mock_open):
+        """Test transcribing with language parameter (note: currently always uses 'en')."""
         # Setup
         audio_url = "https://example.com/audio.mp3"
         language = "es-ES"
+        mock_file = mock_temp_file.return_value.__enter__.return_value
+        mock_file.name = "/tmp/test_audio.mp3"
 
         # Mock the OpenAI API call
         with patch("src.libs.speech.v1.transcription.client.audio.transcriptions.create",
@@ -205,8 +211,9 @@ class TestTranscription:
 
             # Assert
             assert result == "Transcribed text"
-            # Check language parameter was passed (would need to check call args if we were checking parameters)
+            # Function always uses "en" regardless of input language parameter
             mock_create.assert_awaited_once()
+            assert mock_create.call_args[1].get('language') == "en"
 
     @pytest.mark.asyncio
     async def test_transcribe_content_type_mapping(self, mock_settings, mock_temp_file, mock_open, mock_os_operations):
