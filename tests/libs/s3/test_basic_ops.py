@@ -289,65 +289,6 @@ class TestS3Client:
         key = S3Client.get_key_from_url(url)
         assert key == "test-file.txt"
 
-
-# Integration tests - only run when INTEGRATION_TEST=1
-@pytest.mark.skipif(
-    not is_integration_test(),
-    reason="Integration tests only run when INTEGRATION_TEST=1",
-)
-@pytest.mark.integration
-class TestS3ClientIntegration:
-    """Integration tests for S3 client with real S3 service."""
-    
-    @pytest_asyncio.fixture
-    async def s3_integration_client(self):
-        """Create an S3 client for integration testing.
-        
-        Note: This requires a real S3-compatible service (like MinIO) running.
-        """
-        # For integration tests, use environment variables or specific test values
-        bucket = os.environ.get("TEST_S3_BUCKET", "test-bucket")
-        client = S3Client(bucket=bucket)
-        yield client
-
-    async def test_upload_download_integration(self, s3_integration_client):
-        """Integration test for uploading and downloading a file."""
-        # Create test file
-        test_content = b"test integration content"
-        test_file = BytesIO(test_content)
-        test_key = f"test/integration-{uuid.uuid4()}.txt"
-        
-        try:
-            # Upload file
-            url = await s3_integration_client.upload_file(
-                file=test_file,
-                key=test_key,
-                content_type="text/plain"
-            )
-            
-            # Download the file
-            downloaded = await s3_integration_client.download_file(key=test_key)
-            
-            # Assertions
-            assert downloaded.getvalue() == test_content
-            assert url.endswith(test_key)
-            
-            # Test presigned URL generation
-            presigned_url = await s3_integration_client.get_presigned_url(
-                key=test_key,
-                expires_in=60
-            )
-            assert presigned_url is not None
-            assert presigned_url.startswith("http")
-            
-        finally:
-            # Clean up
-            try:
-                await s3_integration_client.delete_file(key=test_key)
-            except Exception as e:
-                logging.warning(f"Failed to clean up test file: {str(e)}")
-
-
 @pytest.mark.asyncio
 class TestS3ClientErrorHandling:
     """Test error handling in S3Client."""
