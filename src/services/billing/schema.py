@@ -21,11 +21,21 @@ class TransactionStatus(str, Enum):
   REFUNDED = "refunded"
 
 
+class RegionEnum(str, Enum):
+  INTERNATIONAL = "international"
+  INDIAN = "indian"
+
+
+class PaymentProviderEnum(str, Enum):
+  STRIPE = "stripe"
+  RAZORPAY = "razorpay"
+
+
 class BillingPlanSchema(BaseModel):
   id: UUID4
   name: str
   description: Optional[str] = None
-  amount_usd: float
+  amount: float
   credits: int
   discount_percentage: float = 0.0
   is_active: bool = True
@@ -65,7 +75,7 @@ class TransactionSchema(BaseModel):
   organization_id: UUID4
   type: TransactionType
   status: TransactionStatus
-  amount_usd: float
+  amount: float
   credits: int
   description: Optional[str]
   created_at: datetime
@@ -75,14 +85,18 @@ class TransactionSchema(BaseModel):
 
 
 class CheckoutSessionCreateSchema(BaseModel):
+  customer_email: str
   plan_id: Optional[UUID4] = None
-  amount_usd: Optional[float] = None
-  customer_email: Optional[str] = None
+  amount: Optional[float] = None
+  region: RegionEnum = RegionEnum.INTERNATIONAL
 
   def validate_payment_source(cls, v, values):
-    if "amount_usd" not in values and "plan_id" not in values:
-      raise ValueError("Either amount_usd or plan_id must be provided")
+    if "amount" not in values and "plan_id" not in values:
+      raise ValueError("Either amount or plan_id must be provided")
     return v
+
+  class Config:
+    use_enum_values = True
 
 
 # Response schemas
@@ -92,7 +106,7 @@ class TransactionResponseSchema(BaseModel):
   organization_id: UUID4
   type: str
   status: str
-  amount_usd: Optional[float] = 0.0
+  amount: Optional[float] = 0.0
   credits: int
   description: Optional[str]
   created_at: datetime
@@ -103,10 +117,16 @@ class TransactionResponseSchema(BaseModel):
 
 class TransactionWithInvoiceSchema(TransactionResponseSchema):
   has_invoice: bool = False
-  amount_usd: Optional[float] = 0.0
+  amount: Optional[float] = 0.0
+  currency: str = "USD"
 
   @classmethod
   def from_transaction(cls, tx: TransactionModel):
+    # Determine currency based on payment provider
+    currency = "USD"
+    if tx.payment_provider == "razorpay":
+      currency = "INR"
+
     # Create the basic schema with all fields
     schema = cls(
       id=tx.id,
@@ -114,11 +134,12 @@ class TransactionWithInvoiceSchema(TransactionResponseSchema):
       organization_id=tx.organization_id,
       type=tx.type,
       status=tx.status,
-      amount_usd=tx.amount_usd or 0.0,
+      amount=tx.amount or 0.0,
       credits=tx.credits,
       description=tx.description,
       created_at=tx.created_at,
-      has_invoice=tx.stripe_invoice_id is not None,
+      has_invoice=(tx.stripe_invoice_id is not None or tx.razorpay_invoice_id is not None),
+      currency=currency,
     )
     return schema
 
@@ -139,17 +160,23 @@ class CreditBalanceResponseSchema(BaseModel):
 
 class BillingPlanCreateSchema(BaseModel):
   name: str
-  amount_usd: float
+  amount: float
   credits: int
   discount_percentage: float = 0.0
   is_active: bool = True
 
 
-class BillingPlanResponseSchema(BillingPlanCreateSchema):
+class BillingPlanResponseSchema(BaseModel):
   id: UUID4
+  name: str
+  amount: float
+  credits: int
+  discount_percentage: float
+  is_active: bool
+  currency: str
 
   class Config:
-    from_attributes = True
+    from_attributes = True  # Change this line
 
 
 class TransactionFilterParamsSchema(BaseModel):
@@ -170,11 +197,12 @@ class CreditCalculationRequestSchema(BaseModel):
 
 
 class CreditCalculationResponseSchema(BaseModel):
-  amount_usd: float
+  amount: float
   credits: int
+  currency: str = "USD"
 
   class Config:
-    from_attributes = True
+    from_orm = True
 
 
 class ServiceCreateSchema(BaseModel):

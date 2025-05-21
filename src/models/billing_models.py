@@ -37,10 +37,11 @@ class BillingPlanModel(CRUD):
   __tablename__ = "billing_plans"
 
   name = Column(String, nullable=False)
-  amount_usd = Column(Float, nullable=False)
+  amount = Column(Float, nullable=False)
   credits = Column(Integer, nullable=False)
   discount_percentage = Column(Float, default=0.0)
   is_active = Column(Boolean, default=True)
+  currency = Column(String(3), nullable=False, default="USD")
 
 
 class ChargeModel(CRUD):
@@ -77,9 +78,13 @@ class TransactionModel(CRUD):
   type: Mapped[str] = mapped_column(String, nullable=False)
   status: Mapped[str] = mapped_column(String, nullable=False)
   credits: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-  amount_usd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+  amount: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
   stripe_payment_intent_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
   stripe_customer_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
   description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
   transaction_metadata: Mapped[Optional[Dict]] = mapped_column(JSON, nullable=True)
   stripe_invoice_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+  payment_provider = Column(String(20), nullable=True)
+  razorpay_invoice_id = Column(String, nullable=True)
+  razorpay_payment_id = Column(String, nullable=True)
+  razorpay_customer_id = Column(String, nullable=True)
