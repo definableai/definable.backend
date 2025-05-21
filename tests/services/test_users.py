@@ -2,9 +2,9 @@ import pytest
 import pytest_asyncio
 import sys
 import os
-from uuid import uuid4
+from uuid import uuid4, UUID
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock, patch
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
@@ -12,6 +12,8 @@ from src.services.users.service import UserService
 from src.services.users.schema import (
     InviteSignup,
     StytchUser,
+    UserDetailResponse,
+    OrganizationInfo
 )
 from src.services.__base.acquire import Acquire
 
@@ -32,6 +34,274 @@ class TestAcquire(Acquire):
         self.logger = MagicMock()
         self.utils = MagicMock()
 
+# Mock these modules to prevent SQLAlchemy issues when running unit tests
+sys.modules["database"] = MagicMock()
+sys.modules["database.postgres"] = MagicMock()
+sys.modules["src.database"] = MagicMock()
+sys.modules["src.database.postgres"] = MagicMock()
+sys.modules["dependencies.security"] = MagicMock()
+
+###########################################
+# UNIT TESTS
+###########################################
+
+@pytest.fixture
+def mock_db_session():
+    """Create a mock database session."""
+    session = AsyncMock()
+    session.execute = AsyncMock()
+    session.commit = AsyncMock()
+    session.scalar = AsyncMock()
+    return session
+
+@pytest.fixture
+def mock_stytch():
+    """Mock the stytch_base module."""
+    with patch('src.services.users.service.stytch_base') as mock:
+        mock.invite_user = AsyncMock()
+        yield mock
+
+@pytest.fixture
+def users_service():
+    """Create a UserService instance."""
+    return UserService(acquire=TestAcquire())
+
+@pytest.fixture
+def sample_user():
+    """Create a sample user for testing."""
+    return {
+        "id": UUID("11111111-1111-1111-1111-111111111111"),
+        "email": "test@example.com",
+        "first_name": "Test",
+        "last_name": "User"
+    }
+
+@pytest.fixture
+def sample_user_model():
+    """Create a sample UserModel for testing."""
+    user = MagicMock()
+    user.id = UUID("11111111-1111-1111-1111-111111111111")
+    user.email = "test@example.com"
+    user.first_name = "Test"
+    user.last_name = "User"
+    user.full_name = "Test User"
+    return user
+
+@pytest.fixture
+def sample_org_member():
+    """Create a sample OrganizationMemberModel."""
+    member = MagicMock()
+    member.organization_id = UUID("22222222-2222-2222-2222-222222222222")
+    member.role_id = UUID("33333333-3333-3333-3333-333333333333")
+    member.user_id = UUID("11111111-1111-1111-1111-111111111111")
+    member.status = "active"
+    return member
+
+@pytest.fixture
+def sample_org():
+    """Create a sample OrganizationModel."""
+    org = MagicMock()
+    org.id = UUID("22222222-2222-2222-2222-222222222222")
+    org.name = "Test Organization"
+    org.slug = "test-org"
+    return org
+
+@pytest.fixture
+def sample_role():
+    """Create a sample RoleModel."""
+    role = MagicMock()
+    role.id = UUID("33333333-3333-3333-3333-333333333333")
+    role.name = "MEMBER"
+    return role
+
+class TestUserService:
+    """Unit tests for UserService."""
+
+    @pytest.mark.asyncio
+    async def test_get_me(self, users_service, mock_db_session, sample_user, sample_user_model, sample_org_member, sample_org, sample_role):
+        """Test get_me method."""
+        # Set full organization info in user response
+        org_info = OrganizationInfo(
+            id=sample_org.id,
+            name=sample_org.name,
+            slug=sample_org.slug,
+            role_name=sample_role.name,
+            role_id=sample_role.id
+        )
+
+        # Create a user response with organizations
+        user_response = UserDetailResponse(
+            id=sample_user_model.id,
+            email=sample_user_model.email,
+            first_name=sample_user_model.first_name,
+            last_name=sample_user_model.last_name,
+            full_name=sample_user_model.full_name,
+            organizations=[org_info]
+        )
+
+        # Patch the _get_user_details directly to return our prepared response
+        with patch.object(users_service, '_get_user_details', return_value=user_response) as mock_get_details:
+            # Call the method
+            result = await users_service.get_me(
+                current_user=sample_user,
+                session=mock_db_session
+            )
+
+            # Verify _get_user_details was called with the right parameters
+            mock_get_details.assert_called_once_with(sample_user["id"], mock_db_session)
+
+            # Assertions
+            assert result.id == sample_user["id"]
+            assert result.email == sample_user["email"]
+            assert result.first_name == sample_user["first_name"]
+            assert result.last_name == sample_user["last_name"]
+            assert len(result.organizations) == 1
+            assert result.organizations[0].id == sample_org.id
+            assert result.organizations[0].name == sample_org.name
+            assert result.organizations[0].role_name == sample_role.name
+
+    @pytest.mark.asyncio
+    async def test_get_user_details_not_found(self, users_service, mock_db_session):
+        """Test _get_user_details when user is not found."""
+        # Mock user query to return None
+        mock_result_user = MagicMock()
+        mock_result_user.scalar_one_or_none.return_value = None
+        mock_db_session.execute.return_value = mock_result_user
+
+        # Call the method and expect exception
+        with pytest.raises(HTTPException) as excinfo:
+            await users_service._get_user_details(
+                user_id=UUID("11111111-1111-1111-1111-111111111111"),
+                session=mock_db_session
+            )
+
+        # Assertions
+        assert excinfo.value.status_code == 404
+        assert "User not found" in excinfo.value.detail
+
+    @pytest.mark.asyncio
+    async def test_get_user_details_no_organizations(self, users_service, mock_db_session, sample_user_model):
+        """Test _get_user_details when user has no organizations."""
+        # Mock user query
+        mock_result_user = MagicMock()
+        mock_result_user.scalar_one_or_none.return_value = sample_user_model
+
+        # Mock member query to return empty list
+        mock_result_members = MagicMock()
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result_members.scalars.return_value = mock_scalars
+
+        # Configure session.execute for both queries
+        mock_db_session.execute.side_effect = [
+            mock_result_user,  # For user query
+            mock_result_members,  # For members query
+        ]
+
+        # Call the method
+        result = await users_service._get_user_details(
+            user_id=sample_user_model.id,
+            session=mock_db_session
+        )
+
+        # Assertions
+        assert result.id == sample_user_model.id
+        assert result.email == sample_user_model.email
+        assert len(result.organizations) == 0
+
+    @pytest.mark.asyncio
+    async def test_get_list(self, users_service, mock_db_session, sample_user_model, sample_org_member, sample_org, sample_role):
+        """Test get_list method."""
+        org_id = UUID("22222222-2222-2222-2222-222222222222")
+
+        # Mock count query
+        mock_db_session.scalar.return_value = 1
+
+        # Mock user IDs query
+        user_ids = [sample_user_model.id]
+        mock_result_users = MagicMock()
+        mock_scalars_users = MagicMock()
+        mock_scalars_users.all.return_value = user_ids
+        mock_result_users.scalars.return_value = mock_scalars_users
+
+        # Mock user details query (reuse the test_get_me results)
+        mock_result_user = MagicMock()
+        mock_result_user.scalar_one_or_none.return_value = sample_user_model
+
+        mock_result_members = MagicMock()
+        mock_scalars_members = MagicMock()
+        mock_scalars_members.all.return_value = [sample_org_member]
+        mock_result_members.scalars.return_value = mock_scalars_members
+
+        mock_result_org = MagicMock()
+        mock_result_org.scalar_one_or_none.return_value = sample_org
+
+        mock_result_role = MagicMock()
+        mock_result_role.scalar_one_or_none.return_value = sample_role
+
+        # Configure the session.execute
+        mock_db_session.execute.side_effect = [
+            mock_result_users,  # For user IDs query
+            mock_result_user,  # For user query
+            mock_result_members,  # For members query
+            mock_result_org,  # For organization query
+            mock_result_role,  # For role query
+        ]
+
+        # Call the method
+        result = await users_service.get_list(
+            org_id=org_id,
+            offset=0,
+            limit=10,
+            session=mock_db_session,
+            user={"id": uuid4(), "org_id": org_id}
+        )
+
+        # Assertions
+        assert result.total == 1
+        assert len(result.users) == 1
+        assert result.users[0].id == sample_user_model.id
+        assert result.users[0].email == sample_user_model.email
+
+    @pytest.mark.asyncio
+    async def test_post_invite(self, users_service, mock_db_session, mock_stytch):
+        """Test post_invite method."""
+        # Test data
+        org_id = UUID("22222222-2222-2222-2222-222222222222")
+        invite_data = InviteSignup(
+            email="new@example.com",
+            first_name="New",
+            last_name="User",
+            role="MEMBER"
+        )
+
+        # Mock stytch invite response
+        mock_stytch.invite_user.return_value = {
+            "status_code": 200,
+            "user_id": "stytch-user-123"
+        }
+
+        # Call the method
+        result = await users_service.post_invite(
+            user_data=invite_data,
+            org_id=org_id,
+            token_payload={"id": uuid4(), "org_id": org_id},
+            session=mock_db_session
+        )
+
+        # Assertions
+        assert result.status_code == 200
+        assert "User invited successfully" in result.body.decode()
+        mock_stytch.invite_user.assert_awaited_once_with(
+            email=invite_data.email,
+            first_name=invite_data.first_name,
+            last_name=invite_data.last_name
+        )
+
+###########################################
+# INTEGRATION TESTS
+###########################################
+
 # Only import these modules for integration tests
 if is_integration_test():
     from sqlalchemy import select, text
@@ -43,11 +313,6 @@ else:
     sys.modules["src.database"] = MagicMock()
     sys.modules["src.database.postgres"] = MagicMock()
     sys.modules["dependencies.security"] = MagicMock()
-
-@pytest.fixture
-def users_service():
-    """Create a UserService instance."""
-    return UserService(acquire=TestAcquire())
 
 @pytest.fixture
 def test_integration_user():

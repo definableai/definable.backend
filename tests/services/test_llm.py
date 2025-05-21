@@ -38,8 +38,8 @@ if not is_integration_test():
     patch('sqlalchemy.select', lambda *args: MagicMock()).start()
 
 # Import the real service and schema
-from src.services.llm.service import LLMService
-from src.services.llm.schema import LLMCreate, LLMResponse, LLMUpdate
+from services.llm.service import LLMService
+from services.llm.schema import LLMCreate, LLMResponse, LLMUpdate
 
 # Only mock modules for unit tests
 if not is_integration_test():
