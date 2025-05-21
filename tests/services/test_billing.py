@@ -481,7 +481,7 @@ async def setup_test_db_integration(db_session):
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
         """))
-        
+
         await session.execute(text("""
             CREATE TABLE IF NOT EXISTS wallets (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

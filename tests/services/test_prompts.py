@@ -100,11 +100,11 @@ def mock_db_session():
     session.scalar = AsyncMock()
 
     # Create a properly structured mock result for database queries
-    all_mock = MagicMock()
-    first_mock = MagicMock()
+    MagicMock()
+    MagicMock()
     unique_mock = MagicMock()
     scalars_mock = MagicMock()
-    
+
     # Set up synchronous methods that don't need to be awaited
     scalars_mock.all = MagicMock(return_value=[])
     scalars_mock.first = MagicMock(return_value=None)
@@ -468,7 +468,7 @@ class TestPromptService:
         # Setup
         category_id = mock_category.id
         prompt_count = 5
-        
+
         # Mock direct first() return instead of scalars().first()
         mock_db_session.execute.return_value.first.return_value = (mock_category, prompt_count)
 
@@ -489,7 +489,7 @@ class TestPromptService:
         """Test getting a non-existent category."""
         # Setup
         category_id = uuid4()
-        
+
         # Mock direct first() return as None
         mock_db_session.execute.return_value.first.return_value = None
 

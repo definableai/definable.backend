@@ -1,1 +1,1 @@
-"""Test module for the chats libs.""" 
+"""Test module for the chats libs."""

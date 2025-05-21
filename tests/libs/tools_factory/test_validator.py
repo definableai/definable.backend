@@ -1,5 +1,4 @@
 import pytest
-from typing import Dict, Any, List
 from pydantic import ValidationError
 
 from src.libs.tools_factory.v1.validator import (
@@ -29,10 +28,10 @@ class TestValidator:
         """Test validation fails when required fields are missing."""
         with pytest.raises(ValidationError):
             ToolInfo(name="TestTool", description="A test tool")  # Missing version
-        
+
         with pytest.raises(ValidationError):
             ToolInfo(name="TestTool", version="1.0.0")  # Missing description
-        
+
         with pytest.raises(ValidationError):
             ToolInfo(description="A test tool", version="1.0.0")  # Missing name
 
@@ -194,7 +193,7 @@ class TestValidator:
                 "code": "def test_func(): pass"
             }
         }
-        
+
         validated = validate_tool_json(valid_json)
         assert validated.info.name == "TestTool"
         assert len(validated.configuration) == 1
@@ -212,7 +211,7 @@ class TestValidator:
                 "code": "def test_func(): pass"
             }
         }
-        
+
         with pytest.raises(ValidationError):
             validate_tool_json(invalid_json)
 
@@ -231,14 +230,14 @@ class TestValidator:
                 "code": "def test_func(): pass"
             }
         }
-        
+
         assert is_valid_tool_json(valid_json) is True
-        
+
         invalid_json = {
             "info": {"name": "TestTool", "description": "Test tool"},  # Missing version
             "configuration": [],
             "inputs": [],
             "function_info": {}
         }
-        
-        assert is_valid_tool_json(invalid_json) is False 
+
+        assert is_valid_tool_json(invalid_json) is False

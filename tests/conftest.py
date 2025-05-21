@@ -1,11 +1,14 @@
 import os
 import pytest
 import asyncio
+import sys
 from dotenv import load_dotenv
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../src'))
 
 # Load test environment variables
 env_test_path = os.path.join(os.path.dirname(__file__), ".env.test")

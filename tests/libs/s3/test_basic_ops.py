@@ -1,10 +1,7 @@
 import pytest
-import pytest_asyncio
 import os
-import logging
 from io import BytesIO
 from unittest.mock import MagicMock, AsyncMock, patch
-import uuid
 
 from fastapi import HTTPException, UploadFile
 
@@ -35,14 +32,14 @@ def mock_settings():
 # Create AsyncMock classes for each S3 operation we test
 class MockS3Client:
     """Mock S3 client that properly handles async context manager."""
-    
+
     def __init__(self, success=True):
         self.success = success
         self.put_object = AsyncMock(return_value={"ETag": "test-etag"})
         self.get_object = AsyncMock()
         self.delete_object = AsyncMock(return_value={"DeleteMarker": True})
         self.generate_presigned_url = AsyncMock(return_value="http://presigned-url.com/test-bucket/test.txt?expiry=3600")
-        
+
         # Configure error scenarios if needed
         if not success:
             self.put_object.side_effect = Exception("Upload failed")
@@ -51,10 +48,10 @@ class MockS3Client:
 
     async def __aenter__(self):
         return self
-        
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         pass
-        
+
 
 @pytest.fixture
 def mock_body():
@@ -106,7 +103,7 @@ class TestS3Client:
         assert client.endpoint_url == mock_settings.s3_endpoint
         assert client.aws_access_key_id == mock_settings.s3_access_key
         assert client.aws_secret_access_key == mock_settings.s3_secret_key
-        
+
         # Test with default bucket
         client = S3Client()
         assert client.bucket == mock_settings.s3_bucket
@@ -115,7 +112,7 @@ class TestS3Client:
         """Test uploading a file from UploadFile."""
         # Setup mock S3 client
         mock_client = MockS3Client()
-        
+
         with patch.object(s3_client, "_get_client", return_value=mock_client):
             # Execute
             result = await s3_client.upload_file(
@@ -123,7 +120,7 @@ class TestS3Client:
                 key="uploads/test_file.txt",
                 content_type="text/plain"
             )
-            
+
             # Assert
             assert result == "http://localhost:9000/test-bucket/uploads/test_file.txt"
             mock_client.put_object.assert_awaited_once()
@@ -138,14 +135,14 @@ class TestS3Client:
         """Test uploading a file from BytesIO."""
         # Setup mock S3 client
         mock_client = MockS3Client()
-        
+
         with patch.object(s3_client, "_get_client", return_value=mock_client):
             # Execute
             result = await s3_client.upload_file(
                 file=test_file_bytesio,
                 key="uploads/test_file.txt"
             )
-            
+
             # Assert
             assert result == "http://localhost:9000/test-bucket/uploads/test_file.txt"
             mock_client.put_object.assert_awaited_once()
@@ -159,14 +156,14 @@ class TestS3Client:
         """Test uploading a file from bytes."""
         # Setup mock S3 client
         mock_client = MockS3Client()
-        
+
         with patch.object(s3_client, "_get_client", return_value=mock_client):
             # Execute
             result = await s3_client.upload_file(
                 file=test_file_bytes,
                 key="uploads/test_file.txt"
             )
-            
+
             # Assert
             assert result == "http://localhost:9000/test-bucket/uploads/test_file.txt"
             mock_client.put_object.assert_awaited_once()
@@ -180,7 +177,7 @@ class TestS3Client:
         """Test error handling when uploading a file."""
         # Setup mock S3 client with error
         mock_client = MockS3Client(success=False)
-        
+
         with patch.object(s3_client, "_get_client", return_value=mock_client):
             # Execute and Assert
             with pytest.raises(HTTPException) as excinfo:
@@ -188,7 +185,7 @@ class TestS3Client:
                     file=b"test",
                     key="test.txt"
                 )
-                
+
             assert excinfo.value.status_code == 500
             assert "Failed to upload file" in str(excinfo.value.detail)
             assert "Upload failed" in str(excinfo.value.detail)
@@ -199,11 +196,11 @@ class TestS3Client:
         mock_client = MockS3Client()
         # Set up the response for get_object
         mock_client.get_object.return_value = {"Body": mock_body}
-        
+
         with patch.object(s3_client, "_get_client", return_value=mock_client):
             # Execute
             result = await s3_client.download_file(key="test/download.txt")
-            
+
             # Assert
             assert isinstance(result, BytesIO)
             assert result.getvalue() == b"downloaded content"
@@ -217,23 +214,23 @@ class TestS3Client:
         """Test error handling when downloading a file."""
         # Setup mock S3 client with error
         mock_client = MockS3Client(success=False)
-        
+
         with patch.object(s3_client, "_get_client", return_value=mock_client):
             # Execute and Assert
             with pytest.raises(Exception) as excinfo:
                 await s3_client.download_file(key="nonexistent.txt")
-                
+
             assert "Download failed" in str(excinfo.value)
 
     async def test_delete_file(self, s3_client):
         """Test deleting a file."""
         # Setup mock S3 client
         mock_client = MockS3Client()
-        
+
         with patch.object(s3_client, "_get_client", return_value=mock_client):
             # Execute
             result = await s3_client.delete_file(key="test/delete.txt")
-            
+
             # Assert
             assert result is True
             mock_client.delete_object.assert_awaited_once()
@@ -246,19 +243,19 @@ class TestS3Client:
         """Test error handling when deleting a file."""
         # Setup mock S3 client with error
         mock_client = MockS3Client(success=False)
-        
+
         with patch.object(s3_client, "_get_client", return_value=mock_client):
             # Execute and Assert
             with pytest.raises(Exception) as excinfo:
                 await s3_client.delete_file(key="test.txt")
-                
+
             assert "Delete failed" in str(excinfo.value)
 
     async def test_get_presigned_url(self, s3_client):
         """Test generating a presigned URL."""
         # Setup mock S3 client
         mock_client = MockS3Client()
-        
+
         with patch.object(s3_client, "_get_client", return_value=mock_client):
             # Execute
             result = await s3_client.get_presigned_url(
@@ -266,7 +263,7 @@ class TestS3Client:
                 expires_in=3600,
                 operation="get_object"
             )
-            
+
             # Assert
             assert result == "http://presigned-url.com/test-bucket/test.txt?expiry=3600"
             mock_client.generate_presigned_url.assert_awaited_once()
@@ -283,7 +280,7 @@ class TestS3Client:
         url = "http://localhost:9000/test-bucket/uploads/test_file.txt"
         key = S3Client.get_key_from_url(url)
         assert key == "uploads/test_file.txt"
-        
+
         # Test without bucket in path (just filename)
         url = "http://localhost:9000/test-file.txt"
         key = S3Client.get_key_from_url(url)
@@ -292,7 +289,7 @@ class TestS3Client:
 @pytest.mark.asyncio
 class TestS3ClientErrorHandling:
     """Test error handling in S3Client."""
-    
+
     async def test_missing_credentials(self):
         """Test error handling with missing credentials."""
         with patch("src.libs.s3.v1.basic_ops.settings") as mock_settings:
@@ -301,9 +298,9 @@ class TestS3ClientErrorHandling:
             mock_settings.s3_secret_key = ""
             mock_settings.s3_bucket = "test-bucket"
             mock_settings.s3_endpoint = "http://localhost:9000"
-            
+
             client = S3Client()
-            
+
             # Test upload with missing credentials
             with pytest.raises(Exception):
                 await client.upload_file(
@@ -315,8 +312,8 @@ class TestS3ClientErrorHandling:
         """Test error handling with nonexistent bucket."""
         # Setup mock client that raises NoSuchBucket exception
         error_client = MockS3Client(success=False)
-        error_client.put_object.side_effect = Exception("NoSuchBucket") 
-        
+        error_client.put_object.side_effect = Exception("NoSuchBucket")
+
         with patch.object(s3_client, "_get_client", return_value=error_client):
             # Test upload to nonexistent bucket
             with pytest.raises(HTTPException) as excinfo:
@@ -324,7 +321,7 @@ class TestS3ClientErrorHandling:
                     file=BytesIO(b"test"),
                     key="test.txt"
                 )
-            
+
             assert excinfo.value.status_code == 500
             assert "Failed to upload file" in str(excinfo.value.detail)
-            assert "NoSuchBucket" in str(excinfo.value.detail) 
+            assert "NoSuchBucket" in str(excinfo.value.detail)

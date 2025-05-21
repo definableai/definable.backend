@@ -1,4 +1,3 @@
-import asyncio
 import uuid
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -58,14 +57,14 @@ async def test_chat_basic():
         # Make the arun method return our mock token stream
         mock_agent_instance.arun = AsyncMock(return_value=mock_token_stream())
         mock_agent_class.return_value = mock_agent_instance
-        
+
         # Create the factory and test the chat method
         llm_factory = LLMFactory()
         chat_id = str(uuid.uuid4())
-        
+
         # Collect the response
         response = ""
-        
+
         # Patch asyncio.create_task to handle the incorrect await in the real code
         with patch('asyncio.create_task', side_effect=lambda coro: coro):
             async for token in llm_factory.chat(
@@ -75,7 +74,7 @@ async def test_chat_basic():
                 message="Hello, how are you?",
             ):
                 response += token.content
-        
+
         # Verify the response
         assert response == "This is a mock response"
         # Verify agent was created with expected parameters
@@ -97,12 +96,12 @@ async def test_chat_with_prompt():
         mock_agent_instance = MagicMock()
         mock_agent_instance.arun = AsyncMock(return_value=mock_token_stream())
         mock_agent_class.return_value = mock_agent_instance
-        
+
         # Create the factory and test the chat method
         llm_factory = LLMFactory()
         chat_id = str(uuid.uuid4())
         custom_prompt = "You are a helpful assistant."
-        
+
         # Collect the response
         with patch('asyncio.create_task', side_effect=lambda coro: coro):
             async for _ in llm_factory.chat(
@@ -113,7 +112,7 @@ async def test_chat_with_prompt():
                 prompt=custom_prompt,
             ):
                 pass
-        
+
         # Verify agent was created with the custom prompt
         mock_agent_class.assert_called_once()
         # Get the call arguments
@@ -127,7 +126,7 @@ async def test_chat_with_assets():
     # Create mock images and files
     test_image = Image(url="http://example.com/image.jpg")
     test_file = File(url="http://example.com/document.pdf")
-    
+
     # Create a mock token stream
     async def mock_token_stream():
         yield RunResponse(content="Asset response")
@@ -138,11 +137,11 @@ async def test_chat_with_assets():
         mock_agent_instance = MagicMock()
         mock_agent_instance.arun = AsyncMock(return_value=mock_token_stream())
         mock_agent_class.return_value = mock_agent_instance
-        
+
         # Create the factory and test the chat method
         llm_factory = LLMFactory()
         chat_id = str(uuid.uuid4())
-        
+
         # Collect the response
         with patch('asyncio.create_task', side_effect=lambda coro: coro):
             async for _ in llm_factory.chat(
@@ -153,7 +152,7 @@ async def test_chat_with_assets():
                 assets=[test_image, test_file],
             ):
                 pass
-        
+
         # Verify agent.arun was called with the correct assets
         mock_agent_instance.arun.assert_called_once()
         args, kwargs = mock_agent_instance.arun.call_args
@@ -173,12 +172,12 @@ async def test_chat_with_temperature():
         mock_agent_instance = MagicMock()
         mock_agent_instance.arun = AsyncMock(return_value=mock_token_stream())
         mock_agent_class.return_value = mock_agent_instance
-        
+
         # Create the factory and test the chat method
         llm_factory = LLMFactory()
         chat_id = str(uuid.uuid4())
         temperature = 0.7
-        
+
         # Collect the response
         with patch('asyncio.create_task', side_effect=lambda coro: coro):
             async for _ in llm_factory.chat(
@@ -189,7 +188,7 @@ async def test_chat_with_temperature():
                 temperature=temperature,
             ):
                 pass
-        
+
         # Check that Agent was initialized with a model that has temperature parameter
         mock_agent_class.assert_called_once()
         _, kwargs = mock_agent_class.call_args
@@ -210,12 +209,12 @@ async def test_chat_with_max_tokens():
         mock_agent_instance = MagicMock()
         mock_agent_instance.arun = AsyncMock(return_value=mock_token_stream())
         mock_agent_class.return_value = mock_agent_instance
-        
+
         # Create the factory and test the chat method
         llm_factory = LLMFactory()
         chat_id = str(uuid.uuid4())
         max_tokens = 100
-        
+
         # Collect the response
         with patch('asyncio.create_task', side_effect=lambda coro: coro):
             async for _ in llm_factory.chat(
@@ -226,7 +225,7 @@ async def test_chat_with_max_tokens():
                 max_tokens=max_tokens,
             ):
                 pass
-        
+
         # Check that Agent was initialized with a model that has max_tokens parameter
         mock_agent_class.assert_called_once()
         _, kwargs = mock_agent_class.call_args
@@ -247,12 +246,12 @@ async def test_chat_with_top_p():
         mock_agent_instance = MagicMock()
         mock_agent_instance.arun = AsyncMock(return_value=mock_token_stream())
         mock_agent_class.return_value = mock_agent_instance
-        
+
         # Create the factory and test the chat method
         llm_factory = LLMFactory()
         chat_id = str(uuid.uuid4())
         top_p = 0.9
-        
+
         # Collect the response
         with patch('asyncio.create_task', side_effect=lambda coro: coro):
             async for _ in llm_factory.chat(
@@ -263,10 +262,10 @@ async def test_chat_with_top_p():
                 top_p=top_p,
             ):
                 pass
-        
+
         # Check that Agent was initialized with a model that has top_p parameter
         mock_agent_class.assert_called_once()
         _, kwargs = mock_agent_class.call_args
         model = kwargs.get('model')
         assert model is not None
-        assert model.top_p == top_p 
+        assert model.top_p == top_p

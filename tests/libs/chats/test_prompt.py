@@ -1,6 +1,5 @@
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
-import asyncio
 
 from src.libs.chats.v1.prompt import map_model_to_deepseek, generate_prompts_stream
 
@@ -42,17 +41,17 @@ class TestGeneratePromptsStream:
             ]
             for token in tokens:
                 yield token
-                
+
         # Create a mock for the DeepSeek model and Agent
         with patch('src.libs.chats.v1.prompt.DeepSeek') as mock_deepseek, \
              patch('src.libs.chats.v1.prompt.Agent') as mock_agent_class:
-            
+
             # Setup mock agent
             mock_agent_instance = MagicMock()
             # Return our mocked async generator
             mock_agent_instance.arun = AsyncMock(return_value=mock_token_stream())
             mock_agent_class.return_value = mock_agent_instance
-            
+
             # Set up the prompt buffer size to control chunk size
             with patch('src.libs.chats.v1.prompt.settings.prompt_buffer_size', 2), \
                  patch('asyncio.create_task', side_effect=lambda coro: coro):
@@ -61,13 +60,13 @@ class TestGeneratePromptsStream:
                 chunks = []
                 async for chunk in generate_prompts_stream(text, prompt_type="task"):
                     chunks.append(chunk)
-                
+
                 # We expect chunks of size 2 (buffer_size)
                 assert len(chunks) == 3
                 assert chunks[0] == "Create a"
                 assert chunks[1] == " function that"
                 assert chunks[2] == " generates text"
-                
+
                 # Verify DeepSeek was initialized with the correct model ID
                 mock_deepseek.assert_called_once()
                 assert mock_deepseek.call_args[1]['id'] == "deepseek-chat"
@@ -87,15 +86,15 @@ class TestGeneratePromptsStream:
             ]
             for token in tokens:
                 yield token
-                
+
         with patch('src.libs.chats.v1.prompt.DeepSeek'), \
              patch('src.libs.chats.v1.prompt.Agent') as mock_agent_class:
-            
+
             # Setup mock agent
             mock_agent_instance = MagicMock()
             mock_agent_instance.arun = AsyncMock(return_value=mock_token_stream())
             mock_agent_class.return_value = mock_agent_instance
-            
+
             # Set buffer size to 3 for this test
             with patch('src.libs.chats.v1.prompt.settings.prompt_buffer_size', 3), \
                  patch('asyncio.create_task', side_effect=lambda coro: coro):
@@ -104,12 +103,12 @@ class TestGeneratePromptsStream:
                 chunks = []
                 async for chunk in generate_prompts_stream(text, prompt_type="creative"):
                     chunks.append(chunk)
-                
+
                 # Verify the system prompt for creative type was used
                 call_args = mock_agent_instance.arun.call_args
                 user_prompt = call_args[0][0]  # First positional arg
                 assert "You are a creative writing assistant" in user_prompt
-                
+
                 # We expect chunks of size 3 (buffer_size)
                 assert len(chunks) == 2
                 assert chunks[0] == "Write a story"
@@ -127,15 +126,15 @@ class TestGeneratePromptsStream:
             ]
             for token in tokens:
                 yield token
-                
+
         with patch('src.libs.chats.v1.prompt.DeepSeek'), \
              patch('src.libs.chats.v1.prompt.Agent') as mock_agent_class:
-            
+
             # Setup mock agent
             mock_agent_instance = MagicMock()
             mock_agent_instance.arun = AsyncMock(return_value=mock_token_stream())
             mock_agent_class.return_value = mock_agent_instance
-            
+
             # Run with patch for asyncio.create_task
             with patch('asyncio.create_task', side_effect=lambda coro: coro):
                 # Call generate_prompts_stream with num_prompts=3
@@ -143,12 +142,12 @@ class TestGeneratePromptsStream:
                 chunks = []
                 async for chunk in generate_prompts_stream(text, prompt_type="question", num_prompts=3):
                     chunks.append(chunk)
-                
+
                 # Verify num_prompts parameter was used
                 call_args = mock_agent_instance.arun.call_args
                 user_prompt = call_args[0][0]  # First positional arg
                 assert "Generate 3 different" in user_prompt
-                
+
                 # Join all chunks to validate complete output
                 complete_output = "".join(chunks)
                 assert "1. What are the ethical implications of AI?" in complete_output
@@ -166,22 +165,22 @@ class TestGeneratePromptsStream:
             ]
             for token in tokens:
                 yield token
-                
+
         with patch('src.libs.chats.v1.prompt.DeepSeek') as mock_deepseek, \
              patch('src.libs.chats.v1.prompt.Agent') as mock_agent_class:
-            
+
             # Setup mock agent
             mock_agent_instance = MagicMock()
             mock_agent_instance.arun = AsyncMock(return_value=mock_token_stream())
             mock_agent_class.return_value = mock_agent_instance
-            
+
             # Run with patch for asyncio.create_task
             with patch('asyncio.create_task', side_effect=lambda coro: coro):
                 # Call generate_prompts_stream with model="reason"
                 text = "test text"
                 async for _ in generate_prompts_stream(text, model="reason"):
                     pass
-                
+
                 # Verify DeepSeek was initialized with the correct mapped model ID
                 mock_deepseek.assert_called_once()
                 assert mock_deepseek.call_args[1]['id'] == "deepseek-reason"
@@ -194,15 +193,15 @@ class TestGeneratePromptsStream:
             # Empty generator - yields nothing
             if False:
                 yield
-                
+
         with patch('src.libs.chats.v1.prompt.DeepSeek'), \
              patch('src.libs.chats.v1.prompt.Agent') as mock_agent_class:
-            
+
             # Setup mock agent with empty response
             mock_agent_instance = MagicMock()
             mock_agent_instance.arun = AsyncMock(return_value=mock_token_stream())
             mock_agent_class.return_value = mock_agent_instance
-            
+
             # Run with patch for asyncio.create_task
             with patch('asyncio.create_task', side_effect=lambda coro: coro):
                 # Call generate_prompts_stream
@@ -210,7 +209,7 @@ class TestGeneratePromptsStream:
                 chunks = []
                 async for chunk in generate_prompts_stream(text):
                     chunks.append(chunk)
-                
+
                 # No chunks should be yielded
                 assert len(chunks) == 0
 
@@ -225,23 +224,23 @@ class TestGeneratePromptsStream:
             ]
             for token in tokens:
                 yield token
-                
+
         with patch('src.libs.chats.v1.prompt.DeepSeek'), \
              patch('src.libs.chats.v1.prompt.Agent') as mock_agent_class:
-            
+
             # Setup mock agent to capture the prompt that was passed
             mock_agent_instance = MagicMock()
             mock_agent_instance.arun = AsyncMock(return_value=mock_token_stream())
             mock_agent_class.return_value = mock_agent_instance
-            
+
             # Run with patch for asyncio.create_task
             with patch('asyncio.create_task', side_effect=lambda coro: coro):
                 # Call generate_prompts_stream
                 text = "test input"
                 async for _ in generate_prompts_stream(text):
                     pass
-                
+
                 # Check that the extension prompt is included in the user prompt
                 call_args = mock_agent_instance.arun.call_args
                 user_prompt = call_args[0][0]  # First positional arg
-                assert "easy for an AI system to understand" in user_prompt 
+                assert "easy for an AI system to understand" in user_prompt
