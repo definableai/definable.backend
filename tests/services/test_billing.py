@@ -34,6 +34,9 @@ class TestAcquire(Acquire):
         self.settings = type('Settings', (), {})()
         self.settings.stripe_secret_key = "test_stripe_key"
         self.settings.stripe_webhook_secret = "test_webhook_secret"
+        self.settings.razorpay_key_id = "test_razorpay_key_id"
+        self.settings.razorpay_key_secret = "test_razorpay_key_secret"
+        self.settings.razorpay_webhook_secret = "test_razorpay_webhook_secret"
         self.logger = MagicMock()
         self.utils = MagicMock()
 
@@ -98,6 +101,8 @@ class MockBillingPlanModel:
         self.name = kwargs.get('name', "Test Plan")
         self.description = kwargs.get('description', "Test billing plan")
         self.amount_usd = kwargs.get('amount_usd', 10.0)
+        self.amount = kwargs.get('amount', 1000)  # Add amount field for Razorpay
+        self.currency = kwargs.get('currency', "INR")  # Add currency field for Razorpay
         self.credits = kwargs.get('credits', 10000)
         self.discount_percentage = kwargs.get('discount_percentage', 0.0)
         self.is_active = kwargs.get('is_active', True)
@@ -319,20 +324,20 @@ class TestBillingService:
         """Test credit calculation for a given USD amount."""
         # Setup
         org_id = uuid4()
-        amount_usd = 10.0
+        amount = 10.0
 
         # Execute
         result = await billing_service.get_calculate_credits(
             org_id=org_id,
-            amount_usd=amount_usd,
+            amount=amount,
             session=mock_db_session,
             user=test_user
         )
 
         # Verify
         assert isinstance(result, CreditCalculationResponseSchema)
-        assert result.amount_usd == amount_usd
-        assert result.credits == amount_usd * billing_service.credits_per_usd
+        assert result.amount == amount
+        assert result.credits == amount * billing_service.credits_per_usd
 
     # Additional test placeholders
 
