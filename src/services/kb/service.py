@@ -1,4 +1,5 @@
 from datetime import datetime
+from io import BytesIO
 from typing import Annotated, List, Optional
 from uuid import UUID
 
@@ -266,30 +267,8 @@ class KnowledgeBaseService:
       # Calculate proper charge quantity based on file size or page count
       file_content = await document_data.file.read()
       file_size_mb = len(file_content) / (1024 * 1024)
-
-      # Extract PDF page count if it's a PDF file
-      if document_data.file.content_type == "application/pdf":
-        try:
-          from io import BytesIO
-
-          from pypdf import PdfReader
-
-          pdf_reader = PdfReader(BytesIO(file_content))
-          page_count = len(pdf_reader.pages)
-
-          # Update file metadata with accurate page count
-          file_metadata["pages"] = page_count
-
-          # Calculate charge based on page count instead of file size for PDFs
-          charge_qty = max(1, page_count)
-        except Exception as e:
-          self.logger.error(f"Error extracting PDF page count: {str(e)}")
-          # Fall back to file size-based charging
-          charge_qty = max(1, int(file_size_mb))
-      else:
-        # For non-PDF files, use file size
-        charge_qty = max(1, int(file_size_mb))
-
+      # TODO : we need to get page counts in case of PDF, docs, excel ,etc
+      charge_qty = max(1, int(file_size_mb))
       file_metadata["charge_qty"] = charge_qty
 
       # Update charge with actual quantity and file information
