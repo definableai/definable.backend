@@ -1,12 +1,12 @@
-# 🚀 Zyeta.io
+# 🚀 Definable.ai
 
-Zyeta is a powerful platform that empowers developers to create, deploy and monetize AI agents and tools. Our ecosystem connects:
+Definable is a powerful platform that empowers developers to create, deploy and monetize AI agents and tools. Our ecosystem connects:
 
 - 🛠️ **Creators**: Build sophisticated AI agents and tools using our developer-friendly framework
 - 💼 **Developers**: Monetize your AI creations through our marketplace
 - 🔍 **Clients**: Discover and utilize high-quality AI solutions for your specific needs
 
-With Zyeta, we're building the bridge between AI innovation and practical application, creating opportunities for developers while delivering powerful solutions to businesses and individuals.
+With Definable, we're building the bridge between AI innovation and practical application, creating opportunities for developers while delivering powerful solutions to businesses and individuals.
 
 ## 🌟Key Features
 
