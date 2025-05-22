@@ -383,8 +383,15 @@ class ChatService:
 
         # Initialize billing - simple HOLD with qty=1
         try:
-          charge = Charge(name=llm_model.name, user_id=user_id, org_id=org_id, session=session)
-          await charge.create(qty=1, metadata={"chat_id": str(chat_id), "model": llm_model.name, "provider": llm_model.provider})
+          # Create a more descriptive transaction message
+          charge_description = f"Chat with {llm_model.name}: {message_data.content[:30]}..."
+
+          charge = Charge(name=llm_model.name, user_id=user_id, org_id=org_id, session=session, service="chat")
+          await charge.create(
+            qty=1,
+            metadata={"chat_id": str(chat_id), "model": llm_model.name, "provider": llm_model.provider},
+            description=charge_description,  # Pass custom description
+          )
         except Exception as billing_error:
           self.logger.error(f"Billing initialization failed: {str(billing_error)}")
           # Don't continue execution when billing fails - throw an appropriate error
@@ -445,6 +452,8 @@ class ChatService:
         async def generate_model_response() -> AsyncGenerator[str, None]:
           full_response = ""
           buffer: list[str] = []
+          token_count = 0
+          input_tokens = 0
 
           # Stream the response
           self.logger.debug(f"Sending message to {llm_model.provider} {llm_model.version}")
@@ -462,6 +471,8 @@ class ChatService:
             # Handle streaming
             buffer.append(token.content)
             full_response += token.content
+            token_count += 1  # Simple token counting
+
             if len(buffer) >= self.chunk_size:
               d = {"message": "".join(buffer)}
               yield f"data: {json.dumps(d)}\n\n"
@@ -488,6 +499,7 @@ class ChatService:
           await session.refresh(ai_message)
           self.logger.info(f"Created AI response message: {ai_message.id}")
 
+          # Update chat title if needed
           response_message = full_response
           if is_new_chat:
             await self._update_chat_name(
@@ -498,6 +510,46 @@ class ChatService:
               session,
               stored_chat_id,
             )
+
+          # IMPORTANT: Finalize the billing by converting HOLD to DEBIT
+          if charge:
+            try:
+              # Estimate input tokens based on message length (simple approximation)
+              input_tokens = len(message_data.content.split())
+              # Use token_count as output tokens
+              output_tokens = token_count
+
+              # Get pricing from model (with null check)
+              pricing = {"input": 1, "output": 1}  # Default fallback values
+              if hasattr(llm_model, "model_metadata"):
+                pricing = llm_model.model_metadata.get("credits_per_1000_tokens", {"input": 1, "output": 1})
+
+              # Calculate total tokens with model-specific weights
+              input_ratio = pricing.get("input", 1)
+              output_ratio = pricing.get("output", 1)
+              weighted_total = (input_tokens * input_ratio) + (output_tokens * output_ratio)
+
+              # Finalize billing with token metrics
+              await charge.calculate_and_update(
+                metadata={
+                  "input_tokens": input_tokens,
+                  "output_tokens": output_tokens,
+                  "total_tokens": int(weighted_total),
+                  "input_ratio": input_ratio,
+                  "output_ratio": output_ratio,
+                  "user_message_id": str(user_message.id),
+                  "ai_message_id": str(ai_message.id),
+                },
+                status="completed",
+              )
+              self.logger.info(f"Successfully finalized charge for chat {chat_id}")
+            except Exception as e:
+              self.logger.error(f"Error finalizing LLM chat billing: {str(e)}")
+              # Attempt to complete billing anyway with basic info
+              try:
+                await charge.update(additional_metadata={"billing_error": str(e), "fallback_billing": True})
+              except Exception as charge_error:
+                self.logger.error(f"Failed to finalize charge: {str(charge_error)}")
 
         return StreamingResponse(
           generate_model_response(),

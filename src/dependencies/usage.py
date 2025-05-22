@@ -64,9 +64,19 @@ class Usage:
       "user_agent": request.headers.get("user-agent", "unknown"),
     }
 
+    # Extract service name from endpoint path
+    # Default to "api" if we can't extract a proper service name
+    service = ""
+    endpoint_path = request.url.path
+    if endpoint_path.startswith("/api/"):
+      path_parts = endpoint_path.split("/")
+      if len(path_parts) > 2:
+        # Extract the service name (the part after /api/)
+        service = path_parts[2]
+
     try:
       # Create the charge (places a HOLD)
-      charge = Charge(name=self.charge_name, user_id=user_id, org_id=org_id, session=session)
+      charge = Charge(name=self.charge_name, user_id=user_id, org_id=org_id, session=session, service=service)
 
       try:
         await charge.create(qty=self.qty, metadata=endpoint_metadata)
