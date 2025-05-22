@@ -14,17 +14,18 @@ from models import ChargeModel, TransactionModel, TransactionStatus, Transaction
 class Charge:
   """Simplified charge utility for credit management."""
 
-  def __init__(self, name: str, user_id: UUID, org_id: UUID, session: AsyncSession):
+  def __init__(self, name: str, user_id: UUID, org_id: UUID, session: AsyncSession, service: str):
     self.id = uuid4()
     self.charge_id = str(self.id)  # String version for logging
     self.name = name
     self.user_id = user_id
     self.org_id = org_id
     self.session = session
+    self.service = service
     self.transaction_id = None
     self.logger = log
 
-    self.logger.debug(f"Charge object initialized [charge_id={self.charge_id}, name={name}, user_id={user_id}]")
+    self.logger.debug(f"Charge object initialized [charge_id={self.charge_id}, name={name}, user_id={user_id}, service={service}]")
 
   @classmethod
   async def verify_balance(cls, name: str, org_id: UUID, qty: int = 1, session: Optional[AsyncSession] = None):
@@ -133,16 +134,18 @@ class Charge:
     transaction.type = TransactionType.DEBIT
     transaction.status = TransactionStatus.COMPLETED
 
-    # Use a generic description format that works for all services
-    # Extract service name from metadata if available
+    # Get existing metadata which already contains service information from create()
     current_metadata = transaction.transaction_metadata or {}
-    service_name = current_metadata.get("service", "")
+    service_name = self.service  # Use the service from initialization
 
-    # Create a more informative description based on charge name and service
-    if service_name:
-      transaction.description = f"Credits used for {self.name} ({service_name})"
+    # Create more descriptive message based on service type
+    if service_name == "chat":
+      # For chat service, include model name without chat_id
+      model = current_metadata.get("model", self.name)
+      transaction.description = f"Credits used for {model} chat"
     else:
-      transaction.description = f"Credits used for {self.name}"
+      # Generic description for other services
+      transaction.description = f"Credits used for {self.name}" + (f" ({service_name})" if service_name else "")
 
     if additional_metadata:
       transaction.transaction_metadata = {**(transaction.transaction_metadata or {}), **additional_metadata}
@@ -378,7 +381,7 @@ class Charge:
       "charge_amount": charge_details.amount,
       "charge_unit": charge_details.unit,
       "charge_measure": charge_details.measure,
-      "service": charge_details.service,
+      "service": self.service,
       "action": charge_details.action,
       "charge_description": charge_details.description,
       # Add quantity information - use qty from metadata or default to 1

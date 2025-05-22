@@ -386,10 +386,10 @@ class ChatService:
           # Create a more descriptive transaction message
           charge_description = f"Chat with {llm_model.name}: {message_data.content[:30]}..."
 
-          charge = Charge(name=llm_model.name, user_id=user_id, org_id=org_id, session=session)
+          charge = Charge(name=llm_model.name, user_id=user_id, org_id=org_id, session=session, service="chat")
           await charge.create(
             qty=1,
-            metadata={"chat_id": str(chat_id), "model": llm_model.name, "provider": llm_model.provider, "service": "chat"},
+            metadata={"chat_id": str(chat_id), "model": llm_model.name, "provider": llm_model.provider},
             description=charge_description,  # Pass custom description
           )
         except Exception as billing_error:
