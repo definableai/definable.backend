@@ -1050,7 +1050,7 @@ class KnowledgeBaseService:
       if user_id:
         self.logger.info("Creating embedding charge")
         # Create a charge for embedding generation
-        embedding_charge = Charge(name="o1-small-text-indexing", user_id=user_id, org_id=org_id, session=session)
+        embedding_charge = Charge(name="o1-small-text-indexing", user_id=user_id, org_id=org_id, session=session, service="Knowledge Base")
         self.logger.info(f"Embedding charge: {embedding_charge}")
 
         def convert_uuids_to_strings(data):
