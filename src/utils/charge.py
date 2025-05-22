@@ -14,17 +14,18 @@ from models import ChargeModel, TransactionModel, TransactionStatus, Transaction
 class Charge:
   """Simplified charge utility for credit management."""
 
-  def __init__(self, name: str, user_id: UUID, org_id: UUID, session: AsyncSession):
+  def __init__(self, name: str, user_id: UUID, org_id: UUID, session: AsyncSession, service: str):
     self.id = uuid4()
     self.charge_id = str(self.id)  # String version for logging
     self.name = name
     self.user_id = user_id
     self.org_id = org_id
     self.session = session
+    self.service = service
     self.transaction_id = None
     self.logger = log
 
-    self.logger.debug(f"Charge object initialized [charge_id={self.charge_id}, name={name}, user_id={user_id}]")
+    self.logger.debug(f"Charge object initialized [charge_id={self.charge_id}, name={name}, user_id={user_id}, service={service}]")
 
   @classmethod
   async def verify_balance(cls, name: str, org_id: UUID, qty: int = 1, session: Optional[AsyncSession] = None):
@@ -44,7 +45,7 @@ class Charge:
       return False, amount, wallet.balance
     return True, amount, wallet.balance
 
-  async def create(self, qty: int = 1, metadata: Optional[Dict[str, Any]] = None):
+  async def create(self, qty: int = 1, metadata: Optional[Dict[str, Any]] = None, description: Optional[str] = None):
     """Create charge hold."""
     charge = await self._get_charge_details(self.name, self.session)
     amount = charge.amount * qty
@@ -58,8 +59,11 @@ class Charge:
       self.logger.warning(f"Insufficient credits for charge {self.name}. Required: {amount}, Available: {wallet.balance}")
       raise HTTPException(status_code=402, detail="Insufficient credits")  # Payment Required
 
+    # Use custom description if provided, otherwise use default
+    hold_description = description or f"Hold for {self.name}"
+
     # Create transaction
-    transaction = await self._create_transaction(TransactionType.HOLD, TransactionStatus.PENDING, amount, f"Hold for {self.name}", metadata, qty)
+    transaction = await self._create_transaction(TransactionType.HOLD, TransactionStatus.PENDING, amount, hold_description, metadata, qty)
 
     self.logger.info(f"Created transaction {transaction.id} for charge {self.name}")
 
@@ -130,6 +134,19 @@ class Charge:
     transaction.type = TransactionType.DEBIT
     transaction.status = TransactionStatus.COMPLETED
 
+    # Get existing metadata which already contains service information from create()
+    current_metadata = transaction.transaction_metadata or {}
+    service_name = self.service  # Use the service from initialization
+
+    # Create more descriptive message based on service type
+    if service_name == "chat":
+      # For chat service, include model name without chat_id
+      model = current_metadata.get("model", self.name)
+      transaction.description = f"Credits used for {model} chat"
+    else:
+      # Generic description for other services
+      transaction.description = f"Credits used for {self.name}" + (f" ({service_name})" if service_name else "")
+
     if additional_metadata:
       transaction.transaction_metadata = {**(transaction.transaction_metadata or {}), **additional_metadata}
 
@@ -158,6 +175,11 @@ class Charge:
     self.logger.info(f"Converting HOLD to RELEASE for transaction {transaction.id}")
     transaction.type = TransactionType.RELEASE
     transaction.status = TransactionStatus.COMPLETED
+
+    # Generic release description that works for all services
+    transaction.description = f"Released hold for {self.name}"
+    if reason:
+      transaction.description += f": {reason}"
 
     if transaction.transaction_metadata:
       if reason:
@@ -359,7 +381,7 @@ class Charge:
       "charge_amount": charge_details.amount,
       "charge_unit": charge_details.unit,
       "charge_measure": charge_details.measure,
-      "service": charge_details.service,
+      "service": self.service,
       "action": charge_details.action,
       "charge_description": charge_details.description,
       # Add quantity information - use qty from metadata or default to 1

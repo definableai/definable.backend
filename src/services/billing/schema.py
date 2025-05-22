@@ -240,7 +240,6 @@ class UsageHistoryItemSchema(BaseModel):
   charge_name: str
   service: str
   credits_used: int
-  cost_usd: float
   transaction_type: str
   status: str
   user: TransactionUserSchema
