@@ -296,19 +296,15 @@ class BillingService:
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("billing", "read")),
   ) -> Dict[str, Any]:
-    """Get user's transaction history with filtering options."""
+    """Get user's credit transactions history with filtering options."""
     user_id = UUID(user["id"])
-    self.logger.debug(f"Fetching transactions for user {user_id} with limit={limit}, offset={offset}")
+    self.logger.debug(f"Fetching credit transactions for user {user_id} with limit={limit}, offset={offset}")
 
-    # Start with base query
-    query = select(TransactionModel).where(TransactionModel.user_id == user_id)
+    # Start with base query - filter for CREDIT transactions
+    query = select(TransactionModel).where(TransactionModel.user_id == user_id, TransactionModel.type == TransactionType.CREDIT)
     self.logger.debug(f"Base query: {query}")
 
-    # Apply filters
-    if transaction_type:
-      self.logger.debug(f"Filtering by transaction type: {transaction_type}")
-      query = query.where(TransactionModel.type == transaction_type)
-
+    # Apply additional filters
     if date_from:
       self.logger.debug(f"Filtering by date from: {date_from}")
       query = query.where(TransactionModel.created_at >= date_from)
@@ -322,7 +318,7 @@ class BillingService:
     count_query = select(func.count()).select_from(query.subquery())
     total = await session.execute(count_query)
     total_count = total.scalar_one()
-    self.logger.debug(f"Total matching transactions: {total_count}")
+    self.logger.debug(f"Total matching credit transactions: {total_count}")
 
     # Apply pagination
     query = query.order_by(TransactionModel.created_at.desc()).limit(limit).offset(offset)
@@ -332,7 +328,7 @@ class BillingService:
     self.logger.debug("Executing main query")
     result = await session.execute(query)
     transactions = result.scalars().all()
-    self.logger.debug(f"Retrieved {len(transactions)} transactions")
+    self.logger.debug(f"Retrieved {len(transactions)} credit transactions")
 
     try:
       # Use a list comprehension for elegance and efficiency
@@ -341,7 +337,7 @@ class BillingService:
       self.logger.error(f"Error processing transactions: {e}")
       raise HTTPException(status_code=500, detail="Error processing transactions")
 
-    self.logger.debug(f"Returning {len(transactions_response)} transactions")
+    self.logger.debug(f"Returning {len(transactions_response)} credit transactions")
     return {
       "transactions": transactions_response,
       "pagination": {"total": total_count, "limit": limit, "offset": offset},

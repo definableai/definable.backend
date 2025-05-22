@@ -44,7 +44,7 @@ class Charge:
       return False, amount, wallet.balance
     return True, amount, wallet.balance
 
-  async def create(self, qty: int = 1, metadata: Optional[Dict[str, Any]] = None):
+  async def create(self, qty: int = 1, metadata: Optional[Dict[str, Any]] = None, description: Optional[str] = None):
     """Create charge hold."""
     charge = await self._get_charge_details(self.name, self.session)
     amount = charge.amount * qty
@@ -58,8 +58,11 @@ class Charge:
       self.logger.warning(f"Insufficient credits for charge {self.name}. Required: {amount}, Available: {wallet.balance}")
       raise HTTPException(status_code=402, detail="Insufficient credits")  # Payment Required
 
+    # Use custom description if provided, otherwise use default
+    hold_description = description or f"Hold for {self.name}"
+
     # Create transaction
-    transaction = await self._create_transaction(TransactionType.HOLD, TransactionStatus.PENDING, amount, f"Hold for {self.name}", metadata, qty)
+    transaction = await self._create_transaction(TransactionType.HOLD, TransactionStatus.PENDING, amount, hold_description, metadata, qty)
 
     self.logger.info(f"Created transaction {transaction.id} for charge {self.name}")
 
@@ -130,6 +133,17 @@ class Charge:
     transaction.type = TransactionType.DEBIT
     transaction.status = TransactionStatus.COMPLETED
 
+    # Use a generic description format that works for all services
+    # Extract service name from metadata if available
+    current_metadata = transaction.transaction_metadata or {}
+    service_name = current_metadata.get("service", "")
+
+    # Create a more informative description based on charge name and service
+    if service_name:
+      transaction.description = f"Credits used for {self.name} ({service_name})"
+    else:
+      transaction.description = f"Credits used for {self.name}"
+
     if additional_metadata:
       transaction.transaction_metadata = {**(transaction.transaction_metadata or {}), **additional_metadata}
 
@@ -158,6 +172,11 @@ class Charge:
     self.logger.info(f"Converting HOLD to RELEASE for transaction {transaction.id}")
     transaction.type = TransactionType.RELEASE
     transaction.status = TransactionStatus.COMPLETED
+
+    # Generic release description that works for all services
+    transaction.description = f"Released hold for {self.name}"
+    if reason:
+      transaction.description += f": {reason}"
 
     if transaction.transaction_metadata:
       if reason:
