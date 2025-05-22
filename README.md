@@ -1,12 +1,12 @@
-# 🚀 Zyeta.io
+# 🚀 Definable.ai
 
-Zyeta is a powerful platform that empowers developers to create, deploy and monetize AI agents and tools. Our ecosystem connects:
+Definable is a powerful platform that empowers developers to create, deploy and monetize AI agents and tools. Our ecosystem connects:
 
 - 🛠️ **Creators**: Build sophisticated AI agents and tools using our developer-friendly framework
 - 💼 **Developers**: Monetize your AI creations through our marketplace
 - 🔍 **Clients**: Discover and utilize high-quality AI solutions for your specific needs
 
-With Zyeta, we're building the bridge between AI innovation and practical application, creating opportunities for developers while delivering powerful solutions to businesses and individuals.
+With Definable, we're building the bridge between AI innovation and practical application, creating opportunities for developers while delivering powerful solutions to businesses and individuals.
 
 ## 🌟Key Features
 
@@ -15,7 +15,7 @@ With Zyeta, we're building the bridge between AI innovation and practical applic
 - Integrated marketplace with revenue opportunities
 - Quality-assured AI solutions for diverse needs
 
-Join Zyeta today and become part of the future of AI agent development and utilization!
+Join definable today and become part of the future of AI agent development and utilization!
 
 ## 🔧 Initial Setup
 
@@ -65,7 +65,7 @@ Join Zyeta today and become part of the future of AI agent development and utili
 1. 🐳 Setup local database with Docker -> [link](https://docs.docker.com/engine/install/):
 
     ```bash
-    docker run --name zyeta -e POSTGRES_PASSWORD=mysecretpassword -d postgres
+    docker run --name definable -e POSTGRES_PASSWORD=mysecretpassword -d postgres
     ```
 
 2. 📄 Create configuration files:
@@ -136,7 +136,7 @@ Sandbox servers let you test and run dynamically generated code for agents and t
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `APP_NAME` | Name of the application | `zyeta.backend` |
+| `APP_NAME` | Name of the application | `definable.backend` |
 | `ENVIRONMENT` | Current environment (dev/beta/prod) | `dev` |
 | `JWT_SECRET` | Secret key for JWT authentication | *(secret value)* |
 | `JWT_EXPIRE_MINUTES` | JWT token expiration time in minutes | `1400` |
@@ -181,7 +181,7 @@ This connection string follows the format:
 
 | Variable | Description |
 |----------|-------------|
-| `S3_BUCKET` | Main storage bucket name (`zyeta-dev`) |
+| `S3_BUCKET` | Main storage bucket name (`definable-dev`) |
 | `S3_ACCESS_KEY` | S3 access credentials |
 | `S3_SECRET_KEY` | S3 secret credentials |
 | `S3_ENDPOINT` | S3 service endpoint |
