@@ -1,25 +1,64 @@
-import pytest
-from fastapi import HTTPException
-from unittest.mock import AsyncMock, MagicMock
+import json
+import os
 import sys
-from uuid import UUID, uuid4
 from datetime import datetime
-from typing import Dict, Any, Optional, Union
-from pydantic import BaseModel, Field
+from typing import Any, Dict, Optional, Union
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID, uuid4
 
-# Create mock modules before any imports
-sys.modules["database"] = MagicMock()
-sys.modules["database.postgres"] = MagicMock()
-sys.modules["database.models"] = MagicMock()
-sys.modules["src.database"] = MagicMock()
-sys.modules["src.database.postgres"] = MagicMock()
-sys.modules["src.database.models"] = MagicMock()
-sys.modules["config"] = MagicMock()
-sys.modules["config.settings"] = MagicMock()
-sys.modules["src.config"] = MagicMock()
-sys.modules["src.config.settings"] = MagicMock()
-sys.modules["src.services.__base.acquire"] = MagicMock()
-sys.modules["dependencies.security"] = MagicMock()
+import pytest
+import pytest_asyncio
+from fastapi import HTTPException, status
+from pydantic import BaseModel
+
+
+# Define a function to check if we're running integration tests
+def is_integration_test():
+  """Check if we're running in integration test mode.
+
+  This is controlled by the INTEGRATION_TEST environment variable.
+  Set it to 1 or true to run integration tests.
+  """
+  integration_env = os.environ.get("INTEGRATION_TEST", "").lower()
+  return integration_env in ("1", "true", "yes")
+
+
+# Store original functions before patching
+original_async_session = None
+original_select = None
+
+# Only patch if we're running unit tests, not integration tests
+if not is_integration_test():
+  # Save original functions
+  from sqlalchemy import select as orig_select
+  from sqlalchemy.ext.asyncio import AsyncSession as OrigAsyncSession
+
+  original_async_session = OrigAsyncSession
+  original_select = orig_select
+
+  # Patch the necessary dependencies for testing
+  patch("sqlalchemy.ext.asyncio.AsyncSession", MagicMock()).start()
+  patch("sqlalchemy.select", lambda *args: MagicMock()).start()
+
+# Import the real service and schema
+from services.llm.schema import LLMCreate, LLMResponse, LLMUpdate
+from services.llm.service import LLMService
+
+# Only mock modules for unit tests
+if not is_integration_test():
+  # Create mock modules before any imports
+  sys.modules["database"] = MagicMock()
+  sys.modules["database.postgres"] = MagicMock()
+  sys.modules["database.models"] = MagicMock()
+  sys.modules["src.database"] = MagicMock()
+  sys.modules["src.database.postgres"] = MagicMock()
+  sys.modules["src.database.models"] = MagicMock()
+  sys.modules["config"] = MagicMock()
+  sys.modules["config.settings"] = MagicMock()
+  sys.modules["src.config"] = MagicMock()
+  sys.modules["src.config.settings"] = MagicMock()
+  sys.modules["src.services.__base.acquire"] = MagicMock()
+  sys.modules["dependencies.security"] = MagicMock()
 
 
 # Pydantic models for type checking
@@ -39,17 +78,20 @@ class LLMModel(BaseModel):
 
 
 # Mock models
-class MockLLMModel(BaseModel):
-  id: UUID = Field(default_factory=uuid4)
-  name: str = "Test LLM"
-  provider: str = "openai"
-  version: str = "1.0.0"
-  is_active: bool = True
-  config: Dict[str, Any] = Field(default_factory=lambda: {"max_tokens": 1000, "temperature": 0.7})
-  created_at: datetime = Field(default_factory=datetime.now)
-  updated_at: datetime = Field(default_factory=datetime.now)
+class MockLLMModel:
+  def __init__(self, model_id=None, name="gpt-4", provider="openai", version="v1", is_active=True, config=None, props=None):
+    self.id = model_id or uuid4()
+    self.name = name
+    self.provider = provider
+    self.version = version
+    self.is_active = is_active
+    self.config = config or {"temperature": 0.7, "max_tokens": 2048}
+    self.props = props or {}
 
-  model_config = {"arbitrary_types_allowed": True, "extra": "allow"}
+  def __eq__(self, other):
+    if not isinstance(other, MockLLMModel):
+      return False
+    return self.id == other.id and self.name == other.name and self.provider == other.provider and self.version == other.version
 
 
 class MockResponse(BaseModel):
@@ -59,6 +101,7 @@ class MockResponse(BaseModel):
   version: Optional[str] = None
   is_active: Optional[bool] = None
   config: Optional[Dict[str, Any]] = None
+  props: Optional[Dict[str, Any]] = None
   created_at: Optional[Union[datetime, str]] = None
   updated_at: Optional[Union[datetime, str]] = None
   message: Optional[str] = None
@@ -68,13 +111,13 @@ class MockResponse(BaseModel):
 
 @pytest.fixture
 def mock_user():
-  """Create a mock user."""
+  """Create a mock user with proper permissions."""
   return {
     "id": uuid4(),
     "email": "test@example.com",
     "first_name": "Test",
     "last_name": "User",
-    "organization_id": uuid4(),
+    "org_id": uuid4(),
   }
 
 
@@ -82,553 +125,722 @@ def mock_user():
 def mock_db_session():
   """Create a mock database session."""
   session = AsyncMock()
-
-  # Setup scalar to return a properly mocked result
-  scalar_mock = AsyncMock()
-  session.scalar = scalar_mock
-
-  # Setup execute to return a properly mocked result
-  execute_mock = AsyncMock()
-  # Make unique(), scalars(), first(), etc. return self to allow chaining
-  execute_result = AsyncMock()
-  execute_result.unique.return_value = execute_result
-  execute_result.scalars.return_value = execute_result
-  execute_result.scalar_one_or_none.return_value = None
-  execute_result.scalar_one.return_value = None
-  execute_result.first.return_value = None
-  execute_result.all.return_value = []
-  execute_result.mappings.return_value = execute_result
-
-  execute_mock.return_value = execute_result
-  session.execute = execute_mock
-
   session.add = MagicMock()
   session.commit = AsyncMock()
   session.refresh = AsyncMock()
-  session.flush = AsyncMock()
   session.delete = AsyncMock()
+
+  # Create a properly structured mock result for database queries
+  scalar_result = MagicMock()  # This will be returned by scalar_one_or_none
+
+  scalars_result = MagicMock()  # This will be returned by scalars()
+  all_result = MagicMock()  # This will be returned by all()
+  scalars_result.all = MagicMock(return_value=all_result)
+
+  execute_result = MagicMock()
+  execute_result.scalar_one_or_none = MagicMock(return_value=scalar_result)
+  execute_result.scalars = MagicMock(return_value=scalars_result)
+
+  # Make execute return the mock result structure
+  session.execute = AsyncMock(return_value=execute_result)
+
   return session
 
 
 @pytest.fixture
-def mock_llm():
+def mock_llm_model():
   """Create a mock LLM model."""
-  return MockLLMModel(name="GPT-4", provider="openai", version="4o", is_active=True, config={"max_tokens": 4000, "temperature": 0.7})
+  return MockLLMModel()
 
 
 @pytest.fixture
-def mock_llm_service():
-  """Create a mock LLM service."""
-  llm_service = MagicMock()
+def mock_multiple_llm_models():
+  """Create multiple mock LLM models."""
+  return [
+    MockLLMModel(name="gpt-4", provider="openai", version="v1"),
+    MockLLMModel(name="gemini-pro", provider="google", version="v1"),
+    MockLLMModel(name="claude-3", provider="anthropic", version="sonnet"),
+  ]
 
-  async def mock_add(model_data, session):
-    # Check if model exists with same name, provider, and version
-    existing_model = session.execute.return_value.scalar_one_or_none.return_value
-    if existing_model:
-      raise HTTPException(status_code=400, detail="Model already exists")
 
-    # Create model
-    db_model = MockLLMModel(
-      name=model_data.name, provider=model_data.provider, version=model_data.version, is_active=model_data.is_active, config=model_data.config
-    )
-    session.add(db_model)
-    await session.commit()
-    await session.refresh(db_model)
+@pytest.fixture
+def mock_acquire():
+  """Create a mock Acquire object."""
+  acquire_mock = MagicMock()
+  acquire_mock.logger = MagicMock()
+  return acquire_mock
 
-    # Return response matching API format
-    return MockResponse(**db_model.model_dump())
 
-  async def mock_update(model_id, model_data, session):
-    # Get model
-    db_model = session.execute.return_value.scalar_one_or_none.return_value
-
-    if not db_model:
-      raise HTTPException(status_code=404, detail="Model not found")
-
-    # Update fields
-    update_data = model_data.model_dump(exclude_unset=True)
-    model_dict = db_model.model_dump()
-
-    for field, value in update_data.items():
-      model_dict[field] = value
-
-    # Update timestamp
-    model_dict["updated_at"] = datetime.now()
-
-    # Create updated model
-    db_model = MockLLMModel(**model_dict)
-
-    await session.commit()
-    await session.refresh(db_model)
-
-    # Return response matching API format
-    return MockResponse(**db_model.model_dump())
-
-  async def mock_remove(model_id, session):
-    # Get model
-    db_model = session.execute.return_value.scalar_one_or_none.return_value
-
-    if not db_model:
-      raise HTTPException(status_code=404, detail="Model not found")
-
-    await session.delete(db_model)
-    await session.commit()
-
-    # Return response matching API format
-    return {"message": "Model deleted successfully"}
-
-  async def mock_list(org_id, session, user):
-    # Create mock models
-    # Create mock models
-    models = [
-      MockLLMModel(id=uuid4(), name="gpt-3.5-turbo", provider="openai", version="3.5-turbo", is_active=True, config={"temperature": 0.7}),
-      MockLLMModel(id=uuid4(), name="gpt-4", provider="openai", version="4", is_active=True, config={"temperature": 0.7}),
-      MockLLMModel(id=uuid4(), name="claude-3-opus", provider="anthropic", version="3-opus", is_active=True, config={"temperature": 0.7}),
-    ]
-
-    # Set up mock response
-    session.execute.return_value.scalars.return_value.all.return_value = models
-
-    # Return response matching API format
-    return [MockResponse(**model.model_dump()) for model in models]
-
-  async def mock_get_by_id(model_id, session):
-    # Get model
-    db_model = session.execute.return_value.scalar_one_or_none.return_value
-
-    if not db_model:
-      raise HTTPException(status_code=404, detail="Model not found")
-
-    # Return response matching API format
-    return MockResponse(**db_model.model_dump())
-
-  async def mock_list_by_provider(org_id, provider, session, user):
-    # Get all models
-    all_models = await mock_list(org_id, session, user)
-
-    # Filter by provider
-    filtered_models = [model for model in all_models if model.provider == provider]
-
-    return filtered_models
-
-  async def mock_batch_update_status(model_ids, is_active, session):
-    # Update each model in the list
-    updated_models = []
-
-    for model_id in model_ids:
-      # Get model
-      model = MockLLMModel(id=model_id)
-      session.execute.return_value.scalar_one_or_none.return_value = model
-
-      # Update status
-      model.is_active = is_active
-      model.updated_at = datetime.now()
-
-      # Add to updated list
-      updated_models.append(model)
-
-    await session.commit()
-
-    # Return response matching API format
-    return [MockResponse(**model.model_dump()) for model in updated_models]
-
-  async def mock_search_by_name(org_id, query, session, user):
-    # Get all models
-    all_models = await mock_list(org_id, session, user)
-
-    # Filter by name containing query (case-insensitive)
-    filtered_models = [model for model in all_models if query.lower() in model.name.lower()]
-
-    return filtered_models
-
-  # Create AsyncMock objects for these methods
-  add_mock = AsyncMock(side_effect=mock_add)
-  update_mock = AsyncMock(side_effect=mock_update)
-  remove_mock = AsyncMock(side_effect=mock_remove)
-  list_mock = AsyncMock(side_effect=mock_list)
-  get_by_id_mock = AsyncMock(side_effect=mock_get_by_id)
-  list_by_provider_mock = AsyncMock(side_effect=mock_list_by_provider)
-  batch_update_status_mock = AsyncMock(side_effect=mock_batch_update_status)
-  search_by_name_mock = AsyncMock(side_effect=mock_search_by_name)
-
-  # Assign mocks to service
-  llm_service.add = add_mock
-  llm_service.update = update_mock
-  llm_service.remove = remove_mock
-  llm_service.list = list_mock
-  llm_service.get_by_id = get_by_id_mock
-  llm_service.list_by_provider = list_by_provider_mock
-  llm_service.batch_update_status = batch_update_status_mock
-  llm_service.search_by_name = search_by_name_mock
-
-  return llm_service
+@pytest.fixture
+def llm_service(mock_acquire):
+  """Create the real LLM service with mocked dependencies."""
+  return LLMService(acquire=mock_acquire)
 
 
 @pytest.mark.asyncio
 class TestLLMService:
-  """Tests for the LLM service."""
+  """Test LLM service with mocks."""
 
-  async def test_add_llm(self, mock_llm_service, mock_db_session):
-    """Test adding a new LLM model."""
-    # Create model data
-    # Create model data
-    model_data = MockResponse(
-      name="Claude-3-Haiku", provider="anthropic", version="3-haiku", is_active=True, config={"temperature": 0.7, "max_tokens": 2000}
-    )
+  async def test_post_add_success(self, llm_service, mock_db_session, mock_llm_model):
+    """Test creating a new LLM model successfully."""
+    # Setup
+    model_data = LLMCreate(name="gpt-4", provider="openai", version="v1", is_active=True, config={"temperature": 0.7, "max_tokens": 2048}, props={})
 
-    # Call the service
-    response = await mock_llm_service.add(model_data, session=mock_db_session)
+    # Mock database query to return None (model doesn't exist yet)
+    mock_db_session.execute.return_value.scalar_one_or_none.return_value = None
 
-    # Verify result structure
+    # Mock the refresh behavior to set the model attributes
+    async def refresh_side_effect(model):
+      model.id = mock_llm_model.id
+
+    mock_db_session.refresh.side_effect = refresh_side_effect
+
+    # Execute
+    response = await llm_service.post_add(model_data=model_data, session=mock_db_session)
+
+    # Assert
+    assert mock_db_session.add.called
+    assert mock_db_session.commit.called
+    assert mock_db_session.refresh.called
+
+    assert isinstance(response, LLMResponse)
     assert response.name == model_data.name
     assert response.provider == model_data.provider
     assert response.version == model_data.version
     assert response.is_active == model_data.is_active
     assert response.config == model_data.config
-    assert hasattr(response, "id")
-    assert hasattr(response, "created_at")
-    assert hasattr(response, "updated_at")
+    assert response.props == model_data.props
 
-    # Verify database operations
-    mock_db_session.add.assert_called_once()
-    mock_db_session.commit.assert_called_once()
-    mock_db_session.refresh.assert_called_once()
+  async def test_post_add_already_exists(self, llm_service, mock_db_session, mock_llm_model):
+    """Test creating a model that already exists."""
+    # Setup
+    model_data = LLMCreate(name="gpt-4", provider="openai", version="v1", is_active=True, config={"temperature": 0.7, "max_tokens": 2048}, props={})
 
-    # Verify service method was called
-    assert mock_llm_service.add.called
+    # Mock database query to return an existing model
+    mock_db_session.execute.return_value.scalar_one_or_none.return_value = mock_llm_model
 
-  async def test_add_existing_llm(self, mock_llm_service, mock_db_session, mock_llm):
-    """Test adding an existing LLM model."""
-    # Setup mock to return an existing model
-    mock_db_session.execute.return_value.scalar_one_or_none.return_value = mock_llm
-
-    # Create model data with same name, provider, and version
-    model_data = MockResponse(name=mock_llm.name, provider=mock_llm.provider, version=mock_llm.version, is_active=True, config={"temperature": 0.8})
-
-    # Verify exception is raised
+    # Execute and Assert
     with pytest.raises(HTTPException) as exc_info:
-      await mock_llm_service.add(model_data, session=mock_db_session)
+      await llm_service.post_add(model_data=model_data, session=mock_db_session)
 
-    # Verify exception details
-    assert exc_info.value.status_code == 400
-    assert "Model already exists" in str(exc_info.value.detail)
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert "Model already exists" in exc_info.value.detail
 
-    # Verify service method was called
-    assert mock_llm_service.add.called
+  async def test_post_update_success(self, llm_service, mock_db_session, mock_llm_model):
+    """Test updating an existing LLM model."""
+    # Setup
+    model_id = mock_llm_model.id
+    update_data = LLMUpdate(name="gpt-4-turbo", is_active=False, config={"temperature": 0.9}, props={"updated": True})
 
-  async def test_update_llm(self, mock_llm_service, mock_db_session, mock_llm):
-    """Test updating an LLM model."""
-    # Setup mock to return an existing model
-    mock_db_session.execute.return_value.scalar_one_or_none.return_value = mock_llm
+    # Mock database query to return the model
+    mock_db_session.execute.return_value.scalar_one_or_none.return_value = mock_llm_model
 
-    # Create update data
-    update_data = MockResponse(name="GPT-4-Updated", config={"temperature": 0.5, "max_tokens": 5000})
+    # Execute
+    response = await llm_service.post_update(model_id=model_id, model_data=update_data, session=mock_db_session)
 
-    # Call the service
-    response = await mock_llm_service.update(mock_llm.id, update_data, session=mock_db_session)
+    # Assert
+    assert mock_db_session.commit.called
+    assert mock_db_session.refresh.called
 
-    # Verify result structure
-    assert response.id == mock_llm.id
+    # Check that model was updated
+    assert mock_llm_model.name == update_data.name
+    assert mock_llm_model.is_active == update_data.is_active
+    assert mock_llm_model.config == update_data.config
+    assert mock_llm_model.props == update_data.props
+
+    # Check response
+    assert isinstance(response, LLMResponse)
     assert response.name == update_data.name
-    assert response.provider == mock_llm.provider  # Unchanged
-    assert response.version == mock_llm.version  # Unchanged
-    assert response.version == mock_llm.version  # Unchanged
+    assert response.is_active == update_data.is_active
     assert response.config == update_data.config
-    assert hasattr(response, "updated_at")
+    assert response.props == update_data.props
 
-    # Verify database operations
-    mock_db_session.commit.assert_called_once()
-    mock_db_session.refresh.assert_called_once()
+  async def test_post_update_not_found(self, llm_service, mock_db_session):
+    """Test updating a non-existent model."""
+    # Setup
+    model_id = uuid4()
+    update_data = LLMUpdate(name="new-name", props={})
 
-    # Verify service method was called
-    assert mock_llm_service.update.called
-
-  async def test_update_nonexistent_llm(self, mock_llm_service, mock_db_session):
-    """Test updating a non-existent LLM model."""
-    # Setup mock to return no model
+    # Mock database query to return None
     mock_db_session.execute.return_value.scalar_one_or_none.return_value = None
 
-    # Create update data
-    update_data = MockResponse(name="Updated Name", is_active=False)
-
-    # Verify exception is raised
+    # Execute and Assert
     with pytest.raises(HTTPException) as exc_info:
-      await mock_llm_service.update(uuid4(), update_data, session=mock_db_session)
+      await llm_service.post_update(model_id=model_id, model_data=update_data, session=mock_db_session)
 
-    # Verify exception details
-    assert exc_info.value.status_code == 404
-    assert "Model not found" in str(exc_info.value.detail)
+    assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+    assert "Model not found" in exc_info.value.detail
 
-    # Verify service method was called
-    assert mock_llm_service.update.called
+  async def test_delete_remove_success(self, llm_service, mock_db_session, mock_llm_model):
+    """Test deleting an LLM model."""
+    # Setup
+    model_id = mock_llm_model.id
 
-  async def test_remove_llm(self, mock_llm_service, mock_db_session, mock_llm):
-    """Test removing an LLM model."""
-    # Setup mock to return an existing model
-    mock_db_session.execute.return_value.scalar_one_or_none.return_value = mock_llm
+    # Mock database query to return the model
+    mock_db_session.execute.return_value.scalar_one_or_none.return_value = mock_llm_model
 
-    # Call the service
-    response = await mock_llm_service.remove(mock_llm.id, session=mock_db_session)
+    # Execute
+    response = await llm_service.delete_remove(model_id=model_id, session=mock_db_session)
 
-    # Verify result structure
-    assert "message" in response
-    assert "deleted successfully" in response["message"]
+    # Assert
+    assert mock_db_session.delete.called
+    assert mock_db_session.commit.called
 
-    # Verify database operations
-    mock_db_session.delete.assert_called_once()
-    mock_db_session.commit.assert_called_once()
+    assert isinstance(response, dict)
+    assert response["message"] == "Model deleted successfully"
 
-    # Verify service method was called
-    assert mock_llm_service.remove.called
+  async def test_delete_remove_not_found(self, llm_service, mock_db_session):
+    """Test deleting a non-existent model."""
+    # Setup
+    model_id = uuid4()
 
-  async def test_remove_nonexistent_llm(self, mock_llm_service, mock_db_session):
-    """Test removing a non-existent LLM model."""
-    # Setup mock to return no model
+    # Mock database query to return None
     mock_db_session.execute.return_value.scalar_one_or_none.return_value = None
 
-    # Verify exception is raised
+    # Execute and Assert
     with pytest.raises(HTTPException) as exc_info:
-      await mock_llm_service.remove(uuid4(), session=mock_db_session)
+      await llm_service.delete_remove(model_id=model_id, session=mock_db_session)
 
-    # Verify exception details
-    assert exc_info.value.status_code == 404
-    assert "Model not found" in str(exc_info.value.detail)
+    assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+    assert "Model not found" in exc_info.value.detail
 
-    # Verify service method was called
-    assert mock_llm_service.remove.called
-
-  async def test_list_llms(self, mock_llm_service, mock_db_session, mock_user):
+  async def test_get_list(self, llm_service, mock_db_session, mock_user, mock_multiple_llm_models):
     """Test listing all LLM models."""
-    """Test listing all LLM models."""
-    # Call the service
-    response = await mock_llm_service.list(mock_user["organization_id"], session=mock_db_session, user=mock_user)
+    # Setup
+    org_id = mock_user["org_id"]
 
-    # Verify result structure
+    # Mock database query to return models
+    mock_db_session.execute.return_value.scalars.return_value.all.return_value = mock_multiple_llm_models
+
+    # Execute
+    response = await llm_service.get_list(org_id=org_id, session=mock_db_session, user=mock_user)
+
+    # Assert
     assert isinstance(response, list)
-    assert len(response) == 3  # From our mock implementation
+    assert len(response) == len(mock_multiple_llm_models)
+    assert all(isinstance(item, LLMResponse) for item in response)
 
-    # Verify each model has the right structure
-    for model in response:
-      assert hasattr(model, "id")
-      assert hasattr(model, "name")
-      assert hasattr(model, "provider")
-      assert hasattr(model, "version")
-      assert hasattr(model, "is_active")
-      assert hasattr(model, "config")
-      assert hasattr(model, "created_at")
-      assert hasattr(model, "updated_at")
+    # Check model names are present in the response
+    model_names = [model.name for model in response]
+    assert "gpt-4" in model_names
+    assert "gemini-pro" in model_names
+    assert "claude-3" in model_names
 
-    # Verify service method was called
-    assert mock_llm_service.list.called
 
-  async def test_add_llm_with_invalid_provider(self, mock_llm_service, mock_db_session):
-    """Test adding an LLM model with an invalid provider."""
-    # Override the mock implementation for this test
-    """Test adding an LLM model with an invalid provider."""
+# ============================================================================
+# INTEGRATION TESTS - RUN WITH: INTEGRATION_TEST=1 pytest tests/services/test_llm.py
+# ============================================================================
 
-    # Override the mock implementation for this test
-    async def mock_add_invalid_provider(model_data, session):
-      # List of supported providers
-      supported_providers = ["openai", "anthropic", "cohere", "gemini"]
+# Only import these modules for integration tests
+if is_integration_test():
+  from sqlalchemy import select
 
-      # Check if provider is supported
-      if model_data.provider not in supported_providers:
-        raise HTTPException(status_code=400, detail=f"Provider not supported. Supported providers: {', '.join(supported_providers)}")
+  from models import LLMModel
 
-      # Original implementation
-      return await mock_llm_service.add.side_effect(model_data, session)
 
-    # Replace the mock method with our new implementation for this test only
-    mock_llm_service.add.side_effect = mock_add_invalid_provider
+@pytest.fixture
+def test_model_data():
+  """Create test model data for integration tests."""
+  return [
+    {
+      "name": "gpt-4-integration",
+      "provider": "openai",
+      "version": "v1",
+      "is_active": True,
+      "config": {"temperature": 0.7, "max_tokens": 2048},
+      "props": {"integration_test": True},
+    },
+    {
+      "name": "claude-integration",
+      "provider": "anthropic",
+      "version": "sonnet",
+      "is_active": True,
+      "config": {"temperature": 0.5, "max_tokens": 4096},
+      "props": {"integration_test": True},
+    },
+  ]
 
-    # Create model data with invalid provider
-    model_data = MockResponse(name="Unknown Model", provider="unsupported", version="1.0", is_active=True, config={"temperature": 0.7})
 
-    # Verify exception is raised
-    with pytest.raises(HTTPException) as exc_info:
-      await mock_llm_service.add(model_data, session=mock_db_session)
+@pytest_asyncio.fixture
+async def db_integration_setup(setup_test_db, db_session, test_model_data):
+  """Setup the database with test model data for integration tests."""
+  # Skip if not running integration tests
+  if not is_integration_test():
+    pytest.skip("Integration tests are skipped. Set INTEGRATION_TEST=1 to run them.")
 
-    # Verify exception details
-    assert exc_info.value.status_code == 400
-    assert "Provider not supported" in str(exc_info.value.detail)
+  created_models = []
+  session = None
 
-    # Verify service method was called
-    assert mock_llm_service.add.called
+  try:
+    # Get session from the generator without exhausting it
+    session_gen = db_session.__aiter__()
+    session = await session_gen.__anext__()
 
-  async def test_update_llm_config(self, mock_llm_service, mock_db_session, mock_llm):
-    """Test updating only the config of an LLM model."""
-    # Setup mock to return an existing model
-    mock_db_session.execute.return_value.scalar_one_or_none.return_value = mock_llm
+    # Import text here to ensure it's available
+    from sqlalchemy import text
 
-    # Create update data with only config
-    update_data = MockResponse(config={"temperature": 0.9, "max_tokens": 8000, "top_p": 0.95})
+    # Create test tables if they don't exist
+    await session.execute(
+      text("""
+            CREATE TABLE IF NOT EXISTS llm_models (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                name VARCHAR(255) NOT NULL,
+                provider VARCHAR(255) NOT NULL,
+                version VARCHAR(100) NOT NULL,
+                is_active BOOLEAN DEFAULT TRUE,
+                config JSONB,
+                props JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(name, provider, version)
+            )
+        """)
+    )
 
-    # Call the service
-    response = await mock_llm_service.update(mock_llm.id, update_data, session=mock_db_session)
+    # Commit table creation
+    await session.commit()
 
-    # Verify result structure
-    assert response.id == mock_llm.id
-    assert response.name == mock_llm.name  # Unchanged
-    assert response.provider == mock_llm.provider  # Unchanged
-    assert response.version == mock_llm.version  # Unchanged
-    assert response.config == update_data.config  # Updated
-    assert response.config["temperature"] == 0.9
-    assert response.config["max_tokens"] == 8000
-    assert response.config["top_p"] == 0.95
+    # Clean existing test data
+    await session.execute(text("DELETE FROM llm_models WHERE name LIKE '%integration%'"))
+    await session.commit()
 
-    # Verify database operations
-    mock_db_session.commit.assert_called_once()
-    mock_db_session.refresh.assert_called_once()
+    # Add new test data
+    for model_data in test_model_data:
+      # Create models directly using SQL to avoid ORM issues
+      await session.execute(
+        text("""
+                    INSERT INTO llm_models (name, provider, version, is_active, config, props)
+                    VALUES (:name, :provider, :version, :is_active, :config, :props)
+                    RETURNING id
+                """),
+        {
+          "name": model_data["name"],
+          "provider": model_data["provider"],
+          "version": model_data["version"],
+          "is_active": model_data["is_active"],
+          "config": json.dumps(model_data["config"]),
+          "props": json.dumps(model_data["props"]),
+        },
+      )
 
-    # Verify service method was called
-    assert mock_llm_service.update.called
+    await session.commit()
 
-  async def test_toggle_llm_active_status(self, mock_llm_service, mock_db_session, mock_llm):
-    """Test toggling the active status of an LLM model."""
-    # Setup mock to return an existing model
-    mock_db_session.execute.return_value.scalar_one_or_none.return_value = mock_llm
+    # Query for created models to return them
+    result = await session.execute(text("SELECT * FROM llm_models WHERE name LIKE '%integration%'"))
+    # fetchall() already returns a list in SQLAlchemy 2.0 with asyncpg, no need to await
+    rows = result.fetchall()
 
-    # Create update data with only is_active field
-    update_data = MockResponse(is_active=False)
+    # Convert rows to model objects
+    for row in rows:
+      model = MockLLMModel(
+        model_id=row.id, name=row.name, provider=row.provider, version=row.version, is_active=row.is_active, config=row.config, props=row.props
+      )
+      created_models.append(model)
 
-    # Call the service
-    response = await mock_llm_service.update(mock_llm.id, update_data, session=mock_db_session)
+  except Exception as e:
+    if session:
+      await session.rollback()
+    print(f"Error in db_integration_setup: {e}")
+    raise
+  finally:
+    # Explicitly close the session we used for setup
+    if session:
+      await session.close()
 
-    # Verify result structure
-    assert response.id == mock_llm.id
-    assert not response.is_active  # Updated
-    assert response.name == mock_llm.name  # Unchanged
-    assert response.provider == mock_llm.provider  # Unchanged
-    assert response.version == mock_llm.version  # Unchanged
+  # Return the created models and session generator to the test
+  yield {
+    "models": created_models,
+    "db_session": db_session,  # Return the session generator for test use
+  }
 
-    # Verify database operations
-    mock_db_session.commit.assert_called_once()
-    mock_db_session.refresh.assert_called_once()
+  # Clean up after tests
+  try:
+    # Get a new session for cleanup
+    cleanup_session = None
+    async for cleanup_session in db_session:
+      try:
+        await cleanup_session.execute(text("DELETE FROM llm_models WHERE name LIKE '%integration%'"))
+        await cleanup_session.commit()
+        break  # Only process the first yielded session
+      except Exception as e:
+        print(f"Error in cleanup: {e}")
+        await cleanup_session.rollback()
+      finally:
+        # Always close the cleanup session
+        if cleanup_session:
+          await cleanup_session.close()
+  except Exception as e:
+    print(f"Could not acquire session for cleanup: {e}")
 
-    # Verify service method was called
-    assert mock_llm_service.update.called
 
-  async def test_get_llm_by_id(self, mock_llm_service, mock_db_session, mock_llm):
-    """Test getting an LLM model by ID."""
-    # Setup mock to return an existing model
-    mock_db_session.execute.return_value.scalar_one_or_none.return_value = mock_llm
+@pytest.mark.asyncio
+class TestLLMServiceIntegration:
+  """Integration tests for LLM service with real database."""
 
-    # Call the service
-    response = await mock_llm_service.get_by_id(mock_llm.id, session=mock_db_session)
+  # Apply skip if not in integration test mode
+  pytestmark = pytest.mark.skipif(not is_integration_test(), reason="Integration tests are skipped. Set INTEGRATION_TEST=1 to run them.")
 
-    # Verify result structure
-    assert response.id == mock_llm.id
-    assert response.name == mock_llm.name
-    assert response.provider == mock_llm.provider
-    assert response.version == mock_llm.version
-    assert response.is_active == mock_llm.is_active
-    assert response.config == mock_llm.config
-    assert hasattr(response, "created_at")
-    assert hasattr(response, "updated_at")
+  async def test_get_list_integration(self, llm_service, db_integration_setup, mock_user):
+    """Test listing all LLM models from the database."""
+    org_id = mock_user["org_id"]
+    db_session = db_integration_setup["db_session"]
 
-    # Verify service method was called
-    assert mock_llm_service.get_by_id.called
+    # Get a new session
+    session = None
+    async for s in db_session:
+      session = s
+      try:
+        # Execute
+        response = await llm_service.get_list(org_id=org_id, session=session, user=mock_user)
 
-  async def test_get_llm_by_id_not_found(self, mock_llm_service, mock_db_session):
-    """Test getting a non-existent LLM model by ID."""
-    # Setup mock to return no model
-    mock_db_session.execute.return_value.scalar_one_or_none.return_value = None
+        # Assert
+        assert isinstance(response, list)
+        assert len(response) == 2
+        assert all(isinstance(item, LLMResponse) for item in response)
 
-    # Verify exception is raised
-    with pytest.raises(HTTPException) as exc_info:
-      await mock_llm_service.get_by_id(uuid4(), session=mock_db_session)
+        # Check model data
+        model_names = [model.name for model in response]
+        assert "gpt-4-integration" in model_names
+        assert "claude-integration" in model_names
+        break
+      except Exception as e:
+        print(f"Error in test_get_list_integration: {e}")
+        raise
+      finally:
+        # Ensure session is properly closed
+        if session:
+          await session.close()
 
-    # Verify exception details
-    assert exc_info.value.status_code == 404
-    assert "Model not found" in str(exc_info.value.detail)
+  async def test_post_add_integration(self, llm_service, db_integration_setup):
+    """Test adding a new LLM model to the database."""
+    # Setup
+    model_data = LLMCreate(
+      name="gemini-pro-integration",
+      provider="google",
+      version="v1",
+      is_active=True,
+      config={"temperature": 0.8, "max_tokens": 3072},
+      props={"integration_test": True},
+    )
+    db_session = db_integration_setup["db_session"]
 
-    # Verify service method was called
-    assert mock_llm_service.get_by_id.called
+    # Get a new session
+    session = None
+    async for s in db_session:
+      session = s
+      try:
+        # Execute
+        response = await llm_service.post_add(model_data=model_data, session=session)
 
-  async def test_list_llms_by_provider(self, mock_llm_service, mock_db_session, mock_user):
-    """Test listing LLM models by provider."""
-    """Test listing LLM models by provider."""
-    # Call the service
-    response = await mock_llm_service.list_by_provider(mock_user["organization_id"], "openai", session=mock_db_session, user=mock_user)
+        # Assert
+        assert isinstance(response, LLMResponse)
+        assert response.name == model_data.name
+        assert response.provider == model_data.provider
+        assert response.config == model_data.config
+        assert response.props == model_data.props
+        assert response.id is not None
 
-    # Verify result structure
-    assert isinstance(response, list)
-    assert len(response) > 0
-    assert all(model.provider == "openai" for model in response)
+        # Verify in database
+        query = select(LLMModel).where(LLMModel.name == model_data.name)
+        result = await session.execute(query)
+        db_model = result.scalar_one_or_none()
+        assert db_model is not None
+        assert db_model.name == model_data.name
+        break
+      except Exception as e:
+        print(f"Error in test_post_add_integration: {e}")
+        raise
+      finally:
+        # Ensure session is properly closed
+        if session:
+          await session.close()
 
-    # Verify service method was called
-    assert mock_llm_service.list_by_provider.called
+  async def test_post_update_integration(self, llm_service, db_integration_setup):
+    """Test updating an LLM model in the database."""
+    # Setup - get the ID from a real model
+    model_id = db_integration_setup["models"][0].id
+    update_data = LLMUpdate(name="gpt-4-updated", is_active=False, config={"temperature": 0.3}, props={"updated": True, "integration_test": True})
+    db_session = db_integration_setup["db_session"]
 
-  async def test_add_llm_with_empty_name(self, mock_llm_service, mock_db_session):
-    """Test adding an LLM model with an empty name."""
-    # Override the mock implementation for this test
-    """Test adding an LLM model with an empty name."""
+    # Get a new session
+    session = None
+    async for s in db_session:
+      session = s
+      try:
+        # Execute
+        response = await llm_service.post_update(model_id=model_id, model_data=update_data, session=session)
 
-    # Override the mock implementation for this test
-    async def mock_add_empty_name(model_data, session):
-      # Validate name
-      if not model_data.name or not model_data.name.strip():
-        raise HTTPException(status_code=400, detail="Model name cannot be empty")
+        # Assert
+        assert isinstance(response, LLMResponse)
+        assert response.name == update_data.name
+        assert response.is_active == update_data.is_active
+        assert response.config["temperature"] == update_data.config["temperature"]
+        assert response.props == update_data.props
 
-      # Validate provider
-      if not model_data.provider or not model_data.provider.strip():
-        raise HTTPException(status_code=400, detail="Provider cannot be empty")
+        # Verify in database
+        query = select(LLMModel).where(LLMModel.id == model_id)
+        result = await session.execute(query)
+        db_model = result.scalar_one_or_none()
+        assert db_model is not None
+        assert db_model.name == update_data.name
+        assert db_model.is_active == update_data.is_active
+        assert db_model.props == update_data.props
+        break
+      except Exception as e:
+        print(f"Error in test_post_update_integration: {e}")
+        raise
+      finally:
+        # Ensure session is properly closed
+        if session:
+          await session.close()
 
-      # Validate version
-      if not model_data.version or not model_data.version.strip():
-        raise HTTPException(status_code=400, detail="Version cannot be empty")
+  async def test_delete_remove_integration(self, llm_service, db_integration_setup):
+    """Test deleting an LLM model from the database."""
+    # Setup - get the ID from a real model
+    model_id = db_integration_setup["models"][0].id
+    db_session = db_integration_setup["db_session"]
 
-      # Original implementation
-      return await mock_llm_service.add.side_effect(model_data, session)
+    # Get a new session
+    session = None
+    async for s in db_session:
+      session = s
+      try:
+        # Execute
+        response = await llm_service.delete_remove(model_id=model_id, session=session)
 
-    # Replace the mock method with our new implementation for this test only
-    mock_llm_service.add.side_effect = mock_add_empty_name
+        # Assert
+        assert isinstance(response, LLMResponse)
+        assert response.id == model_id
 
-    # Create model data with empty name
-    model_data = MockResponse(name="", provider="openai", version="1.0", is_active=True, config={"temperature": 0.7})
+        # Verify in database that it's gone
+        query = select(LLMModel).where(LLMModel.id == model_id)
+        result = await session.execute(query)
+        db_model = result.scalar_one_or_none()
+        assert db_model is None
+        break
+      except Exception as e:
+        print(f"Error in test_delete_remove_integration: {e}")
+        raise
+      finally:
+        # Ensure session is properly closed
+        if session:
+          await session.close()
 
-    # Verify exception is raised
-    with pytest.raises(HTTPException) as exc_info:
-      await mock_llm_service.add(model_data, session=mock_db_session)
 
-    # Verify exception details
-    assert exc_info.value.status_code == 400
-    assert "Model name cannot be empty" in str(exc_info.value.detail)
+@pytest.mark.asyncio
+class TestLLMServiceErrorHandling:
+  """Tests for error handling in the LLM service."""
 
-    # Verify service method was called
-    assert mock_llm_service.add.called
+  # Apply skip if not in integration test mode
+  pytestmark = pytest.mark.skipif(not is_integration_test(), reason="Integration tests are skipped. Set INTEGRATION_TEST=1 to run them.")
 
-  async def test_batch_update_llm_status(self, mock_llm_service, mock_db_session):
-    """Test batch updating the active status of multiple LLM models."""
-    # Create list of model IDs
-    """Test batch updating the active status of multiple LLM models."""
-    # Create list of model IDs
-    model_ids = [uuid4(), uuid4(), uuid4()]
+  async def test_add_invalid_model_data(self, llm_service):
+    """Test handling of invalid model data."""
+    # Create invalid model data (missing required fields)
+    from pydantic import ValidationError
 
-    # Call the service
-    response = await mock_llm_service.batch_update_status(model_ids, is_active=False, session=mock_db_session)
+    # Test with missing required field (provider)
+    with pytest.raises(ValidationError):
+      LLMCreate(
+        name="invalid-model",
+        # provider is missing
+        version="v1",
+        config={},
+        props={},
+      )
 
-    # Verify result structure
-    assert isinstance(response, list)
-    assert len(response) == len(model_ids)
-    assert all(not model.is_active for model in response)
-    assert all(model.id in model_ids for model in response)
+    # Test with invalid field type
+    with pytest.raises(ValidationError):
+      LLMCreate(
+        name="invalid-model",
+        provider="openai",
+        version="v1",
+        is_active="not-a-boolean",  # Should be boolean
+        config={},
+        props={},
+      )
 
-    # Verify database operations
-    assert mock_db_session.commit.call_count == 1
+  async def test_db_transaction_rollback(self, llm_service, db_session, monkeypatch):
+    """Test that transactions roll back properly on error."""
+    # Get a new session
+    session = None
+    async for s in db_session:
+      session = s
+      try:
+        # First create the llm_models table if it doesn't exist
+        from sqlalchemy import text
 
-    # Verify service method was called
-    assert mock_llm_service.batch_update_status.called
+        await session.execute(
+          text("""
+                    CREATE TABLE IF NOT EXISTS llm_models (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        name VARCHAR(255) NOT NULL,
+                        provider VARCHAR(255) NOT NULL,
+                        version VARCHAR(100) NOT NULL,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        config JSONB,
+                        props JSONB DEFAULT '{}'::jsonb,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(name, provider, version)
+                    )
+                """)
+        )
+        await session.commit()
 
-  async def test_search_llm_by_name(self, mock_llm_service, mock_db_session, mock_user):
-    """Test searching for LLM models by name."""
-    # Call the service
-    response = await mock_llm_service.search_by_name(mock_user["organization_id"], "gpt", session=mock_db_session, user=mock_user)
+        # First make sure the test record doesn't exist
+        await session.execute(
+          text("""
+                    DELETE FROM llm_models WHERE name = 'error-test-model'
+                    AND provider = 'test-provider' AND version = 'v1'
+                """)
+        )
+        await session.commit()
 
-    # Verify result structure
-    assert isinstance(response, list)
-    assert len(response) > 0
-    assert all("gpt" in model.name.lower() for model in response)
+        # Setup test data
+        model_data = LLMCreate(
+          name="error-test-model", provider="test-provider", version="v1", is_active=True, config={"temperature": 0.7}, props={"test": True}
+        )
 
-    # Verify service method was called
-    assert mock_llm_service.search_by_name.called
+        # Create a function that simulates a database error during transaction
+        async def simulate_error():
+          # Start a transaction
+          transaction = await session.begin()
+          try:
+            # Insert record
+            await session.execute(
+              text("""
+                                INSERT INTO llm_models (name, provider, version, is_active, config, props)
+                                VALUES (:name, :provider, :version, :is_active, :config, :props)
+                            """),
+              {
+                "name": model_data.name,
+                "provider": model_data.provider,
+                "version": model_data.version,
+                "is_active": model_data.is_active,
+                "config": json.dumps(model_data.config or {}),
+                "props": json.dumps(model_data.props or {}),
+              },
+            )
+
+            # Verify the record exists within the transaction
+            check_result = await session.execute(
+              text("SELECT COUNT(*) FROM llm_models WHERE name = :name AND provider = :provider AND version = :version"),
+              {"name": model_data.name, "provider": model_data.provider, "version": model_data.version},
+            )
+            count = check_result.scalar()
+            assert count == 1, "Record should exist before rollback"
+
+            # Now simulate an error that should trigger rollback
+            raise Exception("Simulated database error")
+          except Exception as e:
+            # Explicitly rollback the transaction
+            await transaction.rollback()
+            raise e
+
+        # Execute and expect an exception
+        with pytest.raises(Exception) as exc_info:
+          await simulate_error()
+
+        # Verify the error message
+        assert "Simulated database error" in str(exc_info.value)
+
+        # Verify the model was not added (transaction rolled back)
+        query = text("SELECT COUNT(*) FROM llm_models WHERE name = :name AND provider = :provider AND version = :version")
+        result = await session.execute(query, {"name": model_data.name, "provider": model_data.provider, "version": model_data.version})
+        count = result.scalar()
+        assert count == 0, "Record should not exist after rollback"
+        break
+      except Exception as e:
+        print(f"Error in test_db_transaction_rollback: {e}")
+        raise
+      finally:
+        # Ensure session is properly closed
+        if session:
+          await session.close()
+
+
+@pytest.mark.asyncio
+class TestLLMServicePerformance:
+  """Performance tests for the LLM service."""
+
+  # Apply skip if not in integration test mode
+  pytestmark = pytest.mark.skipif(not is_integration_test(), reason="Performance tests are skipped. Set INTEGRATION_TEST=1 to run them.")
+
+  async def test_bulk_model_creation(self, llm_service, db_session):
+    """Test creating multiple LLM models in bulk."""
+    session = None
+    async for s in db_session:
+      session = s
+      try:
+        # First create the llm_models table if it doesn't exist
+        from sqlalchemy import text
+
+        await session.execute(
+          text("""
+                    CREATE TABLE IF NOT EXISTS llm_models (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        name VARCHAR(255) NOT NULL,
+                        provider VARCHAR(255) NOT NULL,
+                        version VARCHAR(100) NOT NULL,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        config JSONB,
+                        props JSONB DEFAULT '{}'::jsonb,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(name, provider, version)
+                    )
+                """)
+        )
+        await session.commit()
+
+        # Clean any existing test data
+        await session.execute(text("DELETE FROM llm_models WHERE provider = 'perf-test'"))
+        await session.commit()
+
+        # Create 5 test models with different names
+        model_count = 5
+        created_models = []
+
+        for i in range(model_count):
+          # Insert directly with SQL to avoid ORM issues
+          result = await session.execute(
+            text("""
+                            INSERT INTO llm_models (name, provider, version, is_active, config, props)
+                            VALUES (:name, :provider, :version, :is_active, :config, :props)
+                            RETURNING id, name, provider, version, is_active, config, props
+                        """),
+            {
+              "name": f"perf-test-model-{i}",
+              "provider": "perf-test",
+              "version": f"v{i}",
+              "is_active": True,
+              "config": json.dumps({"temperature": 0.7 + (i * 0.1)}),
+              "props": json.dumps({"perf_test": True}),
+            },
+          )
+          model_row = result.fetchone()
+          created_models.append(model_row)
+
+        # Commit after inserting all models
+        await session.commit()
+
+        # Verify all models were created
+        assert len(created_models) == model_count
+
+        # Verify all models exist in the database
+        result = await session.execute(text("SELECT * FROM llm_models WHERE provider = 'perf-test'"))
+        db_models = result.fetchall()
+        assert len(db_models) == model_count
+
+        # Clean up test data
+        await session.execute(text("DELETE FROM llm_models WHERE provider = 'perf-test'"))
+        await session.commit()
+        break
+      except Exception as e:
+        print(f"Error in test_bulk_model_creation: {e}")
+        raise
+      finally:
+        # Ensure session is properly closed
+        if session:
+          await session.close()

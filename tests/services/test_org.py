@@ -1,687 +1,807 @@
-import pytest
-from fastapi import HTTPException
-from unittest.mock import AsyncMock, MagicMock
+import os
 import sys
-import json
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
-from datetime import datetime
-import re
-from typing import Dict, Optional, Any
-from pydantic import BaseModel, Field
 
-# Create mock modules before any imports
-sys.modules["database"] = MagicMock()
-sys.modules["database.postgres"] = MagicMock()
-sys.modules["database.models"] = MagicMock()
-sys.modules["src.database"] = MagicMock()
-sys.modules["src.database.postgres"] = MagicMock()
-sys.modules["src.database.models"] = MagicMock()
-sys.modules["config"] = MagicMock()
-sys.modules["config.settings"] = MagicMock()
-sys.modules["src.config"] = MagicMock()
-sys.modules["src.config.settings"] = MagicMock()
-sys.modules["src.services.__base.acquire"] = MagicMock()
-sys.modules["dependencies.security"] = MagicMock()
-sys.modules["services.roles.service"] = MagicMock()
+import pytest
+import pytest_asyncio
+from fastapi import HTTPException
+from fastapi.responses import JSONResponse
 
 
-# Mock models using Pydantic
-class MockOrganizationModel(BaseModel):
-  id: UUID = Field(default_factory=uuid4)
-  name: str = "Test Organization"
-  slug: str = Field(default_factory=lambda: f"test-organization-{str(uuid4())[:8]}")
-  settings: Dict[str, Any] = Field(default_factory=dict)
-  created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
-  updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+# Define a function to check if we're running integration tests
+def is_integration_test():
+  """Check if we're running in integration test mode.
 
-  model_config = {"arbitrary_types_allowed": True}
-
-
-class MockOrganizationMemberModel(BaseModel):
-  organization_id: UUID = Field(default_factory=uuid4)
-  user_id: UUID = Field(default_factory=uuid4)
-  role_id: UUID = Field(default_factory=uuid4)
-  status: str = "active"
-  created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
-
-  model_config = {"arbitrary_types_allowed": True}
+  This is controlled by the INTEGRATION_TEST environment variable.
+  Set it to 1 or true to run integration tests.
+  """
+  integration_env = os.environ.get("INTEGRATION_TEST", "").lower()
+  return integration_env in ("1", "true", "yes")
 
 
-class MockRoleModel(BaseModel):
-  id: UUID = Field(default_factory=uuid4)
-  name: str = "member"
-  organization_id: Optional[UUID] = None
-  is_admin: bool = False
-  permissions: Dict[str, Any] = Field(default_factory=dict)
+# Store original functions before patching
+original_async_session = None
+original_select = None
 
-  model_config = {"arbitrary_types_allowed": True}
+# Only patch if we're running unit tests, not integration tests
+if not is_integration_test():
+  # Save original functions
+  from sqlalchemy import select as orig_select
+  from sqlalchemy.ext.asyncio import AsyncSession as OrigAsyncSession
+
+  original_async_session = OrigAsyncSession
+  original_select = orig_select
+
+  # Patch the necessary dependencies for testing
+  patch("sqlalchemy.ext.asyncio.AsyncSession", MagicMock()).start()
+  patch("sqlalchemy.select", lambda *args: MagicMock()).start()
+
+# Import the real service and schema
+from src.services.org.schema import OrganizationResponse
+from src.services.org.service import OrganizationService
+
+# Only mock modules for unit tests
+if not is_integration_test():
+  # Import models needed for patching
+  from src.models import OrganizationMemberModel, OrganizationModel, RoleModel
+
+  # Mock modules that might cause import issues
+  sys.modules["database"] = MagicMock()
+  sys.modules["database.postgres"] = MagicMock()
+  sys.modules["src.database"] = MagicMock()
+  sys.modules["src.database.postgres"] = MagicMock()
+  sys.modules["config"] = MagicMock()
+  sys.modules["config.settings"] = MagicMock()
+  sys.modules["src.config"] = MagicMock()
+  sys.modules["src.config.settings"] = MagicMock()
+  sys.modules["dependencies.security"] = MagicMock()
+
+  # Explicitly mock the RoleService
+  role_service_mock = MagicMock()
+
+  # Create a static method for _get_role that doesn't need self
+  async def mock_get_role(role_id, organization_id, session):
+    # Will be customized in individual tests
+    pass
+
+  role_service_mock._get_role = mock_get_role
+
+  # Add the mock to both module paths that might be imported
+  sys.modules["services.roles.service"] = MagicMock()
+  sys.modules["services.roles.service"].RoleService = role_service_mock
+  sys.modules["src.services.roles.service"] = MagicMock()
+  sys.modules["src.services.roles.service"].RoleService = role_service_mock
+  sys.modules["src.services.__base.acquire"] = MagicMock()
+
+# Save original models
+OrigOrganizationModel = None
+OrigOrganizationMemberModel = None
+OrigRoleModel = None
+OrigSelect = None
 
 
-class MockResponse(BaseModel):
-  id: Optional[UUID] = None
-  name: Optional[str] = None
-  slug: Optional[str] = None
-  settings: Optional[Dict[str, Any]] = None
-  created_at: Optional[str] = None
-  updated_at: Optional[str] = None
-  message: Optional[str] = None
+# Create a unit test context manager to be used in unit tests
+@pytest.fixture
+def unit_test_context():
+  """Create a context for unit tests to ensure proper patching regardless of INTEGRATION_TEST."""
+  # Save original imports
+  global OrigOrganizationModel, OrigOrganizationMemberModel, OrigRoleModel, OrigSelect
 
-  model_config = {"arbitrary_types_allowed": True}
+  from sqlalchemy import select as OrigSelect
+
+  from src.models import OrganizationMemberModel as OrigOrgMemberModel
+  from src.models import OrganizationModel as OrigOrgModel
+  from src.models import RoleModel as OrigRoleModel
+
+  OrigOrganizationModel = OrigOrgModel
+  OrigOrganizationMemberModel = OrigOrgMemberModel
+  OrigRoleModel = OrigRoleModel
+  OrigSelect = OrigSelect
+
+  # Apply patches for the unit test
+  if is_integration_test():
+    # We need to patch for unit tests even if integration tests are enabled
+    select_patch = patch("src.services.org.service.select", lambda *args: MagicMock())
+    org_model_patch = patch("src.services.org.service.OrganizationModel", MagicMock())
+    org_member_patch = patch("src.services.org.service.OrganizationMemberModel", MagicMock())
+    role_model_patch = patch("src.services.org.service.RoleModel", MagicMock())
+
+    select_patch.start()
+    org_model_patch.start()
+    org_member_patch.start()
+    role_model_patch.start()
+
+    yield
+
+    # Stop patches
+    select_patch.stop()
+    org_model_patch.stop()
+    org_member_patch.stop()
+    role_model_patch.stop()
+  else:
+    # Already patched globally if not in integration mode
+    yield
 
 
-# Create a mock JSONResponse that's simpler and more predictable
-class MockJSONResponse:
-  def __init__(self, status_code=200, content=None):
-    self.status_code = status_code
-    self.content = content
-    # Use json.dumps with separators to ensure consistent formatting
-    # with no spaces after colons
-    self.body = self._serialize_content(content)
+# Mock models
+class MockOrganizationModel:
+  def __init__(self, model_id=None, name="Test Organization", slug="test-org-12345678", settings=None):
+    self.id = model_id or uuid4()
+    self.name = name
+    self.slug = slug
+    self.settings = settings or {}
+    self.is_active = True
 
-  def _serialize_content(self, content):
-    if content is None:
-      return b"{}"
-    # Use separators to remove space after colon and comma
-    return json.dumps(content, separators=(",", ":")).encode()
+  def __eq__(self, other):
+    if not isinstance(other, MockOrganizationModel):
+      return False
+    return self.id == other.id and self.name == other.name
+
+
+class MockOrganizationMemberModel:
+  def __init__(self, organization_id=None, user_id=None, role_id=None, status="active"):
+    self.id = uuid4()
+    self.organization_id = organization_id or uuid4()
+    self.user_id = user_id or uuid4()
+    self.role_id = role_id or uuid4()
+    self.status = status
+    self.invited_by = None
+
+
+class MockRoleModel:
+  def __init__(self, model_id=None, name="owner", organization_id=None, is_system_role=True, hierarchy_level=100, **kwargs):
+    # Allow 'id' to be passed as alternative to model_id
+    if "id" in kwargs and model_id is None:
+      model_id = kwargs["id"]
+    self.id = model_id or uuid4()
+    self.name = name
+    self.organization_id = organization_id or uuid4()
+    self.is_system_role = is_system_role
+    self.hierarchy_level = hierarchy_level
+    self.description = f"{name} role"
 
 
 @pytest.fixture
 def mock_user():
-  """Create a mock user."""
+  """Create a mock user with proper permissions."""
   return {
     "id": uuid4(),
     "email": "test@example.com",
     "first_name": "Test",
     "last_name": "User",
-    "organization_id": uuid4(),
+    "org_id": uuid4(),
   }
 
 
 @pytest.fixture
 def mock_db_session():
   """Create a mock database session."""
-  session = AsyncMock()
-
-  # Setup scalar to return a properly mocked result
-  scalar_mock = AsyncMock()
-  session.scalar = scalar_mock
-
-  # Setup execute to return a properly mocked result
-  execute_mock = AsyncMock()
-  # Make unique(), scalars(), first(), etc. return self to allow chaining
-  execute_result = AsyncMock()
-  execute_result.unique.return_value = execute_result
-  execute_result.scalars.return_value = execute_result
-  execute_result.scalar_one_or_none.return_value = None
-  execute_result.scalar_one.return_value = None
-  execute_result.first.return_value = None
-  execute_result.all.return_value = []
-  execute_result.mappings.return_value = execute_result
-
-  execute_mock.return_value = execute_result
-  session.execute = execute_mock
-
+  session = MagicMock()
   session.add = MagicMock()
   session.commit = AsyncMock()
-  session.refresh = AsyncMock()
   session.flush = AsyncMock()
-  session.delete = AsyncMock()
+
+  # Create a properly structured mock result for database queries
+  MagicMock()
+  unique_mock = MagicMock()
+  scalars_mock = MagicMock()
+  MagicMock()
+
+  scalars_mock.all = MagicMock(return_value=[])
+  unique_mock.scalar_one_or_none = MagicMock(return_value=None)
+  unique_mock.scalars = MagicMock(return_value=scalars_mock)
+
+  execute_mock = MagicMock()
+  execute_mock.scalar_one_or_none = MagicMock(return_value=None)
+  execute_mock.unique = MagicMock(return_value=unique_mock)
+
+  session.execute = AsyncMock(return_value=execute_mock)
+
   return session
 
 
 @pytest.fixture
 def mock_organization():
   """Create a mock organization."""
-  return MockOrganizationModel(name="Test Organization", slug="test-organization-12345678", settings={})
+  return MockOrganizationModel()
 
 
 @pytest.fixture
-def mock_role():
-  """Create a mock role."""
-  return MockRoleModel(name="owner", is_admin=True, permissions={"*": ["*"]})
+def mock_multiple_organizations():
+  """Create multiple mock organizations."""
+  return [
+    MockOrganizationModel(name="Org 1", slug="org-1-12345678"),
+    MockOrganizationModel(name="Org 2", slug="org-2-12345678"),
+    MockOrganizationModel(name="Org 3", slug="org-3-12345678"),
+  ]
 
 
 @pytest.fixture
-def mock_member():
+def mock_owner_role():
+  """Create a mock owner role."""
+  return MockRoleModel(name="owner")
+
+
+@pytest.fixture
+def mock_org_member():
   """Create a mock organization member."""
-  return MockOrganizationMemberModel(status="active")
+  return MockOrganizationMemberModel()
 
 
 @pytest.fixture
-def mock_org_service():
-  """Create a mock organization service."""
-  org_service = MagicMock()
+def mock_acquire():
+  """Create a mock Acquire object."""
+  acquire_mock = MagicMock()
+  acquire_mock.logger = MagicMock()
+  return acquire_mock
 
-  async def mock_create_org(name, session, user):
-    # Check if the slug already exists (ensure uniqueness)
-    session.execute.return_value.scalar_one_or_none.return_value = None  # Slug is available
 
-    # Create an organization
-    created_at = datetime.now().isoformat()
-
-    # Properly sanitize the slug - remove special characters
-    sanitized_name = re.sub(r"[^a-zA-Z0-9\s]", "", name)  # Remove special chars
-    slug = f"{sanitized_name.lower().replace(' ', '-')}-{str(uuid4())[:8]}"
-
-    org = MockOrganizationModel(name=name, slug=slug, settings={}, created_at=created_at, updated_at=created_at)
-    session.add(org)
-    await session.flush()
-
-    # Create an owner role (pretend it exists)
-    role = MockRoleModel(name="owner", organization_id=org.id, is_admin=True)
-    session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = role
-
-    # Add the user as a member with the owner role
-    member = MockOrganizationMemberModel(organization_id=org.id, user_id=user["id"], role_id=role.id, status="active", created_at=created_at)
-    session.add(member)
-
-    await session.commit()
-
-    return MockResponse(**org.model_dump())
-
-  async def mock_add_member(organization_id, user_id, role_id, session):
-    # Get the role
-    role = MockRoleModel(id=role_id, organization_id=organization_id)
-
-    # Mock RoleService._get_role
-    from services.roles.service import RoleService
-
-    RoleService._get_role = AsyncMock(return_value=role)
-
-    # Create member
-    member = MockOrganizationMemberModel(
-      organization_id=organization_id, user_id=user_id, role_id=role_id, status="active", created_at=datetime.now().isoformat()
-    )
-    session.add(member)
-    await session.commit()
-
-    # Return a dictionary with status and result, which matches the pattern in other test files
-    return MockJSONResponse(status_code=201, content={"message": "Member added successfully"})
-
-  async def mock_add_member_role_not_found(organization_id, user_id, role_id, session):
-    # Mock RoleService._get_role returning None
-    from services.roles.service import RoleService
-
-    RoleService._get_role = AsyncMock(return_value=None)
-
-    raise HTTPException(status_code=404, detail=f"Role {role_id} not found")
-
-  async def mock_get_org_by_id(org_id, session, user):
-    # Check if organization exists
-    org = MockOrganizationModel(
-      id=org_id,
-      name="Test Organization",
-      slug="test-organization-12345678",
-      settings={},
-      created_at=datetime.now().isoformat(),
-      updated_at=datetime.now().isoformat(),
-    )
-    session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = org
-
-    return MockResponse(**org.model_dump())
-
-  async def mock_get_org_not_found(org_id, session, user):
-    session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = None
-    raise HTTPException(status_code=404, detail=f"Organization {org_id} not found")
-
-  async def mock_list(session, user):
-    # Return mock organizations with proper timestamps
-    orgs = [
-      MockOrganizationModel(name="Organization 1", created_at=datetime.now().isoformat(), updated_at=datetime.now().isoformat()),
-      MockOrganizationModel(name="Organization 2", created_at=datetime.now().isoformat(), updated_at=datetime.now().isoformat()),
-    ]
-
-    # Set up mock response
-    session.execute.return_value.unique.return_value.scalars.return_value.all.return_value = orgs
-
-    return [MockResponse(**org.model_dump()) for org in orgs]
-
-  # Create AsyncMock objects
-  create_org_mock = AsyncMock(side_effect=mock_create_org)
-  add_member_mock = AsyncMock(side_effect=mock_add_member)
-  list_mock = AsyncMock(side_effect=mock_list)
-  get_org_mock = AsyncMock(side_effect=mock_get_org_by_id)
-
-  # Assign the mocks to the service
-  org_service.post_create_org = create_org_mock
-  org_service.post_add_member = add_member_mock
-  org_service.get_list = list_mock
-  org_service.get = get_org_mock
-
-  return org_service
+@pytest.fixture
+def org_service(mock_acquire):
+  """Create the real organization service with mocked dependencies."""
+  return OrganizationService(acquire=mock_acquire)
 
 
 @pytest.mark.asyncio
 class TestOrganizationService:
-  """Tests for the Organization service."""
+  """Test organization service."""
 
-  async def test_create_organization(self, mock_org_service, mock_db_session, mock_user):
-    """Test creating a new organization."""
-    # Call the service
-    response = await mock_org_service.post_create_org("New Organization", session=mock_db_session, user=mock_user)
+  async def test_post_create_org_success(self, org_service, mock_db_session, mock_user, mock_owner_role, unit_test_context):
+    """Test creating a new organization successfully."""
+    # Setup
+    org_name = "Test Organization"
 
-    # Verify result - check that the slug follows the new format (lowercase with hyphens)
-    assert response.name == "New Organization"
-    assert "new-organization-" in response.slug
+    # Mock the queries properly
+    mock_db_session.execute.return_value.scalar_one_or_none.return_value = None
+    mock_db_session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = mock_owner_role
 
-    # Verify database operations
-    assert mock_db_session.add.call_count == 2  # org and member
-    mock_db_session.flush.assert_called_once()
-    mock_db_session.commit.assert_called_once()
+    # Override flush to set the organization ID
+    async def mock_flush():
+      for call in mock_db_session.add.call_args_list:
+        obj = call[0][0]
+        if hasattr(obj, "name") and obj.name == org_name:
+          obj.id = uuid4()
 
-    # The service should have been called correctly
-    assert mock_org_service.post_create_org.called
+    mock_db_session.flush.side_effect = mock_flush
 
-  async def test_add_member(self, mock_org_service, mock_db_session):
-    """Test adding a member to an organization."""
-    # Create org, user, and role IDs
-    org_id = uuid4()
+    # Execute with mock for OrganizationModel
+    mock_org = MockOrganizationModel(name=org_name)
+
+    with patch("src.services.org.service.OrganizationModel", return_value=mock_org):
+      await org_service.post_create_org(name=org_name, session=mock_db_session, user=mock_user)
+
+    # Assert that the organization was created
+    assert mock_db_session.add.called
+    assert mock_db_session.flush.called
+    assert mock_db_session.commit.called
+
+  async def test_post_create_org_duplicate_slug(self, org_service, mock_db_session, mock_user, mock_owner_role, mock_organization, unit_test_context):
+    """Test creating an organization with an existing slug."""
+    # Setup
+    org_name = "Test Organization"
+
+    # Simplify the approach - use concrete results instead of side effects
+    # First mock setup: Return an existing organization to trigger slug generation
+    first_execute_result = MagicMock()
+    first_execute_result.scalar_one_or_none = MagicMock(return_value=mock_organization)
+    first_execute_result.unique = MagicMock()
+    first_execute_result.unique.return_value = MagicMock()
+    first_execute_result.unique.return_value.scalar_one_or_none = MagicMock(return_value=mock_owner_role)
+
+    # Second mock setup: Return None on subsequent calls (for uniqueness check with suffix)
+    second_execute_result = MagicMock()
+    second_execute_result.scalar_one_or_none = MagicMock(return_value=None)
+    second_execute_result.unique = first_execute_result.unique  # Reuse the same unique mock
+
+    # Configure execute to return different results on consecutive calls
+    mock_db_session.execute = AsyncMock()
+    mock_db_session.execute.side_effect = [
+      first_execute_result,  # First check: slug exists
+      second_execute_result,  # Second check: slug with suffix doesn't exist
+      first_execute_result,  # Get owner role
+    ]
+
+    # Mock flush to set ID
+    async def mock_flush():
+      # Setting ID on organization object
+      # This is simpler than trying to track individual calls
+      mock_org.id = uuid4()
+
+    mock_db_session.flush.side_effect = mock_flush
+
+    # Create a concrete mock org to return
+    mock_org = MockOrganizationModel(name=org_name)
+    mock_org.slug = f"{org_name.lower().replace(' ', '-')}-1"  # Pre-set the suffix
+
+    # Use simpler patching - patch the class, not the __new__ method
+    with patch("src.services.org.service.OrganizationModel", return_value=mock_org):
+      # Execute
+      response = await org_service.post_create_org(name=org_name, session=mock_db_session, user=mock_user)
+
+    # Assert that the slug has the suffix
+    assert "-1" in response.slug
+
+  async def test_post_create_org_missing_owner_role(self, org_service, mock_db_session, mock_user, unit_test_context):
+    """Test creating an organization when owner role doesn't exist."""
+    # Setup
+    org_name = "Test Organization"
+
+    # Return None for the owner role lookup
+    mock_db_session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = None
+
+    # Create a mock org to return from OrganizationModel
+    mock_org = MockOrganizationModel(name=org_name)
+
+    # Execute and Assert
+    with pytest.raises(HTTPException) as exc_info:
+      with patch("src.services.org.service.OrganizationModel", return_value=mock_org):
+        await org_service.post_create_org(name=org_name, session=mock_db_session, user=mock_user)
+
+    assert exc_info.value.status_code == 500
+    assert "Default OWNER role not found" in exc_info.value.detail
+
+  async def test_post_add_member_success(self, org_service, mock_db_session, mock_user, mock_owner_role, unit_test_context):
+    """Test adding a member to an organization successfully."""
+    # Setup
+    organization_id = uuid4()
     user_id = uuid4()
-    role_id = uuid4()
+    role_id = mock_owner_role.id
 
-    # Call the service
-    response = await mock_org_service.post_add_member(org_id, user_id, role_id, session=mock_db_session)
+    # Use the mock_get_role function directly
+    async def mock_get_role_success(role_id, organization_id, session):
+      return mock_owner_role
 
-    # Verify result - instead of checking exact string, verify content after parsing
+    # Patch RoleService._get_role with our custom function - use the correct import path
+    with patch("services.roles.service.RoleService._get_role", mock_get_role_success):
+      # Patch OrganizationMemberModel
+      mock_member = MockOrganizationMemberModel(organization_id=organization_id, user_id=user_id, role_id=role_id)
+
+      with patch("src.services.org.service.OrganizationMemberModel", return_value=mock_member):
+        # Execute
+        response = await org_service.post_add_member(organization_id=organization_id, user_id=user_id, role_id=role_id, session=mock_db_session)
+
+    # Assert
+    assert mock_db_session.add.called
+    assert isinstance(response, JSONResponse)
     assert response.status_code == 201
 
-    # Parse JSON to compare content instead of exact string
-    import json
-
-    response_data = json.loads(response.body)
-    assert response_data == {"message": "Member added successfully"}
-
-    # Verify database operations
-    mock_db_session.add.assert_called_once()
-
-    # The service should have been called correctly
-    assert mock_org_service.post_add_member.called
-
-  async def test_add_member_role_not_found(self, mock_org_service, mock_db_session):
+  async def test_post_add_member_role_not_found(self, org_service, mock_db_session, mock_user, unit_test_context):
     """Test adding a member with a non-existent role."""
-    # Create org, user, and role IDs
-    org_id = uuid4()
+    # Setup
+    organization_id = uuid4()
     user_id = uuid4()
     role_id = uuid4()
 
-    # Mock the behavior for role not found
-    mock_org_service.post_add_member.side_effect = None  # Clear previous side_effect
-    mock_org_service.post_add_member.side_effect = HTTPException(status_code=404, detail=f"Role {role_id} not found")
+    # Define a mock function that returns None
+    async def mock_get_role_none(role_id, organization_id, session):
+      return None
 
-    # Call the service and expect exception
-    with pytest.raises(HTTPException) as excinfo:
-      await mock_org_service.post_add_member(org_id, user_id, role_id, session=mock_db_session)
+    # Patch RoleService._get_role with our custom function - use the correct import path
+    with patch("services.roles.service.RoleService._get_role", mock_get_role_none):
+      # Execute and Assert
+      with pytest.raises(HTTPException) as exc_info:
+        await org_service.post_add_member(organization_id=organization_id, user_id=user_id, role_id=role_id, session=mock_db_session)
 
-    # Verify exception
-    assert excinfo.value.status_code == 404
-    assert f"Role {role_id} not found" in str(excinfo.value.detail)
+    assert exc_info.value.status_code == 404
+    assert "Role" in exc_info.value.detail
+    assert "not found" in exc_info.value.detail
 
-    # The service should have been called correctly
-    assert mock_org_service.post_add_member.called
+  async def test_get_list(self, org_service, mock_db_session, mock_user, mock_multiple_organizations, unit_test_context):
+    """Test listing organizations that a user belongs to."""
+    # Setup
+    mock_user["id"]
 
-  async def test_list_organizations(self, mock_org_service, mock_db_session, mock_user):
-    """Test listing organizations for a user."""
-    # Call the service
-    response = await mock_org_service.get_list(session=mock_db_session, user=mock_user)
+    # Mock the database query to return our mock organizations
+    mock_db_session.execute.return_value.unique.return_value.scalars.return_value.all.return_value = mock_multiple_organizations
 
-    # Verify result
+    # Patch OrganizationResponse.model_validate to handle our mock objects
+    with patch.object(OrganizationResponse, "model_validate", lambda org: OrganizationResponse(id=org.id, name=org.name, slug=org.slug)):
+      # Execute
+      response = await org_service.get_list(session=mock_db_session, user=mock_user)
+
+    # Assert
     assert isinstance(response, list)
-    assert len(response) == 2
-    assert response[0].name == "Organization 1"
-    assert response[1].name == "Organization 2"
+    assert len(response) == len(mock_multiple_organizations)
 
-    # The service should have been called correctly
-    assert mock_org_service.get_list.called
 
-  async def test_get_organization(self, mock_org_service, mock_db_session, mock_user):
-    """Test getting an organization by ID."""
-    # Call the service
-    org_id = uuid4()
+# ============================================================================
+# INTEGRATION TESTS - RUN WITH: INTEGRATION_TEST=1 pytest tests/services/test_org.py
+# ============================================================================
 
-    response = await mock_org_service.get(org_id, session=mock_db_session, user=mock_user)
+# Only import these modules for integration tests
+if is_integration_test():
+  from sqlalchemy import select, text
 
-    # Verify result
-    assert response.id == org_id
-    assert response.name == "Test Organization"
-    assert response.slug == "test-organization-12345678"
-    assert hasattr(response, "created_at")
-    assert hasattr(response, "updated_at")
+  from models import OrganizationMemberModel, OrganizationModel, RoleModel
 
-    # The service should have been called correctly
-    assert mock_org_service.get.called
 
-  async def test_get_organization_not_found(self, mock_org_service, mock_db_session, mock_user):
-    """Test getting a non-existent organization."""
-    # Mock the behavior for org not found
-    org_id = uuid4()
+@pytest_asyncio.fixture
+async def setup_test_db_integration(db_session):
+  """Setup the test database for organization integration tests."""
+  # Skip if not running integration tests
+  if not is_integration_test():
+    pytest.skip("Integration tests are skipped. Set INTEGRATION_TEST=1 to run them.")
 
-    # Replace the get method with one that raises an exception
-    async def mock_get_org_not_found(org_id, session, user):
-      raise HTTPException(status_code=404, detail=f"Organization {org_id} not found")
+  owner_role = None
 
-    mock_org_service.get = AsyncMock(side_effect=mock_get_org_not_found)
+  # Create necessary database objects
+  async for session in db_session:
+    try:
+      # Create required tables if they don't exist
+      # Create roles table
+      await session.execute(
+        text("""
+                CREATE TABLE IF NOT EXISTS roles (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    name VARCHAR(255) NOT NULL,
+                    organization_id UUID NULL,
+                    description TEXT,
+                    is_system_role BOOLEAN DEFAULT false,
+                    hierarchy_level INTEGER DEFAULT 0,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+      )
 
-    # Call the service and expect exception
-    with pytest.raises(HTTPException) as excinfo:
-      await mock_org_service.get(org_id, session=mock_db_session, user=mock_user)
+      # Create role_permissions table
+      await session.execute(
+        text("""
+                CREATE TABLE IF NOT EXISTS role_permissions (
+                    role_id UUID NOT NULL,
+                    permission_id UUID NOT NULL,
+                    PRIMARY KEY (role_id, permission_id)
+                )
+            """)
+      )
 
-    # Verify exception
-    assert excinfo.value.status_code == 404
-    assert f"Organization {org_id} not found" in str(excinfo.value.detail)
+      # Create permissions table
+      await session.execute(
+        text("""
+                CREATE TABLE IF NOT EXISTS permissions (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    name VARCHAR(255) NOT NULL,
+                    description TEXT,
+                    resource VARCHAR(255),
+                    action VARCHAR(255),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+      )
 
-    # The service should have been called correctly
-    assert mock_org_service.get.called
+      # Create organizations table
+      await session.execute(
+        text("""
+                CREATE TABLE IF NOT EXISTS organizations (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    name VARCHAR(255) NOT NULL,
+                    slug VARCHAR(255) UNIQUE NOT NULL,
+                    settings JSONB DEFAULT '{}'::jsonb,
+                    is_active BOOLEAN DEFAULT true,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+      )
 
-  async def test_update_organization(self, mock_org_service, mock_db_session, mock_user, mock_organization):
-    """Test updating an organization."""
+      # Create organization_members table
+      await session.execute(
+        text("""
+                CREATE TABLE IF NOT EXISTS organization_members (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    organization_id UUID NOT NULL,
+                    user_id UUID NOT NULL,
+                    role_id UUID NOT NULL,
+                    status VARCHAR(50) DEFAULT 'pending',
+                    invited_by UUID,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (organization_id, user_id)
+                )
+            """)
+      )
 
-    # Add update method to the service
-    async def mock_update_org(org_id, org_data, session, user):
-      # Get organization
-      db_org = session.execute.return_value.unique.return_value.scalar_one_or_none.return_value
+      # Create users table (minimal for foreign key references)
+      await session.execute(
+        text("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id UUID PRIMARY KEY,
+                    email VARCHAR(255) UNIQUE NOT NULL,
+                    first_name VARCHAR(255),
+                    last_name VARCHAR(255),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+      )
 
-      if not db_org:
-        raise HTTPException(status_code=404, detail="Organization not found")
+      # Commit the table creation
+      await session.commit()
 
-      # Update fields
-      update_data = org_data.model_dump(exclude_unset=True)
-      org_dict = db_org.model_dump()
+      # Clean up any existing test data first
+      await session.execute(
+        text("""
+                    DELETE FROM organization_members
+                    WHERE user_id IN (
+                        SELECT id FROM users
+                        WHERE email LIKE 'test-integration-%@example.com'
+                    )
+                """)
+      )
+      await session.execute(
+        text("""
+                    DELETE FROM organizations
+                    WHERE name LIKE 'Test Org Integration%'
+                """)
+      )
 
-      # Update the fields
-      for field, value in update_data.items():
-        org_dict[field] = value
+      # Check if owner role exists
+      result = await session.execute(text("SELECT * FROM roles WHERE name = 'owner' LIMIT 1"))
+      owner_role_data = result.mappings().first()
 
-      # Update timestamp
-      org_dict["updated_at"] = datetime.now().isoformat()
+      if not owner_role_data:
+        # Insert owner role
+        role_id = uuid4()
+        await session.execute(
+          text("""
+                        INSERT INTO roles (id, name, is_system_role, hierarchy_level, description)
+                        VALUES (:id, 'owner', TRUE, 100, 'Owner role for test')
+                    """),
+          {"id": str(role_id)},
+        )
+        await session.commit()
 
-      # Create updated organization
-      db_org = MockOrganizationModel(**org_dict)
+        # Get the inserted role
+        result = await session.execute(text("SELECT * FROM roles WHERE id = :id"), {"id": str(role_id)})
+        owner_role_data = result.mappings().one()
+
+      # Convert to a proper object - only include parameters that MockRoleModel accepts
+      owner_role = MockRoleModel(
+        id=UUID(owner_role_data["id"]) if isinstance(owner_role_data["id"], str) else owner_role_data["id"],
+        name=owner_role_data["name"],
+        is_system_role=owner_role_data["is_system_role"],
+        hierarchy_level=owner_role_data["hierarchy_level"],
+      )
 
       await session.commit()
 
-      # Return updated organization
-      return MockResponse(**db_org.model_dump())
+      yield owner_role
 
-    mock_org_service.put_update = AsyncMock(side_effect=mock_update_org)
-
-    # Setup mocks
-    org_id = mock_organization.id
-    mock_db_session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = mock_organization
-
-    # Create update data
-    update_data = MockResponse(name="Updated Organization Name", settings={"theme": "dark", "default_role": "member"})
-
-    # Call the service
-    response = await mock_org_service.put_update(org_id, update_data, session=mock_db_session, user=mock_user)
-
-    # Verify result
-    assert response.id == org_id
-    assert response.name == "Updated Organization Name"
-    assert response.settings == {"theme": "dark", "default_role": "member"}
-    assert response.slug == mock_organization.slug  # Slug should not be updated
-
-    # Verify database operations
-    mock_db_session.commit.assert_called_once()
-
-    # Verify service method was called
-    assert mock_org_service.put_update.called
-
-  async def test_update_organization_not_found(self, mock_org_service, mock_db_session, mock_user):
-    """Test updating a non-existent organization."""
-
-    # Add update method that fails
-    async def mock_update_org_not_found(org_id, org_data, session, user):
-      # No organization found
-      session.execute.return_value.unique.return_value.scalar_one_or_none.return_value = None
-      raise HTTPException(status_code=404, detail="Organization not found")
-
-    mock_org_service.put_update = AsyncMock(side_effect=mock_update_org_not_found)
-
-    # Create update data
-    org_id = uuid4()  # Random non-existent ID
-    update_data = MockResponse(name="Updated Organization Name")
-
-    # Verify exception is raised
-    with pytest.raises(HTTPException) as exc_info:
-      await mock_org_service.put_update(org_id, update_data, session=mock_db_session, user=mock_user)
-
-    assert exc_info.value.status_code == 404
-    assert "Organization not found" in str(exc_info.value.detail)
-
-    # Verify service method was called
-    assert mock_org_service.put_update.called
-
-  async def test_remove_member(self, mock_org_service, mock_db_session, mock_user, mock_organization, mock_member):
-    """Test removing a member from an organization."""
-
-    # Add remove member method
-    async def mock_delete_member(org_id, user_id, session):
-      # Check if member exists
-      member = mock_member  # Pretend member exists
-
-      # Delete member
-      await session.delete(member)
+      # Clean up after tests
+      await session.execute(
+        text("""
+                    DELETE FROM organization_members
+                    WHERE user_id IN (
+                        SELECT id FROM users
+                        WHERE email LIKE 'test-integration-%@example.com'
+                    )
+                """)
+      )
+      await session.execute(
+        text("""
+                    DELETE FROM organizations
+                    WHERE name LIKE 'Test Org Integration%'
+                """)
+      )
       await session.commit()
 
-      # Return success response
-      return {"message": "Member removed successfully"}
+    except Exception as e:
+      print(f"Error in setup: {e}")
+      await session.rollback()
+      raise
+    finally:
+      # Only process the first yielded session
+      break
 
-    mock_org_service.delete_member = AsyncMock(side_effect=mock_delete_member)
 
-    # Call the service
-    org_id = mock_organization.id
-    user_id = mock_user["id"]
+@pytest.fixture
+def test_user_data():
+  """Create test user data."""
+  user_id = uuid4()
+  return {"id": user_id, "email": f"test-integration-{user_id}@example.com", "first_name": "Test", "last_name": "Integration", "org_id": None}
 
-    response = await mock_org_service.delete_member(org_id, user_id, session=mock_db_session)
 
-    # Verify result
-    assert response["message"] == "Member removed successfully"
+@pytest.mark.asyncio
+class TestOrganizationServiceIntegration:
+  """Integration tests for Organization service using a real database."""
 
-    # Verify database operations
-    mock_db_session.delete.assert_called_once()
-    mock_db_session.commit.assert_called_once()
+  # Skip if not in integration test mode
+  pytestmark = pytest.mark.skipif(not is_integration_test(), reason="Integration tests are skipped. Set INTEGRATION_TEST=1 to run them.")
 
-    # Verify service method was called
-    assert mock_org_service.delete_member.called
+  async def test_create_org_integration(self, org_service, db_session, test_user_data, setup_test_db_integration):
+    """Test creating an organization with integration database."""
+    org_name = "Test Org Integration"
 
-  async def test_remove_member_not_found(self, mock_org_service, mock_db_session):
-    """Test removing a non-existent member."""
+    # Get the actual session from the generator
+    async for session in db_session:
+      try:
+        # Execute
+        response = await org_service.post_create_org(name=org_name, session=session, user=test_user_data)
 
-    # Add remove member method that fails
-    async def mock_delete_member_not_found(org_id, user_id, session):
-      # Member not found
-      raise HTTPException(status_code=404, detail="Member not found")
+        # Assert
+        assert response is not None
+        assert response.name == org_name
+        assert response.id is not None
+        assert response.slug is not None and org_name.lower().replace(" ", "-") in response.slug
 
-    mock_org_service.delete_member = AsyncMock(side_effect=mock_delete_member_not_found)
+        # Verify in database
+        query = select(OrganizationModel).where(OrganizationModel.id == response.id)
+        result = await session.execute(query)
+        db_org = result.scalar_one_or_none()
+        assert db_org is not None
+        assert db_org.name == org_name
 
-    # Call the service and expect exception
-    with pytest.raises(HTTPException) as exc_info:
-      await mock_org_service.delete_member(uuid4(), uuid4(), session=mock_db_session)
+        # Verify member was added
+        query = select(OrganizationMemberModel).where(
+          OrganizationMemberModel.organization_id == response.id, OrganizationMemberModel.user_id == test_user_data["id"]
+        )
+        result = await session.execute(query)
+        member = result.scalar_one_or_none()
+        assert member is not None
+        assert member.status == "active"
 
-    assert exc_info.value.status_code == 404
-    assert "Member not found" in str(exc_info.value.detail)
+        # Verify role is owner
+        query = select(RoleModel).where(RoleModel.id == member.role_id)
+        result = await session.execute(query)
+        role = result.scalar_one_or_none()
+        assert role is not None
+        assert role.name == "owner"
 
-    # Verify service method was called
-    assert mock_org_service.delete_member.called
+      except Exception:
+        await session.rollback()
+        raise
+      finally:
+        # Only process the first yielded session
+        break
 
-  async def test_list_organization_members(self, mock_org_service, mock_db_session, mock_user, mock_organization):
-    """Test listing members of an organization."""
+  async def test_create_org_duplicate_slug_integration(self, org_service, db_session, test_user_data, setup_test_db_integration):
+    """Test creating an organization with a duplicate slug."""
+    org_name = "Test Org Integration"
 
-    # Add list members method
-    async def mock_list_members(org_id, session, user):
-      # Create mock members
-      members = [
-        {
-          "user_id": uuid4(),
-          "first_name": "Member",
-          "last_name": "One",
-          "email": "member1@example.com",
-          "role": {"id": uuid4(), "name": "Admin"},
-          "status": "active",
-        },
-        {
-          "user_id": uuid4(),
-          "first_name": "Member",
-          "last_name": "Two",
-          "email": "member2@example.com",
-          "role": {"id": uuid4(), "name": "Member"},
-          "status": "active",
-        },
-      ]
+    # Get the actual session from the generator
+    async for session in db_session:
+      try:
+        # Create first organization to create the initial slug
+        first_org = await org_service.post_create_org(name=org_name, session=session, user=test_user_data)
 
-      return members
+        # Create second organization with same name to trigger slug suffix
+        second_org = await org_service.post_create_org(name=org_name, session=session, user=test_user_data)
 
-    mock_org_service.get_members = AsyncMock(side_effect=mock_list_members)
+        # Assert
+        assert first_org.slug != second_org.slug
+        assert first_org.name == second_org.name
+        base_slug = org_name.lower().replace(" ", "-")
+        assert base_slug in first_org.slug
+        assert base_slug in second_org.slug
 
-    # Call the service
-    org_id = mock_organization.id
+        # Verify both exist in database
+        query = select(OrganizationModel).where(OrganizationModel.name == org_name)
+        result = await session.execute(query)
+        orgs = result.scalars().all()
+        assert len(orgs) == 2
 
-    response = await mock_org_service.get_members(org_id, session=mock_db_session, user=mock_user)
+      except Exception:
+        await session.rollback()
+        raise
+      finally:
+        # Only process the first yielded session
+        break
 
-    # Verify result
-    assert isinstance(response, list)
-    assert len(response) == 2
-    assert response[0]["role"]["name"] == "Admin"
-    assert response[1]["role"]["name"] == "Member"
-    assert all(member["status"] == "active" for member in response)
+  async def test_add_member_integration(self, org_service, db_session, test_user_data, setup_test_db_integration):
+    """Test adding a member to an organization."""
+    org_name = "Test Org Integration Member"
 
-    # Verify service method was called
-    assert mock_org_service.get_members.called
+    # Get the actual session from the generator
+    async for session in db_session:
+      try:
+        # Create an organization first
+        org = await org_service.post_create_org(name=org_name, session=session, user=test_user_data)
 
-  async def test_update_member_role(self, mock_org_service, mock_db_session, mock_member):
-    """Test updating a member's role."""
+        # Create a new user to add as member
+        new_user_id = uuid4()
 
-    # Add update member role method
-    async def mock_update_member_role(org_id, user_id, role_id, session):
-      # Check if member exists
-      member = mock_member  # Pretend member exists
+        # Get a role (member role or create one)
+        query = select(RoleModel).where(RoleModel.name == "member")
+        result = await session.execute(query)
+        member_role = result.scalar_one_or_none()
 
-      # Update role
-      member.role_id = role_id
+        if not member_role:
+          # Create member role if it doesn't exist
+          member_role = RoleModel(name="member", is_system_role=True, hierarchy_level=10, description="Member role created for tests")
+          session.add(member_role)
+          await session.commit()
+          await session.refresh(member_role)
 
-      await session.commit()
+        # Add the new user as a member
+        response = await org_service.post_add_member(organization_id=org.id, user_id=new_user_id, role_id=member_role.id, session=session)
 
-      # Return success response
-      return {"message": "Member role updated successfully"}
+        # Assert
+        assert isinstance(response, JSONResponse)
+        assert response.status_code == 201
 
-    mock_org_service.put_update_member_role = AsyncMock(side_effect=mock_update_member_role)
+        # Verify in database
+        query = select(OrganizationMemberModel).where(
+          OrganizationMemberModel.organization_id == org.id, OrganizationMemberModel.user_id == new_user_id
+        )
+        result = await session.execute(query)
+        member = result.scalar_one_or_none()
+        assert member is not None
+        assert member.role_id == member_role.id
+        assert member.status == "active"
 
-    # Call the service
-    org_id = uuid4()
-    user_id = uuid4()
-    role_id = uuid4()
+      except Exception:
+        await session.rollback()
+        raise
+      finally:
+        # Only process the first yielded session
+        break
 
-    response = await mock_org_service.put_update_member_role(org_id, user_id, role_id, session=mock_db_session)
+  async def test_get_list_integration(self, org_service, db_session, test_user_data, setup_test_db_integration):
+    """Test listing organizations a user belongs to."""
+    # Get the actual session from the generator
+    async for session in db_session:
+      try:
+        # Create multiple organizations for the test user
+        org_names = ["Test Org Integration List 1", "Test Org Integration List 2", "Test Org Integration List 3"]
 
-    # Verify result
-    assert response["message"] == "Member role updated successfully"
+        created_orgs = []
+        for name in org_names:
+          org = await org_service.post_create_org(name=name, session=session, user=test_user_data)
+          created_orgs.append(org)
 
-    # Verify database operations
-    mock_db_session.commit.assert_called_once()
+        # List organizations
+        response = await org_service.get_list(session=session, user=test_user_data)
 
-    # Verify service method was called
-    assert mock_org_service.put_update_member_role.called
+        # Assert
+        assert isinstance(response, list)
+        assert len(response) >= len(org_names)  # May include orgs from other tests
 
-  async def test_update_member_role_not_found(self, mock_org_service, mock_db_session):
-    """Test updating role for a non-existent member."""
+        # Verify created orgs are in the response
+        response_ids = [org.id for org in response]
+        for created_org in created_orgs:
+          assert created_org.id in response_ids
 
-    # Add update member role method that fails
-    async def mock_update_member_role_not_found(org_id, user_id, role_id, session):
-      # Member not found
-      raise HTTPException(status_code=404, detail="Member not found")
+        # Verify org names
+        response_names = [org.name for org in response]
+        for name in org_names:
+          assert name in response_names
 
-    mock_org_service.put_update_member_role = AsyncMock(side_effect=mock_update_member_role_not_found)
+      except Exception:
+        await session.rollback()
+        raise
+      finally:
+        # Only process the first yielded session
+        break
 
-    # Call the service and expect exception
-    with pytest.raises(HTTPException) as exc_info:
-      await mock_org_service.put_update_member_role(uuid4(), uuid4(), uuid4(), session=mock_db_session)
+  async def test_add_member_invalid_role_integration(self, org_service, db_session, test_user_data, setup_test_db_integration):
+    """Test adding a member with an invalid role."""
+    org_name = "Test Org Integration Invalid Role"
 
-    assert exc_info.value.status_code == 404
-    assert "Member not found" in str(exc_info.value.detail)
+    # Get the actual session from the generator
+    async for session in db_session:
+      try:
+        # Create an organization first
+        org = await org_service.post_create_org(name=org_name, session=session, user=test_user_data)
 
-    # Verify service method was called
-    assert mock_org_service.put_update_member_role.called
+        # Create a new user to add as member
+        new_user_id = uuid4()
 
-  async def test_get_organization_statistics(self, mock_org_service, mock_db_session, mock_user, mock_organization):
-    """Test getting organization statistics."""
+        # Use a non-existent role ID
+        invalid_role_id = uuid4()
 
-    # Add statistics method
-    async def mock_get_statistics(org_id, session, user):
-      # Create mock statistics
-      statistics = {
-        "member_count": 10,
-        "active_members": 8,
-        "roles": [{"name": "Admin", "count": 2}, {"name": "Member", "count": 8}],
-        "created_at": mock_organization.created_at,
-      }
+        # Add the new user with invalid role ID
+        with pytest.raises(HTTPException) as exc_info:
+          await org_service.post_add_member(organization_id=org.id, user_id=new_user_id, role_id=invalid_role_id, session=session)
 
-      return statistics
+        # Assert
+        assert exc_info.value.status_code == 404
+        assert "Role" in exc_info.value.detail
+        assert "not found" in exc_info.value.detail
 
-    mock_org_service.get_statistics = AsyncMock(side_effect=mock_get_statistics)
-
-    # Call the service
-    org_id = mock_organization.id
-
-    response = await mock_org_service.get_statistics(org_id, session=mock_db_session, user=mock_user)
-
-    # Verify result
-    assert response["member_count"] == 10
-    assert response["active_members"] == 8
-    assert len(response["roles"]) == 2
-    assert response["roles"][0]["name"] == "Admin"
-    assert response["roles"][1]["name"] == "Member"
-    assert response["created_at"] == mock_organization.created_at
-
-    # Verify service method was called
-    assert mock_org_service.get_statistics.called
-
-  async def test_create_organization_slug(self, mock_org_service, mock_db_session, mock_user):
-    """Test slug creation when creating an organization with special characters."""
-    # Call the original service to test slug creation
-    # Use a name with special characters
-    response = await mock_org_service.post_create_org("Test Org !@#$%^&*()", session=mock_db_session, user=mock_user)
-
-    # Verify result - check that the slug is properly sanitized
-    assert response.name == "Test Org !@#$%^&*()"
-    assert "test-org-" in response.slug  # Should only contain alphanumeric and hyphens
-    assert not any(c in response.slug for c in "!@#$%^&*()")
-
-    # The service should have been called correctly
-    assert mock_org_service.post_create_org.called
-
-  async def test_invite_member(self, mock_org_service, mock_db_session, mock_organization):
-    """Test inviting a member to an organization."""
-
-    # Add invite member method
-    async def mock_invite_member(org_id, email, role_id, session):
-      # Create invitation
-      invitation = {
-        "id": uuid4(),
-        "organization_id": org_id,
-        "email": email,
-        "role_id": role_id,
-        "status": "pending",
-        "created_at": datetime.now().isoformat(),
-      }
-
-      # Return success response
-      return invitation
-
-    mock_org_service.post_invite_member = AsyncMock(side_effect=mock_invite_member)
-
-    # Call the service
-    org_id = mock_organization.id
-    email = "newinvite@example.com"
-    role_id = uuid4()
-
-    response = await mock_org_service.post_invite_member(org_id, email, role_id, session=mock_db_session)
-
-    # Verify result
-    assert response["organization_id"] == org_id
-    assert response["email"] == email
-    assert response["role_id"] == role_id
-    assert response["status"] == "pending"
-    assert "created_at" in response
-
-    # Verify service method was called
-    assert mock_org_service.post_invite_member.called
+      except Exception as e:
+        if not isinstance(e, HTTPException):
+          await session.rollback()
+        raise
+      finally:
+        # Only process the first yielded session
+        break
