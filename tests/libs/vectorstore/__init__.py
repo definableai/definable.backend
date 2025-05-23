@@ -1,3 +1,3 @@
 """Tests for the vectorstore library."""
 
-__all__ = []
+__all__: list[str] = []
