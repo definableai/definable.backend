@@ -39,6 +39,7 @@ def main():
   parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the server on.")
   parser.add_argument("--port", type=int, default=8000, help="Port to run the server on.")
   parser.add_argument("--workers", type=int, default=4, help="Number of workers to run the server on.")
+  parser.add_argument("--timeout", type=int, default=180, help="Worker timeout in seconds.")
   args = parser.parse_args()
 
   if args.dev:
@@ -60,6 +61,12 @@ def main():
         "uvicorn.workers.UvicornWorker",
         "--bind",
         f"{args.host}:{args.port}",
+        "--timeout",
+        f"{args.timeout}",
+        "--keep-alive",
+        "10",
+        "--graceful-timeout",
+        "60",
         "--pythonpath",
         "src",
       ])

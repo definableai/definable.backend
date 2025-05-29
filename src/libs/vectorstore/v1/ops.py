@@ -13,7 +13,7 @@ async def create_vectorstore(org_name: str, collection_name: str) -> UUID:
       connection=async_engine,
       collection_name=f"{org_name}_{collection_name}",
       use_jsonb=True,
-      create_extension=False,
+      create_extension=True,
     )
     await vectorstore.acreate_collection()
     async with async_session() as session:
