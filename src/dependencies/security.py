@@ -6,7 +6,6 @@ from fastapi.security import HTTPBearer
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from common.logger import logger
 from database import get_db
 from libs.stytch.v1 import stytch_base
 from models import OrganizationMemberModel, PermissionModel, RoleModel, RolePermissionModel
@@ -29,7 +28,6 @@ class JWTBearer(HTTPBearer):
         response = await stytch_base.authenticate_user(credentials.credentials)
         if response.success and response.data.status_code == 200:
           user = response.model_dump()["data"]["user"]
-          logger.info(f"Got user data: {user}")
           return {"id": user["trusted_metadata"]["external_user_id"], "user_data": user}
         else:
           raise HTTPException(status_code=403, detail="Invalid authorization")
