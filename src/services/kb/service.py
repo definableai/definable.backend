@@ -15,10 +15,12 @@ from typing_extensions import TypedDict
 
 from database import async_engine, get_db
 from dependencies.security import RBAC
+from dependencies.usage import Usage
 from libs.s3.v1 import s3_client
 from libs.vectorstore.v1 import create_vectorstore
 from models import DocumentStatus, KBDocumentModel, KBFolder, KnowledgeBaseModel, SourceTypeModel
 from services.__base.acquire import Acquire
+from utils.charge import Charge
 
 from .loaders import DocumentProcessor
 from .schema import (
@@ -110,6 +112,7 @@ class KnowledgeBaseService:
     self.settings = acquire.settings
     self.ws_manager = acquire.ws_manager
     self.utils = acquire.utils
+    self.logger = acquire.logger
 
   # TODO: add types for embedding models
   async def post_create(
@@ -241,102 +244,162 @@ class KnowledgeBaseService:
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("kb", "write")),
+    usage: dict = Depends(Usage("pdf_extraction", qty=1, background=True, metadata={"operation": "file_document_upload"})),
   ) -> KBDocumentResponse:
     """Add file document to knowledge base."""
-    print(document_data)
-    # Get source type model
-    source_type_model = await session.get(SourceTypeModel, 1)
-    if not source_type_model:
-      raise HTTPException(status_code=404, detail="Source type not found")
-
-    # Extract file metadata
-    file_metadata = document_data.get_metadata()
-
-    # Process folder path if provided
-    folder_id = None
-    folder_path = document_data.folder_path if hasattr(document_data, "folder_path") and document_data.folder_path else None
-
-    if folder_path and isinstance(folder_path, list) and len(folder_path) > 0:
-      current_parent_id = None
-
-      # Process each folder in the path
-      # TODO: can we optimize this to not do a loop on a query?
-      for i, folder_name in enumerate(folder_path):
-        # Check if folder with same name already exists at this level
-        query = select(KBFolder).where(KBFolder.kb_id == kb_id, KBFolder.name == folder_name, KBFolder.parent_id == current_parent_id)
-        result = await session.execute(query)
-        folder = result.scalar_one_or_none()
-
-        if not folder:
-          # Create new folder
-          folder = KBFolder(
-            name=folder_name,
-            parent_id=current_parent_id,
-            kb_id=kb_id,
-            folder_info={},  # Empty default info
-          )
-          session.add(folder)
-          await session.flush()  # To get the ID
-
-        # Move to next level
-        current_parent_id = folder.id
-
-      # Set the final folder ID for the document
-      folder_id = current_parent_id
-
-      # Check if a file with the same name already exists in this folder
-      existing_file_query = select(KBDocumentModel).where(
-        KBDocumentModel.kb_id == kb_id, KBDocumentModel.folder_id == folder_id, KBDocumentModel.title == document_data.title
-      )
-      existing_file = await session.execute(existing_file_query)
-      if existing_file.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail=f"A file with name '{document_data.title}' already exists in this folder")
-
-    # Upload file to s3
-    config_schema = source_type_model.config_schema
-    storage = config_schema.get("storage")
-    if not storage:
-      raise HTTPException(status_code=400, detail="Storage not found in source type config")
-
-    if folder_path:
-      joined_folder_path = "/".join(folder_path)
-      s3_key = f"{storage['bucket']}/{storage['path']}/{org_id}-{kb_id}/{joined_folder_path}/{document_data.file.filename}"
-    else:
-      s3_key = f"{storage['bucket']}/{storage['path']}/{org_id}-{kb_id}/{document_data.file.filename}"
-
     try:
+      # Get charge from usage dependency
+      charge = usage["charge"]
+      self.logger.info(f"Created initial charge for file upload: {charge.transaction_id}")
+
+      self.logger.info(f"document_data: {document_data}")
+
+      # Get source type model
+      source_type_model = await session.get(SourceTypeModel, 1)
+      if not source_type_model:
+        # Release charge if source type not found
+        await charge.delete(reason="Source type not found")
+        raise HTTPException(status_code=404, detail="Source type not found")
+
+      # Extract file metadata
+      file_metadata = document_data.get_metadata()
+
+      # Calculate proper charge quantity based on file size or page count
       file_content = await document_data.file.read()
-      # print(file_content, document_data.file.content_type, s3_key)
-      await s3_client.upload_file(BytesIO(file_content), s3_key, content_type=document_data.file.content_type)
+      file_size_mb = len(file_content) / (1024 * 1024)
+      # TODO : we need to get page counts in case of PDF, docs, excel ,etc
+      charge_qty = max(1, int(file_size_mb))
+      file_metadata["charge_qty"] = charge_qty
+
+      # Update charge with actual quantity and file information
+      await charge.calculate_and_update(
+        metadata={
+          "file_name": document_data.file.filename,
+          "file_size_mb": file_size_mb,
+          "file_type": document_data.file.content_type,
+          "pages": file_metadata.get("pages", 1),  # Include page count if available
+          "sheet_count": file_metadata.get("sheet_count", 1),  # Include sheet count if available
+          "charge_qty": charge_qty,
+        },
+        status="processing",  # It's still being processed at this point
+      )
+
+      # Process folder path if provided
+      folder_id = None
+      folder_path = document_data.folder_path if hasattr(document_data, "folder_path") and document_data.folder_path else None
+
+      if folder_path and isinstance(folder_path, list) and len(folder_path) > 0:
+        current_parent_id = None
+
+        # Process each folder in the path
+        # TODO: can we optimize this to not do a loop on a query?
+        for i, folder_name in enumerate(folder_path):
+          # Check if folder with same name already exists at this level
+          query = select(KBFolder).where(KBFolder.kb_id == kb_id, KBFolder.name == folder_name, KBFolder.parent_id == current_parent_id)
+          result = await session.execute(query)
+          folder = result.scalar_one_or_none()
+
+          if not folder:
+            # Create new folder
+            folder = KBFolder(
+              name=folder_name,
+              parent_id=current_parent_id,
+              kb_id=kb_id,
+              folder_info={},  # Empty default info
+            )
+            session.add(folder)
+            await session.flush()  # To get the ID
+
+          # Move to next level
+          current_parent_id = folder.id
+
+        # Set the final folder ID for the document
+        folder_id = current_parent_id
+
+        # Check if a file with the same name already exists in this folder
+        existing_file_query = select(KBDocumentModel).where(
+          KBDocumentModel.kb_id == kb_id, KBDocumentModel.folder_id == folder_id, KBDocumentModel.title == document_data.title
+        )
+        existing_file = await session.execute(existing_file_query)
+        if existing_file.scalar_one_or_none():
+          raise HTTPException(status_code=400, detail=f"A file with name '{document_data.title}' already exists in this folder")
+
+      # Upload file to s3
+      config_schema = source_type_model.config_schema
+      storage = config_schema.get("storage")
+      if not storage:
+        # Release charge if storage config is invalid
+        await charge.delete(reason="Storage configuration not found")
+        raise HTTPException(status_code=400, detail="Storage not found in source type config")
+
+      if folder_path:
+        joined_folder_path = "/".join(folder_path)
+        s3_key = f"{storage['bucket']}/{storage['path']}/{org_id}-{kb_id}/{joined_folder_path}/{document_data.file.filename}"
+      else:
+        s3_key = f"{storage['bucket']}/{storage['path']}/{org_id}-{kb_id}/{document_data.file.filename}"
+
+      try:
+        # Upload to S3 (using already read file_content)
+        await s3_client.upload_file(BytesIO(file_content), s3_key, content_type=document_data.file.content_type)
+      except Exception as e:
+        # Release charge if file upload fails
+        await charge.delete(reason=f"S3 upload failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
+
+      # Update file metadata with s3 key and folder info
+      file_metadata["s3_key"] = s3_key
+      if folder_id:
+        file_metadata["folder_id"] = str(folder_id)
+
+      # Store the transaction ID in metadata for tracking
+      file_metadata["billing_transaction_id"] = str(charge.transaction_id)
+
+      # Create document
+      db_doc = KBDocumentModel(
+        title=document_data.title,
+        description=document_data.description,
+        kb_id=kb_id,
+        folder_id=folder_id,  # Associate with folder
+        source_type_id=1,  # File type
+        source_metadata=file_metadata,
+        extraction_status=DocumentStatus.PENDING,
+        indexing_status=DocumentStatus.PENDING,
+      )
+
+      session.add(db_doc)
+      await session.commit()
+      await session.refresh(db_doc)
+
+      # For the first task, pass the charge but don't complete it
+      background_tasks.add_task(
+        self._process_document_task,
+        source_type=source_type_model,
+        doc=db_doc,
+        session=session,
+        org_id=org_id,
+        charge=charge,
+        complete_charge=False,  # Add a parameter to indicate not to complete the charge
+      )
+
+      # For the second task, create a separate related charge
+      background_tasks.add_task(
+        self._indexing_documents_task, [db_doc.id], org_id, kb_id, session, initial_charge_id=charge.transaction_id, user_id=UUID(user["id"])
+      )
+
+      # If everything is successful, return the response
+      return KBDocumentResponse.model_validate(db_doc)
+
     except Exception as e:
-      raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
+      # If we have a charge and encounter any error, release the hold
+      if "charge" in locals():
+        try:
+          await charge.delete(reason=f"Error in file document upload: {str(e)}")
+          self.logger.info(f"Released charge for transaction {charge.transaction_id} due to error")
+        except Exception as release_error:
+          self.logger.error(f"Failed to release charge: {str(release_error)}")
 
-    # Update file metadata with s3 key and folder info
-    file_metadata["s3_key"] = s3_key
-    if folder_id:
-      file_metadata["folder_id"] = str(folder_id)
-
-    # Create document
-    db_doc = KBDocumentModel(
-      title=document_data.title,
-      description=document_data.description,
-      kb_id=kb_id,
-      folder_id=folder_id,  # Associate with folder
-      source_type_id=1,  # File type
-      source_metadata=file_metadata,
-      extraction_status=DocumentStatus.PENDING,
-      indexing_status=DocumentStatus.PENDING,
-    )
-
-    session.add(db_doc)
-    await session.commit()
-    await session.refresh(db_doc)
-
-    # Start background processing
-    background_tasks.add_task(self._process_document_task, source_type=source_type_model, doc=db_doc, session=session, org_id=org_id)
-    background_tasks.add_task(self._indexing_documents_task, [db_doc.id], org_id, kb_id, session)
-
-    return KBDocumentResponse.model_validate(db_doc)
+      # Re-raise the original exception
+      raise
 
   async def post_add_url_document(
     self,
@@ -969,48 +1032,149 @@ class KnowledgeBaseService:
     org_id: UUID,
     kb_id: UUID,
     session: AsyncSession,
+    initial_charge_id: Optional[str] = None,
+    user_id: Optional[UUID] = None,
   ) -> None:
-    """Background task to process document."""
+    """Background task to process document with billing."""
+    self.logger.info(f"Indexing documents: {doc_ids}")
     doc_models = await self._get_documents(doc_ids, org_id, session)
     if not doc_models:
       raise HTTPException(status_code=404, detail="Documents not found")
+    self.logger.info(f"Documents found: {doc_models}")
 
-    # start processing documents one by one
+    # Create a new charge specifically for embedding operations
+    embedding_charge = None
+    embedding_charge_created = False  # Add this flag to track if charge was created successfully
+    try:
+      # Use the provided user_id directly instead of trying to get it from documents
+      if user_id:
+        self.logger.info("Creating embedding charge")
+        # Create a charge for embedding generation
+        embedding_charge = Charge(name="o1-small-text-indexing", user_id=user_id, org_id=org_id, session=session, service="Knowledge Base")
+        self.logger.info(f"Embedding charge: {embedding_charge}")
+
+        def convert_uuids_to_strings(data):
+          if isinstance(data, dict):
+            return {k: str(v) if isinstance(v, UUID) else convert_uuids_to_strings(v) if isinstance(v, (dict, list)) else v for k, v in data.items()}
+          elif isinstance(data, list):
+            return [
+              str(item) if isinstance(item, UUID) else convert_uuids_to_strings(item) if isinstance(item, (dict, list)) else item for item in data
+            ]
+          return data
+
+        # Create metadata with all UUIDs converted to strings
+        metadata = {
+          "operation": "document_embedding",
+          "kb_id": str(kb_id),
+          "doc_count": len(doc_ids),
+          "related_charge_id": initial_charge_id,
+          "user_id": str(user_id),
+        }
+
+        # Convert any potential nested UUIDs
+        metadata = convert_uuids_to_strings(metadata)
+
+        await embedding_charge.create(
+          qty=1,
+          metadata=metadata,
+        )
+      embedding_charge_created = True
+    except Exception as e:
+      self.logger.error(f"Failed to create embedding charge: {str(e)}")
+      await session.rollback()
+      embedding_charge = None  # Add this line to ensure it's None after failed creation
+      # Continue processing without billing
+
+    # Process documents without depending on a successful charge creation
+    self.logger.info("Processing documents")
+    # Process documents one by one
     for doc_model in doc_models:
+      self.logger.info(f"Processing document: {doc_model}")
       doc_model.indexing_status = DocumentStatus.PROCESSING
       session.add(doc_model)
-
       await session.commit()
+      self.logger.info("Document added to session")
+
       try:
-        # get kb model
+        # Get KB model
         kb_model = await self._get_kb(kb_id, org_id, session)
         if not kb_model:
           raise HTTPException(status_code=404, detail="Knowledge base not found")
-
+        self.logger.info("Knowledge base found")
+        # Estimate embedding cost based on document content
+        if doc_model.content:
+          token_count = len(doc_model.content.split())
+          estimated_chunks = max(1, token_count // kb_model.settings["max_chunk_size"])
+          self.logger.info(f"Estimated chunks: {estimated_chunks}")
+          # Update charge with document-specific information if we have a charge
+          if embedding_charge and embedding_charge_created and embedding_charge.transaction_id:
+            try:
+              await embedding_charge.calculate_and_update(
+                content=doc_model.content,
+                metadata={"doc_id": str(doc_model.id), "estimated_chunks": estimated_chunks, "token_count": token_count},
+                status="processing",  # Still processing at this point
+              )
+              self.logger.info("Embedding charge updated")
+            except Exception as e:
+              self.logger.error(f"Failed to update embedding charge: {str(e)}")
+              embedding_charge_created = False
+        self.logger.info("Initializing processor")
         # Initialize processor
         processor = DocumentProcessor(
           embedding_model=kb_model.embedding_model,
           chunk_size=kb_model.settings["max_chunk_size"],
           chunk_overlap=kb_model.settings["chunk_overlap"],
         )
+        self.logger.info("Processor initialized")
         # Process document
         await processor.process_document(
           kb_id=kb_model.id, documents=[doc_model], collection_name=str(kb_model.organization_id) + "_" + kb_model.name
         )
-
+        self.logger.info("Document processed")
+        # Get actual chunk count from metadata or estimate based on token count
+        token_count = len(doc_model.content.split()) if doc_model.content else 0
+        estimated_chunks = max(1, token_count // kb_model.settings["max_chunk_size"])
+        actual_chunks = estimated_chunks  # Use estimate as actual since we can't get exact count
+        self.logger.info("Actual chunks: {actual_chunks}")
         # Update status to completed
         doc_model.indexing_status = DocumentStatus.COMPLETED
-        # TODO: need to check what is right? using timezone aware datetime or not?
         doc_model.indexing_completed_at = datetime.now()
+        self.logger.info("Document status updated to completed")
+        # Update metadata with chunk information
+        metadata = doc_model.source_metadata or {}
+        metadata["actual_chunks"] = actual_chunks
+        flag_modified(doc_model, "source_metadata")
+        doc_model.source_metadata = metadata
+        self.logger.info("Document metadata updated")
         session.add(doc_model)
         await session.commit()
+        self.logger.info("Document added to session")
 
-      except Exception:
+        # Update charge with actual chunk information
+        if embedding_charge and embedding_charge_created and embedding_charge.transaction_id:
+          try:
+            await embedding_charge.calculate_and_update(metadata={"actual_chunks": actual_chunks}, status="completed")
+          except Exception as e:
+            self.logger.error(f"Failed to update embedding charge: {str(e)}")
+            embedding_charge_created = False
+        self.logger.info("Embedding charge updated")
+      except Exception as e:
+        self.logger.info(f"Error processing document: {str(e)}")
         # Update status to failed
         doc_model.indexing_status = DocumentStatus.FAILED
+        doc_model.error_message = str(e)
         session.add(doc_model)
         await session.commit()
-
+        self.logger.info("Document added to session")
+        # Update charge with failure information
+        if embedding_charge and embedding_charge_created and embedding_charge.transaction_id:
+          try:
+            await embedding_charge.delete(reason=f"Error in document indexing: {str(e)}")
+            self.logger.info(f"Released embedding charge for transaction {embedding_charge.transaction_id} due to error in indexing")
+          except Exception as charge_error:
+            self.logger.error(f"Failed to release embedding charge: {str(charge_error)}")
+        self.logger.info("Embedding charge updated")
+      # Broadcast status update
       await self.ws_manager.broadcast(
         org_id,
         {
@@ -1021,25 +1185,41 @@ class KnowledgeBaseService:
         "write",
       )
 
-  async def _process_document_task(self, source_type: SourceTypeModel, doc: KBDocumentModel, session: AsyncSession, **kwargs) -> None:
-    # Get appropriate handler
-    handler = get_source_handler(source_type.name, source_type.config_schema)
+  async def _process_document_task(
+    self,
+    source_type: SourceTypeModel,
+    doc: KBDocumentModel,
+    session: AsyncSession,
+    org_id: UUID,
+    charge: Optional[Charge] = None,
+    complete_charge: bool = True,
+    **kwargs,
+  ) -> None:
+    self.logger.info(f"Starting document processing task for document ID: {doc.id}")
 
     try:
+      # Get appropriate handler
+      handler = get_source_handler(source_type.name, source_type.config_schema)
+      self.logger.info(f"Handler obtained for source type: {source_type.name}")
+
       # Validate metadata
       await handler.validate_metadata(doc.source_metadata, **kwargs)
+      self.logger.info(f"Metadata validated for document ID: {doc.id}")
 
       # Preprocess
       await handler.preprocess(doc, **kwargs)
+      self.logger.info(f"Preprocessing completed for document ID: {doc.id}")
 
       # Extract content
       content = await handler.extract_content(
         doc,
-        session=session,  # incase we have children documents to create i.e. urlhandler crawl jobs
-        ws_manager=self.ws_manager,  # to send the notifications to the user via websocket for children documents
+        session=session,
+        ws_manager=self.ws_manager,
         **kwargs,
       )
-      # TODO: transfer this logic to the handler
+      self.logger.info(f"Content extracted for document ID: {doc.id}")
+
+      # Update document with content
       doc.content = content
       doc.extraction_status = DocumentStatus.COMPLETED
       doc.extraction_completed_at = datetime.now()
@@ -1047,21 +1227,42 @@ class KnowledgeBaseService:
       metadata["source_extraction_status"] = True
       flag_modified(doc, "source_metadata")
       doc.source_metadata = metadata
-      session.add(doc)  # Mark as modified
+      session.add(doc)
       await session.commit()
+      self.logger.info(f"Document updated and committed for document ID: {doc.id}")
+
+      self.logger.info(f"Charge: {charge}")
+      self.logger.info(f"Complete charge: {complete_charge}")
+      # Finalize the charge for document extraction if it exists
+      if charge:
+        try:
+          await charge.calculate_and_update(content=content, metadata=doc.source_metadata, status="completed")
+          self.logger.info(f"Charge finalized for document ID: {doc.id}")
+        except Exception as charge_error:
+          self.logger.error(f"Failed to update charge for document ID: {doc.id}: {str(charge_error)}")
 
     except Exception as e:
       doc.extraction_status = DocumentStatus.FAILED
       doc.error_message = str(e)
-      session.add(doc)  # Mark as modified
+      session.add(doc)
       await session.commit()
+      self.logger.error(f"Error processing document ID: {doc.id}: {str(e)}")
+
+      # If we have a charge and extraction failed, release part of the hold
+      if charge:
+        try:
+          await charge.delete(reason=f"Error in document processing: {str(e)}")
+          self.logger.info(f"Released charge for transaction {charge.transaction_id} due to error in processing")
+        except Exception as charge_error:
+          self.logger.error(f"Failed to release charge for document ID: {doc.id}: {str(charge_error)}")
 
     finally:
       await handler.cleanup(doc)
-      # send the notification to the user via websocket
+      self.logger.info(f"Cleanup completed for document ID: {doc.id}")
       await self.ws_manager.broadcast(
         kwargs.get("org_id"),
         {"id": str(doc.id), "extraction_status": doc.extraction_status, "source_extraction_status": True},
         "kb",
         "write",
       )
+      self.logger.info(f"Broadcast completed for document ID: {doc.id}")

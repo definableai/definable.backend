@@ -15,3 +15,5 @@ class LLMModel(CRUD):
   version: Mapped[str] = mapped_column(String(50), nullable=False)
   is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
   config: Mapped[dict] = mapped_column(JSONB, nullable=False)
+  props: Mapped[dict] = mapped_column(JSONB, nullable=False)
+  model_metadata: Mapped[dict] = mapped_column(JSONB, nullable=True)
