@@ -23,19 +23,6 @@ def upgrade() -> None:
   # Add the column with a non-reserved name
   op.add_column("models", sa.Column("model_metadata", sa.JSON, nullable=True, server_default="{}"))
 
-  # Update models with pricing info
-  op.execute("""
-    UPDATE models
-    SET model_metadata = jsonb_build_object('credits_per_1000_tokens', jsonb_build_object('input', 1.5, 'output', 2.0))
-    WHERE provider = 'openai'
-    """)
-
-  op.execute("""
-    UPDATE models
-    SET model_metadata = jsonb_build_object('credits_per_1000_tokens', jsonb_build_object('input', 2.0, 'output', 3.0))
-    WHERE provider = 'anthropic'
-    """)
-
 
 def downgrade() -> None:
   op.drop_column("models", "model_metadata")

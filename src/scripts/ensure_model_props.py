@@ -4,6 +4,7 @@ Ensures the 'props' column exists in the models table and populates it with data
 Uses the script_run_tracker table to track execution.
 """
 
+import argparse
 import asyncio
 import json
 import os
@@ -83,12 +84,96 @@ async def check_props_column_exists(db: AsyncSession) -> bool:
   return True
 
 
-async def update_model_props(db: AsyncSession, props_data: dict, llm_models: list):
-  """Updates the 'props' column for each model."""
+async def update_model_metadata(db: AsyncSession):
+  """Updates the model_metadata column with pricing information."""
+  try:
+    logger.info("Updating model metadata with pricing information...")
+
+    # Update OpenAI models with pricing info
+    result = await db.execute(
+      text("""
+        UPDATE models
+        SET model_metadata = jsonb_build_object('credits_per_1000_tokens', jsonb_build_object('input', 1.5, 'output', 2.0))
+        WHERE provider = 'openai'
+        RETURNING id
+      """)
+    )
+    openai_count = len(result.fetchall())
+    logger.info(f"Updated metadata for {openai_count} OpenAI models")
+
+    # Update Anthropic models with pricing info
+    result = await db.execute(
+      text("""
+        UPDATE models
+        SET model_metadata = jsonb_build_object('credits_per_1000_tokens', jsonb_build_object('input', 2.0, 'output', 3.0))
+        WHERE provider = 'anthropic'
+        RETURNING id
+      """)
+    )
+    anthropic_count = len(result.fetchall())
+    logger.info(f"Updated metadata for {anthropic_count} Anthropic models")
+
+    # Update DeepSeek models with pricing info
+    result = await db.execute(
+      text("""
+        UPDATE models
+        SET model_metadata = jsonb_build_object('credits_per_1000_tokens', jsonb_build_object('input', 1.0, 'output', 1.5))
+        WHERE provider = 'deepseek'
+        RETURNING id
+      """)
+    )
+    deepseek_count = len(result.fetchall())
+    logger.info(f"Updated metadata for {deepseek_count} DeepSeek models")
+
+  except Exception as e:
+    logger.error(f"Error updating model metadata: {e}")
+    raise
+
+
+async def rollback_model_changes(db: AsyncSession):
+  """Rollback changes by resetting props, config, and model_metadata columns to empty objects."""
+  try:
+    logger.info("Starting rollback of model props, config, and metadata changes...")
+
+    # Get count of models that will be affected
+    result = await db.execute(text("SELECT COUNT(*) FROM models"))
+    model_count = result.scalar()
+
+    if model_count == 0:
+      logger.info("No models found in database. Nothing to rollback.")
+      return
+
+    logger.info(f"Rolling back changes for {model_count} models...")
+
+    # Reset props, config, and model_metadata columns to empty JSON objects
+    await db.execute(
+      text("""
+                UPDATE models
+                SET props = '{}',
+                    config = '{}',
+                    model_metadata = '{}',
+                    updated_at = CURRENT_TIMESTAMP
+            """)
+    )
+
+    await db.commit()
+    logger.info(f"Successfully rolled back props, config, and metadata for {model_count} models")
+
+  except Exception as e:
+    await db.rollback()
+    logger.error(f"Error during rollback: {e}")
+    raise
+
+
+async def update_model_props(db: AsyncSession, props_data: dict, config_data: dict, llm_models: list):
+  """Updates the 'props' and 'config' columns for each model."""
   try:
     for name, provider, version, is_active in llm_models:
       # Get props for this model
       model_props = props_data.get(version, props_data.get(name, {}))
+
+      # Get config for this model based on provider
+      model_config = config_data.get(provider, {})
 
       # Check if model exists
       result = await db.execute(
@@ -105,12 +190,12 @@ async def update_model_props(db: AsyncSession, props_data: dict, llm_models: lis
         await db.execute(
           text("""
                         UPDATE models
-                        SET props = :props
+                        SET props = :props, config = :config
                         WHERE name = :name AND provider = :provider AND version = :version
                     """),
-          {"props": json.dumps(model_props), "name": name, "provider": provider, "version": version},
+          {"props": json.dumps(model_props), "config": json.dumps(model_config), "name": name, "provider": provider, "version": version},
         )
-        logger.info(f"Updated props for model {name} ({version})")
+        logger.info(f"Updated props and config for model {name} ({version})")
       else:
         # Insert new model
         await db.execute(
@@ -125,7 +210,7 @@ async def update_model_props(db: AsyncSession, props_data: dict, llm_models: lis
             "provider": provider,
             "version": version,
             "is_active": is_active,
-            "config": json.dumps({}),
+            "config": json.dumps(model_config),
             "props": json.dumps(model_props),
           },
         )
@@ -136,7 +221,53 @@ async def update_model_props(db: AsyncSession, props_data: dict, llm_models: lis
 
 
 def get_models_data():
-  """Returns props data and model definitions."""
+  """Returns props data, config data, and model definitions."""
+
+  # Configuration parameters by provider
+  config_data = {
+    "openai": {
+      "temperature": {"value": 0.7, "type": "number", "description": "Controls randomness in responses (0.0 = deterministic, 2.0 = very creative)"},
+      "max_tokens": {"value": 2048, "type": "integer", "description": "Maximum number of tokens to generate in response"},
+      "top_p": {"value": 1.0, "type": "number", "description": "Nucleus sampling - consider tokens with cumulative probability up to this value"},
+      "frequency_penalty": {"value": 0.0, "type": "number", "description": "Penalize frequent tokens to reduce repetition (-2.0 to 2.0)"},
+      "presence_penalty": {"value": 0.0, "type": "number", "description": "Penalize new tokens to encourage staying on topic (-2.0 to 2.0)"},
+      "stop": {"value": None, "type": "array", "description": "Stop sequences that will halt text generation"},
+      "stream": {"value": False, "type": "boolean", "description": "Enable streaming response delivery"},
+      "logprobs": {"value": None, "type": "integer", "description": "Return log probabilities of output tokens"},
+      "echo": {"value": False, "type": "boolean", "description": "Echo back the prompt in addition to the completion"},
+      "logit_bias": {"value": None, "type": "object", "description": "Modify likelihood of specified tokens appearing"},
+      "user": {"value": None, "type": "string", "description": "Unique identifier for end-user (for monitoring)"},
+      "n": {"value": 1, "type": "integer", "description": "Number of completions to generate for each prompt"},
+      "best_of": {"value": 1, "type": "integer", "description": "Generate multiple completions and return the best one"},
+      "suffix": {"value": None, "type": "string", "description": "Text to append after the generated completion"},
+    },
+    "anthropic": {
+      "temperature": {"value": 1.0, "type": "number", "description": "Amount of randomness in responses (0.0 = focused, 1.0 = creative)"},
+      "max_tokens_to_sample": {"value": 1024, "type": "integer", "description": "Maximum number of tokens to generate before stopping"},
+      "top_p": {"value": 1.0, "type": "number", "description": "Nucleus sampling threshold for token selection"},
+      "top_k": {"value": 250, "type": "integer", "description": "Only sample from the top K most likely tokens"},
+      "stop_sequences": {"value": None, "type": "array", "description": "Custom sequences that will stop text generation"},
+      "stream": {"value": False, "type": "boolean", "description": "Enable incremental streaming of response"},
+      "metadata": {"value": None, "type": "object", "description": "Additional metadata to include with the request"},
+    },
+    "deepseek": {
+      "temperature": {"value": 0.7, "type": "number", "description": "Controls creativity and randomness of responses"},
+      "max_tokens": {"value": 2048, "type": "integer", "description": "Maximum length of generated response in tokens"},
+      "top_p": {"value": 0.95, "type": "number", "description": "Nucleus sampling - controls diversity of token selection"},
+      "top_k": {"value": 50, "type": "integer", "description": "Limit token selection to top K most probable options"},
+      "frequency_penalty": {"value": 0.0, "type": "number", "description": "Reduce repetition by penalizing frequent tokens"},
+      "presence_penalty": {"value": 0.0, "type": "number", "description": "Encourage new topics by penalizing token presence"},
+      "stop": {"value": None, "type": "array", "description": "Stop sequences to halt generation at specific points"},
+      "stream": {"value": False, "type": "boolean", "description": "Stream response tokens as they are generated"},
+      "repetition_penalty": {
+        "value": 1.0,
+        "type": "number",
+        "description": "Penalty for repeating tokens (1.0 = no penalty, >1.0 = discourage repetition)",
+      },
+      "seed": {"value": None, "type": "integer", "description": "Random seed for reproducible outputs"},
+    },
+  }
+
   # Define props data directly in the migration
   props_data = {
     "gpt-4o": {
@@ -258,6 +389,42 @@ def get_models_data():
         "Translate legal jargon into plain English.",
       ],
     },
+    "claude-opus-4-20250514": {
+      "features": [
+        "Next-generation Claude with unprecedented reasoning capabilities",
+        "Advanced multimodal understanding (text, images, code, data)",
+        "Extended context window (up to 500k tokens)",
+        "Superior performance on complex analytical tasks",
+        "Enhanced mathematical and scientific reasoning",
+        "Improved code generation and debugging abilities",
+        "Advanced planning and multi-step problem solving",
+      ],
+      "examples": [
+        "Analyze this complex financial dataset and create a comprehensive investment strategy with risk assessment and projected returns over 5 years.",  # noqa: E501
+        "Design a complete microservices architecture for an e-commerce platform, including database schemas, API specifications, and deployment strategies.",  # noqa: E501
+        "Conduct a thorough literature review on quantum machine learning, synthesize findings, and propose novel research directions with detailed methodologies.",  # noqa: E501
+        "Create a detailed business transformation plan for a traditional manufacturing company transitioning to Industry 4.0, including technology roadmap and change management strategies.",  # noqa: E501
+        "Develop a comprehensive climate change mitigation strategy for a metropolitan city, considering economic, social, and environmental factors with specific implementation timelines.",  # noqa: E501
+      ],
+    },
+    "claude-sonnet-4-20250514": {
+      "features": [
+        "Balanced Claude 4 model optimizing performance and efficiency",
+        "Enhanced creative writing and content generation",
+        "Improved logical reasoning and analytical thinking",
+        "Strong coding capabilities with better debugging",
+        "Advanced document analysis and summarization",
+        "Better instruction following and nuanced understanding",
+        "Optimized for real-world business applications",
+      ],
+      "examples": [
+        "Write a compelling 10,000-word science fiction novella with complex character development and multiple plot threads.",
+        "Analyze this 50-page market research report and create an executive summary with actionable insights and strategic recommendations.",
+        "Debug this complex React application with TypeScript, identify performance bottlenecks, and suggest architectural improvements.",
+        "Create a comprehensive project management plan for a software development team including timelines, resource allocation, and risk mitigation strategies.",  # noqa: E501
+        "Translate this technical documentation from English to Spanish while maintaining technical accuracy and cultural appropriateness.",
+      ],
+    },
     "claude-3-7-sonnet-latest": {
       "features": [
         "Most advanced reasoning capabilities in the Claude family",
@@ -355,47 +522,76 @@ def get_models_data():
     ("o3-mini", "openai", "o3-mini", True),
     ("o1-preview", "openai", "o1-preview", True),
     ("o1", "openai", "o1", True),
+    ("claude-4-opus", "anthropic", "claude-opus-4-20250514", True),
+    ("claude-4-sonnet", "anthropic", "claude-sonnet-4-20250514", True),
     ("claude-3.7-sonnet", "anthropic", "claude-3-7-sonnet-latest", True),
     ("claude-3.5-sonnet", "anthropic", "claude-3-5-sonnet-latest", True),
     ("claude-3.5-haiku", "anthropic", "claude-3-5-haiku-latest", True),
     ("deepseek-chat", "deepseek", "deepseek-chat", True),
     ("deepseek-reason", "deepseek", "deepseek-reason", True),
   ]
-  return props_data, llm_models
+
+  return props_data, config_data, llm_models
 
 
 async def main():
   """Main function to execute the script."""
+  # Parse command line arguments
+  parser = argparse.ArgumentParser(description="Manage model props and config data")
+  parser.add_argument("--rollback", action="store_true", help="Rollback changes by resetting props and config to empty objects")
+  parser.add_argument("--force", action="store_true", help="Force execution even if already completed successfully")
+
+  args = parser.parse_args()
+
   script_name = "ensure_model_props"
-  logger.info(f"Starting {script_name} script...")
+
+  if args.rollback:
+    logger.info(f"Starting {script_name} script in ROLLBACK mode...")
+  else:
+    logger.info(f"Starting {script_name} script...")
 
   async with async_session() as db:
     try:
-      # Check if script has already been executed successfully
-      if await check_script_executed(db, script_name):
-        logger.info(f"Script '{script_name}' has already been executed successfully. Skipping.")
-        return
+      if args.rollback:
+        # Rollback mode
+        logger.info("Executing rollback...")
+        await rollback_model_changes(db)
 
-      # Log script execution as pending
-      await log_script_execution(db, script_name, "pending")
+        # Log rollback execution
+        await log_script_execution(db, script_name, "rolled_back")
+        logger.info(f"Script '{script_name}' rollback completed successfully.")
 
-      # Verify props column exists
-      await check_props_column_exists(db)
+      else:
+        # Normal execution mode
+        # Check if script has already been executed successfully
+        if not args.force and await check_script_executed(db, script_name):
+          logger.info(f"Script '{script_name}' has already been executed successfully. Use --force to override or --rollback to revert.")
+          return
 
-      # Update models with props data
-      props_data, llm_models = get_models_data()
-      await update_model_props(db, props_data, llm_models)
+        # Log script execution as pending
+        await log_script_execution(db, script_name, "pending")
 
-      # Log successful script execution
-      await log_script_execution(db, script_name, "success")
-      logger.info(f"Script '{script_name}' completed successfully.")
+        # Verify props column exists
+        await check_props_column_exists(db)
+
+        # Update models with props and config data
+        props_data, config_data, llm_models = get_models_data()
+        await update_model_props(db, props_data, config_data, llm_models)
+
+        # Update model metadata with pricing information
+        await update_model_metadata(db)
+
+        # Log successful script execution
+        await log_script_execution(db, script_name, "success")
+        logger.info(f"Script '{script_name}' completed successfully.")
 
     except Exception as e:
       error_message = str(e)
       logger.error(f"Error executing script: {error_message}")
 
       # Log failed execution
-      await log_script_execution(db, script_name, "failed", error_message)
+      status = "failed" if not args.rollback else "rollback_failed"
+      await log_script_execution(db, script_name, status, error_message)
       raise
 
 
