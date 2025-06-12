@@ -20,9 +20,13 @@ class AllowedFileExtension(str, Enum):
   HTML = "html"
   HTM = "htm"
   MD = "md"
+  MARKDOWN = "markdown"
   ASCIIDOC = "asciidoc"
   ADOC = "adoc"
   CSV = "csv"
+  TXT = "txt"
+  TEXT = "text"
+  JSON = "json"
 
   # Image formats
   JPG = "jpg"

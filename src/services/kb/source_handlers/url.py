@@ -1,16 +1,18 @@
-import copy
-from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from common.websocket import WebSocketManager
-from libs.firecrawl.v1 import firecrawl
-from models import DocumentStatus, KBDocumentModel, KBFolder
+from libs.definable.document.reader.arxiv_reader import ArxivReader
+from libs.definable.document.reader.base import Reader
+from libs.definable.document.reader.firecrawl_reader import FirecrawlReader
+from libs.definable.document.reader.pdf_reader import PDFUrlReader
+from libs.definable.document.reader.website_reader import WebsiteReader
+from libs.definable.document.reader.youtube_reader import YouTubeReader
+from models import KBDocumentModel, KBFolder
 
 from .base import BaseSourceHandler
 
@@ -35,6 +37,51 @@ def clean_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
       continue
     cleaned[key] = value
   return cleaned
+
+
+class URLReaderFactory:
+  """Factory class for selecting appropriate URL readers."""
+
+  @classmethod
+  def get_reader(cls, url: str, **kwargs) -> Reader:
+    """Get appropriate reader based on URL pattern."""
+
+    # Parse URL
+    parsed = urlparse(url)
+    domain = parsed.netloc.lower()
+    path = parsed.path.lower()
+
+    # YouTube URLs - exact domain matching only
+    if domain in ["youtube.com", "www.youtube.com", "youtu.be", "www.youtu.be"] or domain.endswith(".youtube.com"):
+      return YouTubeReader(chunk=False, **kwargs)
+
+    # arXiv URLs
+    if "arxiv.org" in domain:
+      return ArxivReader(chunk=False, **kwargs)
+
+    # PDF URLs (check if URL ends with .pdf)
+    if path.endswith(".pdf"):
+      return PDFUrlReader(chunk=False, **kwargs)
+
+    # Default to website reader for general web content
+    return WebsiteReader(chunk=False, **kwargs)
+
+  @classmethod
+  def get_url_type(cls, url: str) -> str:
+    """Determine the type of URL for logging/metadata."""
+    parsed = urlparse(url)
+    domain = parsed.netloc.lower()
+    path = parsed.path.lower()
+
+    # Fix YouTube detection here too
+    if domain in ["youtube.com", "www.youtube.com", "youtu.be", "www.youtu.be"] or domain.endswith(".youtube.com"):
+      return "youtube"
+    elif "arxiv.org" in domain:
+      return "arxiv"
+    elif path.endswith(".pdf"):
+      return "pdf_url"
+    else:
+      return "website"
 
 
 class URLSourceHandler(BaseSourceHandler):
@@ -103,160 +150,139 @@ class URLSourceHandler(BaseSourceHandler):
   async def validate_metadata(self, metadata: Dict, **kwargs) -> bool:
     """Validate URL metadata."""
     try:
-      # Validate URLs
-      result = urlparse(url=metadata["url"])
-      if not all([result.scheme, result.netloc]):
-        raise ValueError(f"Invalid URL: {metadata['url']}")
+      url = metadata.get("url")
+      if not url:
+        raise ValueError("URL not found in metadata")
+
+      # Basic URL validation
+      parsed = urlparse(url)
+      if not parsed.scheme or not parsed.netloc:
+        raise ValueError("Invalid URL format")
+
       return True
 
     except Exception as e:
       raise ValueError(f"Invalid URL metadata: {str(e)}")
 
   async def preprocess(self, document: KBDocumentModel, **kwargs) -> None:
-    """Preprocess URLs (validate accessibility)."""
+    """Preprocess the URL."""
     pass
 
   async def extract_content(self, document: KBDocumentModel, **kwargs) -> str:
-    """Extract content from URLs."""
+    """Extract content from URL using appropriate reader based on operation."""
     try:
-      metadata = copy.deepcopy(document.source_metadata)
-      session = cast(AsyncSession, kwargs.get("session"))
-      ws_manager = cast(WebSocketManager, kwargs.get("ws_manager"))
-      operation = metadata["operation"]
-      start_url = metadata["url"]
-      settings = clean_settings(metadata.get("settings", {}))
-      metadata["settings"] = settings
+      metadata = document.source_metadata
+      url = metadata.get("url")
+      operation = metadata.get("operation", "scrape")
+      settings = metadata.get("settings", {})
 
-      # Create folder for organizing documents
-      folder_id = await self._create_folder_for_url_document(document, session)
-      if folder_id:
-        # Update the document to use the new folder
-        document.folder_id = folder_id
-        session.add(document)
-        await session.commit()
+      if not url:
+        raise ValueError("URL not found in metadata")
 
-      if operation == "scrape":
-        # Single URL scraping - create 1 document in the folder
-        content = firecrawl.scrape_url(url=start_url, settings=settings)
+      # Get URL type for special handling
+      url_type = URLReaderFactory.get_url_type(url)
 
-        # Calculate and add size information to metadata
-        size_info = self._calculate_document_size(content)
-        metadata.update(size_info)
+      # Handle special URL types (YouTube, arXiv, PDF) with their dedicated readers
+      if url_type in ["youtube", "arxiv", "pdf_url"]:
+        reader = URLReaderFactory.get_reader(url)
+        documents = await reader.async_read(url)
+        content = "\n\n".join(doc.content for doc in documents)
 
-        # Update the document with size information
-        document.source_metadata = metadata
-        document.folder_id = folder_id
-        session.add(document)
-        await session.commit()
-
+        # Update metadata
+        metadata["url_type"] = url_type
+        metadata["processed_by"] = reader.__class__.__name__
         return content
 
-      elif operation == "crawl":
-        # Web crawling - create multiple documents in the folder
-        results = await firecrawl.crawl(
-          url=start_url,
-          params=settings,
-        )
-        if results["success"]:
-          crawl_id = results["id"]
-        else:
-          raise ValueError(f"Crawling failed: {document.id} url: {start_url}")
+      # Handle general web content based on operation
+      if operation == URLOperation.MAP:
+        # Use firecrawl API directly for mapping
+        try:
+          from libs.firecrawl.v1 import firecrawl
 
-        seen_scrape_ids: set[str] = set()
-        parent_content = ""
+          urls = firecrawl.map_url(url, settings)
+          content = f"Mapped URLs from {url}:\n" + "\n".join(urls)
+          metadata["mapped_urls"] = urls
+          metadata["url_count"] = len(urls)
+        except Exception as e:
+          raise ValueError(f"Failed to map URL: {str(e)}")
 
-        while True:
-          scrape_results = await firecrawl.get_crawl_status(crawl_id)
-          if scrape_results["success"]:
-            for scrape in scrape_results["data"]:
-              if scrape["metadata"]["scrapeId"] not in seen_scrape_ids:
-                # if the scrape is the parent url, then we add the content to the parent content
-                if scrape["metadata"]["url"] == start_url or scrape["metadata"]["url"][:-1] == metadata["url"]:
-                  parent_content = scrape["markdown"]
-                  continue
-                if scrape["markdown"].strip() == "":
-                  print(f"Skipping empty content: {scrape['metadata']['url']}")
-                  continue
-                # prepare the metadata for child document
-                child_metadata = copy.deepcopy(metadata)
-                child_metadata["url"] = scrape["metadata"]["url"]
-                child_metadata["is_parent"] = False
-                child_metadata["parent_id"] = str(document.id)
+      elif operation in [URLOperation.SCRAPE, URLOperation.CRAWL]:
+        # Use FirecrawlReader for scrape and crawl operations
+        try:
+          filtered_settings = {}
 
-                # Calculate and add size information for child document
-                child_size_info = self._calculate_document_size(scrape["markdown"])
-                child_metadata.update(child_size_info)
+          if operation == URLOperation.CRAWL:
+            # For crawl, structure parameters correctly
+            for key, value in settings.items():
+              if key in ["maxDepth", "limit", "includePaths", "excludePaths", "ignoreSitemap", "allowBackwardLinks"]:
+                filtered_settings[key] = value
 
-                title = scrape["metadata"]["url"].replace(start_url, "").strip("/").strip()
-                # Create child document in the same folder
-                child_doc = KBDocumentModel(
-                  title=title,
-                  description=scrape["metadata"]["url"],
-                  kb_id=document.kb_id,
-                  folder_id=folder_id,  # Place in the created folder
-                  content=scrape["markdown"],
-                  source_type_id=2,
-                  source_metadata=child_metadata,
-                  extraction_status=DocumentStatus.COMPLETED,
-                  indexing_status=DocumentStatus.PENDING,
-                  extraction_completed_at=datetime.now(),
-                )
-                session.add(child_doc)
-                await session.commit()
-                await ws_manager.broadcast(
-                  kwargs.get("org_id"),
-                  {"id": str(child_doc.id), "extraction_status": child_doc.extraction_status},
-                  "kb",
-                  "write",
-                )
-                seen_scrape_ids.add(scrape["metadata"]["scrapeId"])
+            # Add scrapeOptions for crawl
+            if "scrapeOptions" in settings:
+              scrape_opts = settings["scrapeOptions"]
+              filtered_settings["scrapeOptions"] = {}
+              for key, value in scrape_opts.items():
+                if key in ["excludeTags", "includeTags", "onlyMainContent", "formats", "waitFor", "timeout"]:
+                  filtered_settings["scrapeOptions"][key] = value
           else:
-            raise ValueError(f"Crawling failed: {document.id} url: {start_url}")
+            # For scrape, use flat structure
+            for key, value in settings.items():
+              if key in ["excludeTags", "includeTags", "onlyMainContent", "waitFor", "timeout", "formats"]:
+                filtered_settings[key] = value
 
-          if scrape_results["status"] == "completed":
-            break
+          print(f"Filtered firecrawl settings: {filtered_settings}")
 
-        # Calculate and add size information for parent document
-        parent_size_info = self._calculate_document_size(parent_content)
-        metadata.update(parent_size_info)
+          # Determine mode based on operation
+          mode = "scrape" if operation == URLOperation.SCRAPE else "crawl"
 
-        # Update the parent document to be in the folder with size info
-        document.folder_id = folder_id
-        document.source_metadata = metadata
-        session.add(document)
-        await session.commit()
+          # Initialize FirecrawlReader with filtered settings
+          reader = FirecrawlReader(
+            api_key=None,  # Will use default from settings
+            params=filtered_settings,
+            mode=mode,
+            chunk=False,
+          )
 
-        return parent_content
+          # Extract content
+          documents = await reader.async_read(url)
+          content = "\n\n".join(doc.content for doc in documents)
 
-      elif operation == "map":
-        # Sitemap processing
-        results = await firecrawl.map_url(
-          url=start_url,
-          settings=settings,
-        )
+          # Update metadata
+          metadata["pages_processed"] = len(documents)
 
-        # Combine all content for size calculation
-        combined_content = "\n\n".join(r.content for r in results)
+        except Exception as e:
+          # Fallback to WebsiteReader if FirecrawlReader fails
+          print(f"FirecrawlReader failed, falling back to WebsiteReader: {str(e)}")
 
-        # Calculate and add size information to metadata
-        size_info = self._calculate_document_size(combined_content)
-        metadata.update(size_info)
+          # Extract relevant settings for WebsiteReader
+          max_depth = settings.get("maxDepth", 1) if operation == URLOperation.CRAWL else 1
+          max_links = settings.get("limit", 10) if operation == URLOperation.CRAWL else 1
 
-        # Update the document to be placed in the folder with size info
-        document.folder_id = folder_id
-        document.source_metadata = metadata
-        session.add(document)
-        await session.commit()
+          reader = WebsiteReader(max_depth=max_depth, max_links=max_links, chunk=False)
 
-        return combined_content
+          if operation == URLOperation.SCRAPE:
+            documents = await reader.async_read(url)
+          else:  # CRAWL
+            documents = await reader.async_read(url)
+
+          content = "\n\n".join(doc.content for doc in documents)
+          metadata["fallback_used"] = "WebsiteReader"
 
       else:
         raise ValueError(f"Unsupported operation: {operation}")
 
+      # Update metadata with processing info
+      metadata["url_type"] = url_type
+      metadata["operation_completed"] = operation
+      metadata["processed_by"] = reader.__class__.__name__ if "reader" in locals() else "FirecrawlAPI"
+      metadata["settings_used"] = filtered_settings if "filtered_settings" in locals() else settings
+
+      return content
+
     except Exception as e:
-      raise ValueError(f"Content extraction failed: {str(e)}")
+      raise ValueError(f"Failed to extract URL content: {str(e)}")
 
   async def cleanup(self, document: KBDocumentModel, **kwargs) -> None:
     """Cleanup any temporary resources."""
-    # No cleanup needed for URL processing
+    # Most URL readers don't need cleanup
     pass
