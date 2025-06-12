@@ -5,9 +5,8 @@ from pathlib import Path
 from typing import IO, Any, List, Union
 from uuid import uuid4
 
-from libs.agno.document.base import Document
-from libs.agno.document.reader.base import Reader
-from libs.agno.utils.log import log_info
+from libs.definable.document.base import Document
+from libs.definable.document.reader.base import Reader
 
 
 class JSONReader(Reader):
@@ -20,12 +19,11 @@ class JSONReader(Reader):
       if isinstance(path, Path):
         if not path.exists():
           raise FileNotFoundError(f"Could not find file: {path}")
-        log_info(f"Reading: {path}")
+
         json_name = path.name.split(".")[0]
         content = path.read_text("utf-8")
 
       elif isinstance(path, BytesIO):
-        log_info(f"Reading uploaded file: {path.name}")
         json_name = path.name.split(".")[0]
         path.seek(0)
         content = path.read().decode("utf-8")

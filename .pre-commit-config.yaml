@@ -4,7 +4,7 @@ repos:
       # Example Ruff hook (for reference)
       - id: ruff
         name: Ruff (local)
-        entry: uv run ruff
+        entry: python3 -m ruff
         language: system
         pass_filenames: true
         types: [python]
@@ -16,7 +16,7 @@ repos:
       # Local Mypy hook
       - id: mypy
         name: Mypy (local)
-        entry: uv run mypy
+        entry: python3 -m mypy
         language: system
         pass_filenames: false
         types: [python]

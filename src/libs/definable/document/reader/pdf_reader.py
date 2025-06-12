@@ -3,10 +3,10 @@ from pathlib import Path
 from typing import IO, Any, List, Optional, Union
 from uuid import uuid4
 
-from libs.agno.document.base import Document
-from libs.agno.document.reader.base import Reader
-from libs.agno.utils.http import async_fetch_with_retry, fetch_with_retry
-from libs.agno.utils.log import log_info, logger
+from agno.utils.http import async_fetch_with_retry, fetch_with_retry
+
+from libs.definable.document.base import Document
+from libs.definable.document.reader.base import Reader
 
 try:
   from pypdf import PdfReader as DocumentReader  # noqa: F401
@@ -105,12 +105,9 @@ class PDFReader(BasePDFReader):
     except Exception:
       doc_name = "pdf"
 
-    log_info(f"Reading: {doc_name}")
-
     try:
       doc_reader = DocumentReader(pdf)
-    except PdfStreamError as e:
-      logger.error(f"Error reading PDF: {e}")
+    except PdfStreamError:
       return []
 
     documents = []
@@ -136,12 +133,9 @@ class PDFReader(BasePDFReader):
     except Exception:
       doc_name = "pdf"
 
-    log_info(f"Reading: {doc_name}")
-
     try:
       doc_reader = DocumentReader(pdf)
-    except PdfStreamError as e:
-      logger.error(f"Error reading PDF: {e}")
+    except PdfStreamError:
       return []
 
     async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:
@@ -173,10 +167,8 @@ class PDFUrlReader(BasePDFReader):
 
     from io import BytesIO
 
-    log_info(f"Reading: {url}")
-
     # Retry the request up to 3 times with exponential backoff
-    response = fetch_with_retry(url, proxy=self.proxy)
+    response = fetch_with_retry(url)
 
     doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
     doc_reader = DocumentReader(BytesIO(response.content))
@@ -202,8 +194,6 @@ class PDFUrlReader(BasePDFReader):
     from io import BytesIO
 
     import httpx
-
-    log_info(f"Reading: {url}")
 
     client_args = {"proxy": self.proxy} if self.proxy else {}
     async with httpx.AsyncClient(**client_args) as client:  # type: ignore
@@ -243,7 +233,6 @@ class PDFImageReader(BasePDFReader):
     except Exception:
       doc_name = "pdf"
 
-    log_info(f"Reading: {doc_name}")
     doc_reader = DocumentReader(pdf)
 
     documents = []
@@ -267,7 +256,6 @@ class PDFImageReader(BasePDFReader):
     except Exception:
       doc_name = "pdf"
 
-    log_info(f"Reading: {doc_name}")
     doc_reader = DocumentReader(pdf)
 
     documents = await asyncio.gather(*[
@@ -295,7 +283,6 @@ class PDFUrlImageReader(BasePDFReader):
     import httpx
 
     # Read the PDF from the URL
-    log_info(f"Reading: {url}")
     response = httpx.get(url, proxy=self.proxy) if self.proxy else httpx.get(url)
 
     doc_name = url.split("/")[-1].split(".")[0].replace(" ", "_")
@@ -318,8 +305,6 @@ class PDFUrlImageReader(BasePDFReader):
     from io import BytesIO
 
     import httpx
-
-    log_info(f"Reading: {url}")
 
     client_args = {"proxy": self.proxy} if self.proxy else {}
     async with httpx.AsyncClient(**client_args) as client:  # type: ignore

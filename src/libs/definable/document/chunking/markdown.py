@@ -8,8 +8,8 @@ try:
 except ImportError:
   raise ImportError("`unstructured` not installed. Please install it using `pip install unstructured markdown`")
 
-from agno.document.base import Document
-from agno.document.chunking.strategy import ChunkingStrategy
+from libs.definable.document.base import Document
+from libs.definable.document.chunking.strategy import ChunkingStrategy
 
 
 class MarkdownChunking(ChunkingStrategy):

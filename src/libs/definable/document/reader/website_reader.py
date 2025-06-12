@@ -6,9 +6,9 @@ from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from agno.document.base import Document
-from agno.document.reader.base import Reader
-from agno.utils.log import log_debug, logger
+
+from libs.definable.document.base import Document
+from libs.definable.document.reader.base import Reader
 
 try:
   from bs4 import BeautifulSoup, Tag  # noqa: F401
@@ -144,7 +144,6 @@ class WebsiteReader(Reader):
       self.delay()
 
       try:
-        log_debug(f"Crawling: {current_url}")
         response = httpx.get(current_url, timeout=self.timeout, proxy=self.proxy) if self.proxy else httpx.get(current_url, timeout=self.timeout)
 
         response.raise_for_status()
@@ -169,21 +168,18 @@ class WebsiteReader(Reader):
             if full_url_str not in self._visited and (full_url_str, current_depth + 1) not in self._urls_to_crawl:
               self._urls_to_crawl.append((full_url_str, current_depth + 1))
 
-      except httpx.HTTPStatusError as e:
+      except httpx.HTTPStatusError:
         # Log HTTP status errors but continue crawling other pages
-        logger.warning(f"HTTP status error while crawling {current_url}: {e}")
         # For the initial URL, we should raise the error
         if current_url == url and not crawler_result:
           raise
-      except httpx.RequestError as e:
+      except httpx.RequestError:
         # Log request errors but continue crawling other pages
-        logger.warning(f"Request error while crawling {current_url}: {e}")
         # For the initial URL, we should raise the error
         if current_url == url and not crawler_result:
           raise
       except Exception as e:
         # Log other exceptions but continue crawling other pages
-        logger.warning(f"Failed to crawl {current_url}: {e}")
         # For the initial URL, we should raise the error
         if current_url == url and not crawler_result:
           # Wrap non-HTTP exceptions in a RequestError
@@ -236,7 +232,6 @@ class WebsiteReader(Reader):
         await self.async_delay()
 
         try:
-          log_debug(f"Crawling asynchronously: {current_url}")
           response = await client.get(current_url, timeout=self.timeout, follow_redirects=True)
           response.raise_for_status()
 
@@ -261,21 +256,18 @@ class WebsiteReader(Reader):
               if full_url_str not in self._visited and (full_url_str, current_depth + 1) not in self._urls_to_crawl:
                 self._urls_to_crawl.append((full_url_str, current_depth + 1))
 
-        except httpx.HTTPStatusError as e:
+        except httpx.HTTPStatusError:
           # Log HTTP status errors but continue crawling other pages
-          logger.warning(f"HTTP status error while crawling asynchronously {current_url}: {e}")
           # For the initial URL, we should raise the error
           if current_url == url and not crawler_result:
             raise
-        except httpx.RequestError as e:
+        except httpx.RequestError:
           # Log request errors but continue crawling other pages
-          logger.warning(f"Request error while crawling asynchronously {current_url}: {e}")
           # For the initial URL, we should raise the error
           if current_url == url and not crawler_result:
             raise
         except Exception as e:
           # Log other exceptions but continue crawling other pages
-          logger.warning(f"Failed to crawl asynchronously {current_url}: {e}")
           # For the initial URL, we should raise the error
           if current_url == url and not crawler_result:
             # Wrap non-HTTP exceptions in a RequestError
@@ -300,7 +292,6 @@ class WebsiteReader(Reader):
     :raises httpx.RequestError: If there's a request-related error.
     """
 
-    log_debug(f"Reading: {url}")
     try:
       crawler_result = self.crawl(url)
       documents = []
@@ -326,8 +317,7 @@ class WebsiteReader(Reader):
             )
           )
       return documents
-    except (httpx.HTTPStatusError, httpx.RequestError) as e:
-      logger.error(f"Error reading website {url}: {e}")
+    except (httpx.HTTPStatusError, httpx.RequestError):
       raise
 
   async def async_read(self, url: str) -> List[Document]:
@@ -342,7 +332,6 @@ class WebsiteReader(Reader):
     :raises httpx.HTTPStatusError: If there's an HTTP status error.
     :raises httpx.RequestError: If there's a request-related error.
     """
-    log_debug(f"Reading asynchronously: {url}")
     try:
       crawler_result = await self.async_crawl(url)
       documents = []
@@ -371,6 +360,5 @@ class WebsiteReader(Reader):
         documents.extend(doc_list)
 
       return documents
-    except (httpx.HTTPStatusError, httpx.RequestError) as e:
-      logger.error(f"Error reading website asynchronously {url}: {e}")
+    except (httpx.HTTPStatusError, httpx.RequestError):
       raise

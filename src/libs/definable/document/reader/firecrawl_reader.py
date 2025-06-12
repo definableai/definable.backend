@@ -2,10 +2,11 @@ import asyncio
 from dataclasses import dataclass
 from typing import Dict, List, Literal, Optional
 
-from agno.document.base import Document
-from agno.document.chunking.strategy import ChunkingStrategy
-from agno.document.reader.base import Reader
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug
+
+from libs.definable.document.base import Document
+from libs.definable.document.chunking.strategy import ChunkingStrategy
+from libs.definable.document.reader.base import Reader
 
 try:
   from firecrawl import FirecrawlApp  # type: ignore[attr-defined]
@@ -70,7 +71,6 @@ class FirecrawlReader(Reader):
     # Ensure content is a string
     if content is None:
       content = ""  # or you could use metadata to create a meaningful message
-      logger.warning(f"No content received for URL: {url}")
 
     documents = []
     if self.chunk and content:  # Only chunk if there's content

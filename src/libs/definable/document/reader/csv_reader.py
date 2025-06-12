@@ -7,16 +7,15 @@ from typing import IO, Any, List, Optional, Union
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from libs.agno.utils.http import async_fetch_with_retry, fetch_with_retry
+from agno.utils.http import async_fetch_with_retry, fetch_with_retry
 
 try:
   import aiofiles
 except ImportError:
   raise ImportError("`aiofiles` not installed. Please install it with `pip install aiofiles`")
 
-from libs.agno.document.base import Document
-from libs.agno.document.reader.base import Reader
-from libs.agno.utils.log import logger
+from libs.definable.document.base import Document
+from libs.definable.document.reader.base import Reader
 
 
 class CSVReader(Reader):
@@ -27,10 +26,8 @@ class CSVReader(Reader):
       if isinstance(file, Path):
         if not file.exists():
           raise FileNotFoundError(f"Could not find file: {file}")
-        logger.info(f"Reading: {file}")
         file_content = file.open(newline="", mode="r", encoding="utf-8")
       else:
-        logger.info(f"Reading retrieved file: {file.name}")
         file.seek(0)
         file_content = io.StringIO(file.read().decode("utf-8"))  # type: ignore
 
@@ -54,8 +51,7 @@ class CSVReader(Reader):
           chunked_documents.extend(self.chunk_document(document))
         return chunked_documents
       return documents
-    except Exception as e:
-      logger.error(f"Error reading: {file.name if isinstance(file, IO) else file}: {e}")
+    except Exception:
       return []
 
   async def async_read(self, file: Union[Path, IO[Any]], delimiter: str = ",", quotechar: str = '"', page_size: int = 1000) -> List[Document]:
@@ -75,12 +71,10 @@ class CSVReader(Reader):
       if isinstance(file, Path):
         if not file.exists():
           raise FileNotFoundError(f"Could not find file: {file}")
-        logger.info(f"Reading async: {file}")
         async with aiofiles.open(file, mode="r", encoding="utf-8", newline="") as file_content:
           content = await file_content.read()
           file_content_io = io.StringIO(content)
       else:
-        logger.info(f"Reading retrieved file async: {file.name}")
         file.seek(0)
         file_content_io = io.StringIO(file.read().decode("utf-8"))  # type: ignore
 
@@ -123,8 +117,7 @@ class CSVReader(Reader):
         documents = await self.chunk_documents_async(documents)
 
       return documents
-    except Exception as e:
-      logger.error(f"Error reading async: {file.name if isinstance(file, IO) else file}: {e}")
+    except Exception:
       return []
 
 
@@ -139,9 +132,8 @@ class CSVUrlReader(Reader):
     if not url:
       raise ValueError("No URL provided")
 
-    logger.info(f"Reading: {url}")
     # Retry the request up to 3 times with exponential backoff
-    response = fetch_with_retry(url, proxy=self.proxy)
+    response = fetch_with_retry(url)
 
     parsed_url = urlparse(url)
     filename = os.path.basename(parsed_url.path) or "data.csv"
@@ -159,8 +151,6 @@ class CSVUrlReader(Reader):
       raise ValueError("No URL provided")
 
     import httpx
-
-    logger.info(f"Reading async: {url}")
 
     client_args = {"proxy": self.proxy} if self.proxy else {}
     async with httpx.AsyncClient(**client_args) as client:  # type: ignore
