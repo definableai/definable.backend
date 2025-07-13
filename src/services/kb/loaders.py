@@ -59,7 +59,7 @@ class DoclingFileLoader:
       },
     )
 
-    self.chunker = HybridChunker(tokenizer="BAAI/bge-small-en-v1.5")
+    self.chunker = HybridChunker()
 
   def _get_input_format(self) -> InputFormat:
     """Determine the input format based on file extension."""

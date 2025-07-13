@@ -108,20 +108,7 @@ class FileDocumentData(BaseModel):
   title: Annotated[str, Form(..., description="Title of the document")]
   description: Annotated[str, Form(..., description="Description of the document")]
   file: Annotated[UploadFile, File(..., description="File to upload")]
-  folder_path: Optional[List[str]] = None  # Store as list after validation
-
-  # @field_validator("folder_path", mode="before")
-  # @classmethod
-  # def validate_folder_path(cls, value: str) -> List[str]:
-  #   """Validate folder path."""
-  #   if isinstance(value, str):
-  #     try:
-  #       folders = [folder for folder in value.split("/") if folder]
-  #       if not all(folders):
-  #         raise ValueError("Empty folder names are not allowed")
-  #       return folders
-  #     except ValueError:
-  #       raise ValueError("folder_path must be a string in format 'folder1/folder2/folder3' or a list of strings")
+  folder_id: Annotated[Optional[str], Form(..., description="Folder ID")]
 
   def get_metadata(self) -> Dict:
     """Generate metadata for file document."""
@@ -140,18 +127,10 @@ async def validate_file_document_data(
   title: Annotated[str, Form(min_length=1, max_length=200)],
   file: Annotated[UploadFile, File(description="File to upload")],
   description: Annotated[str, Form()] = "",
-  folder_path: Annotated[Optional[str], Form(..., description="Folder path")] = None,
+  folder_id: Annotated[Optional[str], Form(..., description="Folder ID")] = None,
 ) -> FileDocumentData:
   """Validate file document form data."""
-  folders = []
-  if folder_path:
-    try:
-      folders = [folder for folder in folder_path.split("/") if folder]
-      if not all(folders):
-        raise ValueError("Empty folder names are not allowed")
-    except ValueError:
-      raise ValueError("folder_path must be a string in format 'folder1/folder2/folder3' or a list of strings")
-  return FileDocumentData(title=title, description=description, file=file, folder_path=folders)
+  return FileDocumentData(title=title, description=description, file=file, folder_id=folder_id)
 
 
 class ScrapeOptions(BaseModel):
@@ -196,7 +175,7 @@ class URLDocumentData(DocumentBase):
 
   url: str = Field(..., description="Single URL to scrape")
   operation: Literal["scrape", "crawl", "map"] = Field(..., description="Operation to perform")
-  source_id: Optional[UUID] = Field(default=None, description="Source ID")
+  folder_id: Optional[str] = Field(None, description="Folder ID")
   settings: ScrapeOptions | CrawlerOptions | MapOptions = Field(..., description="Settings for the operation")
 
   @model_validator(mode="after")
