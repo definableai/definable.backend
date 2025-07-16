@@ -8,7 +8,7 @@ authors = [
     {name = "Anandesh Sharma", email = "anandesh.sharma@dolbo.ai"},
 ]
 
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "agno>=1.3.1",
     "aioboto3>=14.1.0",
@@ -31,7 +31,7 @@ dependencies = [
     "mypy>=1.15.0",
     "newspaper4k>=0.9.3.1",
     "pre-commit>=4.2.0",
-    "psycopg-binary>=3.2.7",
+    "psycopg[binary]>=3.2.9",
     "pydantic>=2.11.3",
     "pydantic-settings>=2.8.1",
     "pyjwt>=2.10.1",
@@ -40,6 +40,7 @@ dependencies = [
     "razorpay>=1.4.2",
     "resend>=2.7.0",
     "ruff>=0.11.5",
+    "setuptools>=80.9.0",
     "sqlalchemy[asyncio]>=2.0.40",
     "stripe>=12.0.0",
     "stytch>=13.3.0",

@@ -285,44 +285,16 @@ class KnowledgeBaseService:
       )
 
       # Process folder path if provided
-      folder_id = None
-      folder_path = document_data.folder_path if hasattr(document_data, "folder_path") and document_data.folder_path else None
+      folder_id = document_data.folder_id
+      print(document_data)
 
-      if folder_path and isinstance(folder_path, list) and len(folder_path) > 0:
-        current_parent_id = None
-
-        # Process each folder in the path
-        # TODO: can we optimize this to not do a loop on a query?
-        for i, folder_name in enumerate(folder_path):
-          # Check if folder with same name already exists at this level
-          query = select(KBFolder).where(KBFolder.kb_id == kb_id, KBFolder.name == folder_name, KBFolder.parent_id == current_parent_id)
-          result = await session.execute(query)
-          folder = result.scalar_one_or_none()
-
-          if not folder:
-            # Create new folder
-            folder = KBFolder(
-              name=folder_name,
-              parent_id=current_parent_id,
-              kb_id=kb_id,
-              folder_info={},  # Empty default info
-            )
-            session.add(folder)
-            await session.flush()  # To get the ID
-
-          # Move to next level
-          current_parent_id = folder.id
-
-        # Set the final folder ID for the document
-        folder_id = current_parent_id
-
-        # Check if a file with the same name already exists in this folder
-        existing_file_query = select(KBDocumentModel).where(
-          KBDocumentModel.kb_id == kb_id, KBDocumentModel.folder_id == folder_id, KBDocumentModel.title == document_data.title
-        )
-        existing_file = await session.execute(existing_file_query)
-        if existing_file.scalar_one_or_none():
-          raise HTTPException(status_code=400, detail=f"A file with name '{document_data.title}' already exists in this folder")
+      # Check if a file with the same name already exists in this folder
+      existing_file_query = select(KBDocumentModel).where(
+        KBDocumentModel.kb_id == kb_id, KBDocumentModel.folder_id == folder_id, KBDocumentModel.title == document_data.title
+      )
+      existing_file = await session.execute(existing_file_query)
+      if existing_file.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail=f"A file with name '{document_data.title}' already exists in this folder")
 
       # Upload file to s3
       config_schema = source_type_model.config_schema
@@ -332,11 +304,7 @@ class KnowledgeBaseService:
         await charge.delete(reason="Storage configuration not found")
         raise HTTPException(status_code=400, detail="Storage not found in source type config")
 
-      if folder_path:
-        joined_folder_path = "/".join(folder_path)
-        s3_key = f"{storage['bucket']}/{storage['path']}/{org_id}-{kb_id}/{joined_folder_path}/{document_data.file.filename}"
-      else:
-        s3_key = f"{storage['bucket']}/{storage['path']}/{org_id}-{kb_id}/{document_data.file.filename}"
+      s3_key = f"{storage['bucket']}/{storage['path']}/{org_id}-{kb_id}/{document_data.file.filename}"
 
       try:
         # Upload to S3 (using already read file_content)
@@ -348,8 +316,6 @@ class KnowledgeBaseService:
 
       # Update file metadata with s3 key and folder info
       file_metadata["s3_key"] = s3_key
-      if folder_id:
-        file_metadata["folder_id"] = str(folder_id)
 
       # Store the transaction ID in metadata for tracking
       file_metadata["billing_transaction_id"] = str(charge.transaction_id)
@@ -416,17 +382,27 @@ class KnowledgeBaseService:
       source_type_model = await session.get(SourceTypeModel, 2)
       if not source_type_model:
         raise HTTPException(status_code=404, detail="Source type not found")
+
+      # Convert folder_id from string to UUID if provided
+      folder_id = None
+      if document_data.folder_id:
+        try:
+          folder_id = UUID(document_data.folder_id)
+        except ValueError:
+          raise HTTPException(status_code=400, detail="Invalid folder ID format")
+
       # Parse URLs and config
       metadata = document_data.get_metadata()
       metadata["is_parent"] = True
       metadata["parent_id"] = None
+
       # Create parent document to track crawl job
       parent_doc = KBDocumentModel(
         title=document_data.title,
         description=document_data.description,
         kb_id=kb_id,
+        folder_id=folder_id,  # Use converted UUID
         source_type_id=2,
-        source_id=document_data.source_id,
         source_metadata=metadata,
         extraction_status=DocumentStatus.PENDING,
         indexing_status=DocumentStatus.PENDING,
@@ -1246,6 +1222,9 @@ class KnowledgeBaseService:
       doc.error_message = str(e)
       session.add(doc)
       await session.commit()
+      import traceback
+
+      print(traceback.format_exc())
       self.logger.error(f"Error processing document ID: {doc.id}: {str(e)}")
 
       # If we have a charge and extraction failed, release part of the hold
