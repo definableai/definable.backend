@@ -187,7 +187,7 @@ class URLDocumentData(DocumentBase):
         if self.operation == "scrape":
           self.settings = ScrapeOptions()
         elif self.operation == "crawl":
-          self.settings = CrawlerOptions(maxDepth=2, limit=1)
+          self.settings = CrawlerOptions(maxDepth=2, limit=10)
         elif self.operation == "map":
           self.settings = MapOptions()
         else:
