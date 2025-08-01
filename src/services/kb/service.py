@@ -1,6 +1,6 @@
 from datetime import datetime
 from io import BytesIO
-from typing import Annotated, List, Optional
+from typing import Annotated, Callable, List, Optional
 from uuid import UUID
 
 from fastapi import BackgroundTasks, Body, Depends, HTTPException
@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 from typing_extensions import TypedDict
 
-from database import async_engine, get_db
+from database import async_engine, async_session, get_db
 from dependencies.security import RBAC
 from dependencies.usage import Usage
 from libs.s3.v1 import s3_client
@@ -349,7 +349,7 @@ class KnowledgeBaseService:
 
       # For the second task, create a separate related charge
       background_tasks.add_task(
-        self._indexing_documents_task, [db_doc.id], org_id, kb_id, session, initial_charge_id=charge.transaction_id, user_id=UUID(user["id"])
+        self._indexing_documents_task, [db_doc.id], org_id, kb_id, initial_charge_id=charge.transaction_id, user_id=UUID(user["id"])
       )
 
       # If everything is successful, return the response
@@ -375,28 +375,103 @@ class KnowledgeBaseService:
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("kb", "write")),
+    usage: dict = Depends(Usage("url_extraction", qty=1, background=True, metadata={"operation": "url_document_extraction"})),
   ) -> KBDocumentResponse:
     """Add URL document to knowledge base."""
+    self.logger.info(f"Starting URL document addition for org_id={org_id}, kb_id={kb_id}")
+    self.logger.info(f"URL document data: url={document_data.url}, operation={document_data.operation}, title={document_data.title}")
+
     try:
+      # Get charge from usage dependency
+      charge = usage["charge"]
+      self.logger.info(f"Created initial charge for URL extraction: {charge.transaction_id}")
+      self.logger.debug(f"Charge details: name=url_extraction, transaction_id={charge.transaction_id}")
+
+      self.logger.debug(f"Full document_data: {document_data}")
+
       # get source type model
+      self.logger.debug("Fetching source type model for URL (ID=2)")
       source_type_model = await session.get(SourceTypeModel, 2)
       if not source_type_model:
+        self.logger.error("Source type model not found for URL processing")
+        # Release charge if source type not found
+        await charge.delete(reason="Source type not found")
+        self.logger.info(f"Released charge {charge.transaction_id} due to missing source type")
         raise HTTPException(status_code=404, detail="Source type not found")
+
+      self.logger.info(f"Source type model found: {source_type_model.name}")
 
       # Convert folder_id from string to UUID if provided
       folder_id = None
       if document_data.folder_id:
+        self.logger.debug(f"Converting folder_id from string: {document_data.folder_id}")
         try:
           folder_id = UUID(document_data.folder_id)
-        except ValueError:
+          self.logger.info(f"Folder ID converted successfully: {folder_id}")
+        except ValueError as ve:
+          self.logger.error(f"Invalid folder ID format: {document_data.folder_id}, error: {str(ve)}")
+          # Release charge if folder ID is invalid
+          await charge.delete(reason="Invalid folder ID format")
+          self.logger.info(f"Released charge {charge.transaction_id} due to invalid folder ID")
           raise HTTPException(status_code=400, detail="Invalid folder ID format")
+      else:
+        self.logger.info("No folder_id provided, document will be placed at root level")
 
       # Parse URLs and config
+      self.logger.debug("Generating metadata from document data")
       metadata = document_data.get_metadata()
       metadata["is_parent"] = True
       metadata["parent_id"] = None
+      self.logger.debug(f"Generated metadata: {metadata}")
+
+      # Calculate charge quantity based on operation type and settings
+      self.logger.info("Calculating charge quantity based on operation and settings")
+      url_metadata = document_data.get_metadata()
+      charge_qty = 1  # Base charge for URL extraction
+
+      # Adjust charge based on operation type
+      if document_data.operation == "crawl" and document_data.settings:
+        # Import the CrawlerOptions type for type checking
+        from .schema import CrawlerOptions
+
+        if isinstance(document_data.settings, CrawlerOptions):
+          original_charge_qty = charge_qty
+          charge_qty = max(1, document_data.settings.limit // 10)  # 1 charge per 10 pages
+          self.logger.info(
+            f"Crawl operation - adjusted charge quantity from {original_charge_qty} to {charge_qty} based on limit={document_data.settings.limit}"
+          )
+        else:
+          self.logger.warning(f"Crawl operation but settings is not CrawlerOptions type: {type(document_data.settings)}")
+      elif document_data.operation == "map":
+        self.logger.info("Map operation - using fixed charge quantity of 1")
+        charge_qty = 1  # Fixed charge for mapping
+      else:  # scrape
+        self.logger.info("Scrape operation - using fixed charge quantity of 1")
+        charge_qty = 1  # Fixed charge for single page scrape
+
+      url_metadata["charge_qty"] = charge_qty
+      self.logger.info(f"Final charge quantity calculated: {charge_qty}")
+
+      # Update charge with URL-specific information
+      self.logger.info("Updating charge with URL-specific metadata")
+      await charge.calculate_and_update(
+        metadata={
+          "url": document_data.url,
+          "operation": document_data.operation,
+          "settings": url_metadata.get("settings", {}),
+          "charge_qty": charge_qty,
+          "folder_id": str(folder_id) if folder_id else None,
+        },
+        status="processing",  # It's still being processed at this point
+      )
+      self.logger.info(f"Charge updated successfully for transaction {charge.transaction_id}")
+
+      # Store the transaction ID in metadata for tracking
+      metadata["billing_transaction_id"] = str(charge.transaction_id)
+      self.logger.debug(f"Added billing transaction ID to metadata: {charge.transaction_id}")
 
       # Create parent document to track crawl job
+      self.logger.info("Creating parent document for URL processing")
       parent_doc = KBDocumentModel(
         title=document_data.title,
         description=document_data.description,
@@ -410,12 +485,43 @@ class KnowledgeBaseService:
       session.add(parent_doc)
       await session.commit()
       await session.refresh(parent_doc)
+      self.logger.info(f"Parent document created successfully with ID: {parent_doc.id}")
 
-      background_tasks.add_task(self._process_document_task, source_type=source_type_model, doc=parent_doc, session=session, org_id=org_id)
+      # Create indexing callback to trigger after extraction completion
+      async def indexing_callback():
+        """Callback to trigger indexing after successful extraction."""
+        await self._indexing_documents_task([parent_doc.id], org_id, kb_id, initial_charge_id=charge.transaction_id, user_id=UUID(user["id"]))
+
+      # Add document processing task with indexing callback
+      self.logger.info("Adding background task for document processing with indexing callback")
+      background_tasks.add_task(
+        self._process_document_task,
+        source_type=source_type_model,
+        doc=parent_doc,
+        org_id=org_id,
+        charge=charge,
+        complete_charge=False,  # Don't complete the extraction charge
+        on_completion_callback=indexing_callback,  # Trigger indexing upon completion
+      )
+      self.logger.info(f"Document processing task with callback added for document {parent_doc.id}")
+
+      # If everything is successful, return the response
+      self.logger.info(f"URL document addition completed successfully - document_id={parent_doc.id}, transaction_id={charge.transaction_id}")
       return KBDocumentResponse.model_validate(parent_doc)
 
     except Exception as e:
-      raise HTTPException(status_code=400, detail=str(e))
+      # If we have a charge and encounter any error, release the hold
+      self.logger.error(f"Error occurred during URL document addition: {str(e)}")
+      if "charge" in locals():
+        try:
+          await charge.delete(reason=f"Error in URL document upload: {str(e)}")
+          self.logger.info(f"Released charge for transaction {charge.transaction_id} due to error")
+        except Exception as release_error:
+          self.logger.error(f"Failed to release charge: {str(release_error)}")
+
+      # Re-raise the original exception
+      self.logger.error(f"Re-raising exception for URL document addition: {str(e)}")
+      raise
 
   async def get_get_document_chunks(
     self,
@@ -513,7 +619,7 @@ class KnowledgeBaseService:
     user: dict = Depends(RBAC("kb", "write")),
   ) -> JSONResponse:
     """Index documents."""
-    background_tasks.add_task(self._indexing_documents_task, doc_ids, org_id, kb_id, session)
+    background_tasks.add_task(self._indexing_documents_task, doc_ids, org_id, kb_id)
     return JSONResponse(content={"message": "Documents are getting indexed"})
 
   async def put_update_document_chunk(
@@ -780,6 +886,7 @@ class KnowledgeBaseService:
     org_id: UUID,
     kb_id: UUID,
     folder_data: Annotated[KBFolderCreate, Body(...)],
+    parent_id: Optional[UUID] = None,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("kb", "write")),
   ) -> FolderItem:
@@ -790,21 +897,26 @@ class KnowledgeBaseService:
         org_id: Organization ID
         kb_id: Knowledge Base ID
         folder_data: Folder creation data
+        parent_id: Parent folder ID (can be passed as query parameter or in body)
         session: Database session
         user: User information
 
     Returns:
         Created folder information
     """
+
+    # Use parent_id from query parameter if provided, otherwise use from folder_data
+    effective_parent_id = parent_id if parent_id is not None else folder_data.parent_id
+
     # Check if knowledge base exists
     kb_model = await self._get_kb(kb_id, org_id, session)
     if not kb_model:
       raise HTTPException(status_code=404, detail="Knowledge base not found")
 
     # Check parent folder if specified
-    if folder_data.parent_id:
+    if effective_parent_id:
       # Check if parent folder exists and belongs to this KB
-      parent_query = select(KBFolder).where(KBFolder.id == folder_data.parent_id, KBFolder.kb_id == kb_id)
+      parent_query = select(KBFolder).where(KBFolder.id == effective_parent_id, KBFolder.kb_id == kb_id)
       result = await session.execute(parent_query)
       parent_folder = result.scalar_one_or_none()
 
@@ -812,7 +924,7 @@ class KnowledgeBaseService:
         raise HTTPException(status_code=404, detail="Parent folder not found")
 
       # Check if folder with same name already exists in this parent
-      existing_query = select(KBFolder).where(KBFolder.kb_id == kb_id, KBFolder.parent_id == folder_data.parent_id, KBFolder.name == folder_data.name)
+      existing_query = select(KBFolder).where(KBFolder.kb_id == kb_id, KBFolder.parent_id == effective_parent_id, KBFolder.name == folder_data.name)
     else:
       # Check at root level
       existing_query = select(KBFolder).where(KBFolder.kb_id == kb_id, KBFolder.parent_id.is_(None), KBFolder.name == folder_data.name)
@@ -824,7 +936,7 @@ class KnowledgeBaseService:
       raise HTTPException(status_code=400, detail=f"A folder named '{folder_data.name}' already exists")
 
     # Create new folder
-    new_folder = KBFolder(name=folder_data.name, parent_id=folder_data.parent_id, kb_id=kb_id, folder_info=folder_data.folder_info)
+    new_folder = KBFolder(name=folder_data.name, parent_id=effective_parent_id, kb_id=kb_id, folder_info=folder_data.folder_info)
 
     session.add(new_folder)
     await session.commit()
@@ -1007,241 +1119,306 @@ class KnowledgeBaseService:
     doc_ids: List[UUID],
     org_id: UUID,
     kb_id: UUID,
-    session: AsyncSession,
     initial_charge_id: Optional[str] = None,
     user_id: Optional[UUID] = None,
   ) -> None:
     """Background task to process document with billing."""
-    self.logger.info(f"Indexing documents: {doc_ids}")
-    doc_models = await self._get_documents(doc_ids, org_id, session)
-    if not doc_models:
-      raise HTTPException(status_code=404, detail="Documents not found")
-    self.logger.info(f"Documents found: {doc_models}")
+    self.logger.info(f"Starting indexing task for documents: {doc_ids}")
+    self.logger.info(f"Task parameters - org_id: {org_id}, kb_id: {kb_id}, initial_charge_id: {initial_charge_id}, user_id: {user_id}")
 
-    # Create a new charge specifically for embedding operations
-    embedding_charge = None
-    embedding_charge_created = False  # Add this flag to track if charge was created successfully
-    try:
-      # Use the provided user_id directly instead of trying to get it from documents
-      if user_id:
-        self.logger.info("Creating embedding charge")
-        # Create a charge for embedding generation
-        embedding_charge = Charge(name="o1-small-text-indexing", user_id=user_id, org_id=org_id, session=session, service="Knowledge Base")
-        self.logger.info(f"Embedding charge: {embedding_charge}")
+    # Create a new database session for this background task
+    async with async_session() as session:
+      self.logger.debug("Created new database session for indexing task")
 
-        def convert_uuids_to_strings(data):
-          if isinstance(data, dict):
-            return {k: str(v) if isinstance(v, UUID) else convert_uuids_to_strings(v) if isinstance(v, (dict, list)) else v for k, v in data.items()}
-          elif isinstance(data, list):
-            return [
-              str(item) if isinstance(item, UUID) else convert_uuids_to_strings(item) if isinstance(item, (dict, list)) else item for item in data
-            ]
-          return data
+      doc_models = await self._get_documents(doc_ids, org_id, session)
+      if not doc_models:
+        self.logger.error(f"No documents found for IDs: {doc_ids}")
+        raise HTTPException(status_code=404, detail="Documents not found")
+      self.logger.info(f"Documents found: {[doc.id for doc in doc_models]}")
 
-        # Create metadata with all UUIDs converted to strings
-        metadata = {
-          "operation": "document_embedding",
-          "kb_id": str(kb_id),
-          "doc_count": len(doc_ids),
-          "related_charge_id": initial_charge_id,
-          "user_id": str(user_id),
-        }
-
-        # Convert any potential nested UUIDs
-        metadata = convert_uuids_to_strings(metadata)
-
-        await embedding_charge.create(
-          qty=1,
-          metadata=metadata,
-        )
-      embedding_charge_created = True
-    except Exception as e:
-      self.logger.error(f"Failed to create embedding charge: {str(e)}")
-      await session.rollback()
-      embedding_charge = None  # Add this line to ensure it's None after failed creation
-      # Continue processing without billing
-
-    # Process documents without depending on a successful charge creation
-    self.logger.info("Processing documents")
-    # Process documents one by one
-    for doc_model in doc_models:
-      self.logger.info(f"Processing document: {doc_model}")
-      doc_model.indexing_status = DocumentStatus.PROCESSING
-      session.add(doc_model)
-      await session.commit()
-      self.logger.info("Document added to session")
-
+      # Create a new charge specifically for embedding operations
+      embedding_charge = None
+      embedding_charge_created = False  # Add this flag to track if charge was created successfully
       try:
-        # Get KB model
-        kb_model = await self._get_kb(kb_id, org_id, session)
-        if not kb_model:
-          raise HTTPException(status_code=404, detail="Knowledge base not found")
-        self.logger.info("Knowledge base found")
-        # Estimate embedding cost based on document content
-        if doc_model.content:
-          token_count = len(doc_model.content.split())
+        # Use the provided user_id directly instead of trying to get it from documents
+        if user_id:
+          self.logger.info("Creating embedding charge for indexing operation")
+          # Create a charge for embedding generation
+          embedding_charge = Charge(name="o1-small-text-indexing", user_id=user_id, org_id=org_id, session=session, service="Knowledge Base")
+          self.logger.debug(f"Embedding charge object created: {embedding_charge}")
+
+          def convert_uuids_to_strings(data):
+            if isinstance(data, dict):
+              return {
+                k: str(v) if isinstance(v, UUID) else convert_uuids_to_strings(v) if isinstance(v, (dict, list)) else v for k, v in data.items()
+              }
+            elif isinstance(data, list):
+              return [
+                str(item) if isinstance(item, UUID) else convert_uuids_to_strings(item) if isinstance(item, (dict, list)) else item for item in data
+              ]
+            return data
+
+          # Create metadata with all UUIDs converted to strings
+          metadata = {
+            "operation": "document_embedding",
+            "kb_id": str(kb_id),
+            "doc_count": len(doc_ids),
+            "related_charge_id": initial_charge_id,
+            "user_id": str(user_id),
+          }
+
+          # Convert any potential nested UUIDs
+          metadata = convert_uuids_to_strings(metadata)
+          self.logger.debug(f"Embedding charge metadata: {metadata}")
+
+          await embedding_charge.create(
+            qty=1,
+            metadata=metadata,
+          )
+          self.logger.info(f"Embedding charge created with transaction ID: {embedding_charge.transaction_id}")
+        embedding_charge_created = True
+      except Exception as e:
+        self.logger.error(f"Failed to create embedding charge: {str(e)}")
+        await session.rollback()
+        embedding_charge = None  # Add this line to ensure it's None after failed creation
+        # Continue processing without billing
+        self.logger.warning("Continuing indexing process without billing due to charge creation failure")
+
+      # Process documents without depending on a successful charge creation
+      self.logger.info("Starting document processing for indexing")
+      # Process documents one by one
+      for doc_index, doc_model in enumerate(doc_models, 1):
+        self.logger.info(f"Processing document {doc_index}/{len(doc_models)}: {doc_model.id}")
+        self.logger.debug(f"Document details - title: {doc_model.title}, content_length: {len(doc_model.content) if doc_model.content else 0}")
+
+        doc_model.indexing_status = DocumentStatus.PROCESSING
+        session.add(doc_model)
+        await session.commit()
+        self.logger.info(f"Document {doc_model.id} status updated to PROCESSING")
+
+        try:
+          # Get KB model
+          self.logger.debug(f"Fetching knowledge base model for kb_id: {kb_id}")
+          kb_model = await self._get_kb(kb_id, org_id, session)
+          if not kb_model:
+            self.logger.error(f"Knowledge base not found for kb_id: {kb_id}, org_id: {org_id}")
+            raise HTTPException(status_code=404, detail="Knowledge base not found")
+          self.logger.info(f"Knowledge base found: {kb_model.name}")
+
+          # Estimate embedding cost based on document content
+          if doc_model.content:
+            token_count = len(doc_model.content.split())
+            estimated_chunks = max(1, token_count // kb_model.settings["max_chunk_size"])
+            self.logger.info(f"Content analysis - tokens: {token_count}, estimated_chunks: {estimated_chunks}")
+
+            # Update charge with document-specific information if we have a charge
+            if embedding_charge and embedding_charge_created and embedding_charge.transaction_id:
+              try:
+                self.logger.debug("Updating embedding charge with document-specific information")
+                await embedding_charge.calculate_and_update(
+                  content=doc_model.content,
+                  metadata={"doc_id": str(doc_model.id), "estimated_chunks": estimated_chunks, "token_count": token_count},
+                  status="processing",  # Still processing at this point
+                )
+                self.logger.info(f"Embedding charge updated for document {doc_model.id}")
+              except Exception as e:
+                self.logger.error(f"Failed to update embedding charge: {str(e)}")
+                embedding_charge_created = False
+          else:
+            self.logger.warning(f"Document {doc_model.id} has no content for embedding")
+
+          self.logger.info("Initializing document processor for embeddings")
+          # Initialize processor
+          processor = DocumentProcessor(
+            embedding_model=kb_model.embedding_model,
+            chunk_size=kb_model.settings["max_chunk_size"],
+            chunk_overlap=kb_model.settings["chunk_overlap"],
+          )
+          self.logger.info(f"Processor initialized with model: {kb_model.embedding_model}")
+
+          # Process document
+          self.logger.info(f"Starting embedding generation for document {doc_model.id}")
+          await processor.process_document(
+            kb_id=kb_model.id, documents=[doc_model], collection_name=str(kb_model.organization_id) + "_" + kb_model.name
+          )
+          self.logger.info(f"Document embedding processing completed for {doc_model.id}")
+
+          # Get actual chunk count from metadata or estimate based on token count
+          token_count = len(doc_model.content.split()) if doc_model.content else 0
           estimated_chunks = max(1, token_count // kb_model.settings["max_chunk_size"])
-          self.logger.info(f"Estimated chunks: {estimated_chunks}")
-          # Update charge with document-specific information if we have a charge
+          actual_chunks = estimated_chunks  # Use estimate as actual since we can't get exact count
+          self.logger.info(f"Final chunk count for document {doc_model.id}: {actual_chunks}")
+
+          # Update status to completed
+          doc_model.indexing_status = DocumentStatus.COMPLETED
+          doc_model.indexing_completed_at = datetime.now()
+          self.logger.info(f"Document {doc_model.id} indexing status updated to COMPLETED")
+
+          # Update metadata with chunk information
+          metadata = doc_model.source_metadata or {}
+          metadata["actual_chunks"] = actual_chunks
+          flag_modified(doc_model, "source_metadata")
+          doc_model.source_metadata = metadata
+          self.logger.debug(f"Document {doc_model.id} metadata updated with chunk information")
+
+          session.add(doc_model)
+          await session.commit()
+          self.logger.info(f"Document {doc_model.id} changes committed to database")
+
+          # Update charge with actual chunk information
           if embedding_charge and embedding_charge_created and embedding_charge.transaction_id:
             try:
-              await embedding_charge.calculate_and_update(
-                content=doc_model.content,
-                metadata={"doc_id": str(doc_model.id), "estimated_chunks": estimated_chunks, "token_count": token_count},
-                status="processing",  # Still processing at this point
-              )
-              self.logger.info("Embedding charge updated")
+              self.logger.debug("Finalizing embedding charge with actual chunk count")
+              await embedding_charge.calculate_and_update(metadata={"actual_chunks": actual_chunks}, status="completed")
+              self.logger.info(f"Embedding charge finalized for document {doc_model.id}")
             except Exception as e:
               self.logger.error(f"Failed to update embedding charge: {str(e)}")
               embedding_charge_created = False
-        self.logger.info("Initializing processor")
-        # Initialize processor
-        processor = DocumentProcessor(
-          embedding_model=kb_model.embedding_model,
-          chunk_size=kb_model.settings["max_chunk_size"],
-          chunk_overlap=kb_model.settings["chunk_overlap"],
-        )
-        self.logger.info("Processor initialized")
-        # Process document
-        await processor.process_document(
-          kb_id=kb_model.id, documents=[doc_model], collection_name=str(kb_model.organization_id) + "_" + kb_model.name
-        )
-        self.logger.info("Document processed")
-        # Get actual chunk count from metadata or estimate based on token count
-        token_count = len(doc_model.content.split()) if doc_model.content else 0
-        estimated_chunks = max(1, token_count // kb_model.settings["max_chunk_size"])
-        actual_chunks = estimated_chunks  # Use estimate as actual since we can't get exact count
-        self.logger.info("Actual chunks: {actual_chunks}")
-        # Update status to completed
-        doc_model.indexing_status = DocumentStatus.COMPLETED
-        doc_model.indexing_completed_at = datetime.now()
-        self.logger.info("Document status updated to completed")
-        # Update metadata with chunk information
-        metadata = doc_model.source_metadata or {}
-        metadata["actual_chunks"] = actual_chunks
-        flag_modified(doc_model, "source_metadata")
-        doc_model.source_metadata = metadata
-        self.logger.info("Document metadata updated")
-        session.add(doc_model)
-        await session.commit()
-        self.logger.info("Document added to session")
 
-        # Update charge with actual chunk information
-        if embedding_charge and embedding_charge_created and embedding_charge.transaction_id:
-          try:
-            await embedding_charge.calculate_and_update(metadata={"actual_chunks": actual_chunks}, status="completed")
-          except Exception as e:
-            self.logger.error(f"Failed to update embedding charge: {str(e)}")
-            embedding_charge_created = False
-        self.logger.info("Embedding charge updated")
-      except Exception as e:
-        self.logger.info(f"Error processing document: {str(e)}")
-        # Update status to failed
-        doc_model.indexing_status = DocumentStatus.FAILED
-        doc_model.error_message = str(e)
-        session.add(doc_model)
-        await session.commit()
-        self.logger.info("Document added to session")
-        # Update charge with failure information
-        if embedding_charge and embedding_charge_created and embedding_charge.transaction_id:
-          try:
-            await embedding_charge.delete(reason=f"Error in document indexing: {str(e)}")
-            self.logger.info(f"Released embedding charge for transaction {embedding_charge.transaction_id} due to error in indexing")
-          except Exception as charge_error:
-            self.logger.error(f"Failed to release embedding charge: {str(charge_error)}")
-        self.logger.info("Embedding charge updated")
-      # Broadcast status update
-      await self.ws_manager.broadcast(
-        org_id,
-        {
-          "id": str(doc_model.id),
-          "indexing_status": doc_model.indexing_status.value,
-        },
-        "kb",
-        "write",
-      )
+        except Exception as e:
+          self.logger.error(f"Error processing document {doc_model.id} for indexing: {str(e)}")
+          # Update status to failed
+          doc_model.indexing_status = DocumentStatus.FAILED
+          doc_model.error_message = str(e)
+          session.add(doc_model)
+          await session.commit()
+          self.logger.info(f"Document {doc_model.id} status updated to FAILED")
+
+          # Update charge with failure information
+          if embedding_charge and embedding_charge_created and embedding_charge.transaction_id:
+            try:
+              self.logger.info(f"Releasing embedding charge due to indexing error: {embedding_charge.transaction_id}")
+              await embedding_charge.delete(reason=f"Error in document indexing: {str(e)}")
+              self.logger.info(f"Released embedding charge for transaction {embedding_charge.transaction_id} due to error in indexing")
+            except Exception as charge_error:
+              self.logger.error(f"Failed to release embedding charge: {str(charge_error)}")
+
+        # Broadcast status update
+        self.logger.debug(f"Broadcasting indexing status update for document {doc_model.id}")
+        await self.ws_manager.broadcast(
+          org_id,
+          {
+            "id": str(doc_model.id),
+            "indexing_status": doc_model.indexing_status.value,
+          },
+          "kb",
+          "write",
+        )
+        self.logger.debug(f"Status broadcast completed for document {doc_model.id}")
+
+      self.logger.info(f"Indexing task completed for all documents: {doc_ids}")
 
   async def _process_document_task(
     self,
     source_type: SourceTypeModel,
     doc: KBDocumentModel,
-    session: AsyncSession,
     org_id: UUID,
     charge: Optional[Charge] = None,
     complete_charge: bool = True,
+    on_completion_callback: Optional[Callable] = None,
     **kwargs,
   ) -> None:
     self.logger.info(f"Starting document processing task for document ID: {doc.id}")
+    self.logger.info(f"Document details - title: {doc.title}, source_type: {source_type.name}, org_id: {org_id}")
+    self.logger.debug(f"Processing parameters - charge: {charge is not None}, complete_charge: {complete_charge}")
 
-    try:
-      # Get appropriate handler
-      handler = get_source_handler(source_type.name, source_type.config_schema)
-      self.logger.info(f"Handler obtained for source type: {source_type.name}")
+    # Create a new database session for this background task
+    async with async_session() as session:
+      try:
+        # Get appropriate handler
+        self.logger.debug(f"Getting source handler for type: {source_type.name}")
+        handler = get_source_handler(source_type.name, source_type.config_schema)
+        self.logger.info(f"Handler obtained for source type: {source_type.name}")
 
-      # Validate metadata
-      await handler.validate_metadata(doc.source_metadata, **kwargs)
-      self.logger.info(f"Metadata validated for document ID: {doc.id}")
+        # Validate metadata
+        self.logger.debug(f"Validating metadata: {doc.source_metadata}")
+        await handler.validate_metadata(doc.source_metadata, **kwargs)
+        self.logger.info(f"Metadata validated for document ID: {doc.id}")
 
-      # Preprocess
-      await handler.preprocess(doc, **kwargs)
-      self.logger.info(f"Preprocessing completed for document ID: {doc.id}")
+        # Preprocess
+        self.logger.debug("Starting preprocessing phase")
+        await handler.preprocess(doc, **kwargs)
+        self.logger.info(f"Preprocessing completed for document ID: {doc.id}")
 
-      # Extract content
-      content = await handler.extract_content(
-        doc,
-        session=session,
-        ws_manager=self.ws_manager,
-        **kwargs,
-      )
-      self.logger.info(f"Content extracted for document ID: {doc.id}")
+        # Extract content
+        self.logger.info("Starting content extraction phase")
+        content = await handler.extract_content(
+          doc,
+          session=session,
+          ws_manager=self.ws_manager,
+          **kwargs,
+        )
+        content_length = len(content) if content else 0
+        self.logger.info(f"Content extracted for document ID: {doc.id}, content length: {content_length}")
 
-      # Update document with content
-      doc.content = content
-      doc.extraction_status = DocumentStatus.COMPLETED
-      doc.extraction_completed_at = datetime.now()
-      metadata = doc.source_metadata
-      metadata["source_extraction_status"] = True
-      flag_modified(doc, "source_metadata")
-      doc.source_metadata = metadata
-      session.add(doc)
-      await session.commit()
-      self.logger.info(f"Document updated and committed for document ID: {doc.id}")
+        # Update document with content
+        self.logger.debug("Updating document with extracted content")
+        doc.content = content
+        doc.extraction_status = DocumentStatus.COMPLETED
+        doc.extraction_completed_at = datetime.now()
+        metadata = doc.source_metadata
+        metadata["source_extraction_status"] = True
+        flag_modified(doc, "source_metadata")
+        doc.source_metadata = metadata
+        session.add(doc)
+        await session.commit()
+        self.logger.info(f"Document updated and committed for document ID: {doc.id}")
 
-      self.logger.info(f"Charge: {charge}")
-      self.logger.info(f"Complete charge: {complete_charge}")
-      # Finalize the charge for document extraction if it exists
-      if charge:
-        try:
-          await charge.calculate_and_update(content=content, metadata=doc.source_metadata, status="completed")
-          self.logger.info(f"Charge finalized for document ID: {doc.id}")
-        except Exception as charge_error:
-          self.logger.error(f"Failed to update charge for document ID: {doc.id}: {str(charge_error)}")
+        self.logger.debug(f"Charge details - exists: {charge is not None}")
+        if charge:
+          self.logger.debug(f"Charge transaction ID: {charge.transaction_id}")
+        self.logger.debug(f"Complete charge flag: {complete_charge}")
 
-    except Exception as e:
-      doc.extraction_status = DocumentStatus.FAILED
-      doc.error_message = str(e)
-      session.add(doc)
-      await session.commit()
-      import traceback
+        # Finalize the charge for document extraction if it exists
+        if charge:
+          try:
+            self.logger.info(f"Finalizing charge for document extraction: {charge.transaction_id}")
+            await charge.calculate_and_update(content=content, metadata=doc.source_metadata, status="completed")
+            self.logger.info(f"Charge finalized for document ID: {doc.id}")
+          except Exception as charge_error:
+            self.logger.error(f"Failed to update charge for document ID: {doc.id}: {str(charge_error)}")
+        else:
+          self.logger.debug("No charge to finalize for document extraction")
 
-      print(traceback.format_exc())
-      self.logger.error(f"Error processing document ID: {doc.id}: {str(e)}")
+        # Trigger callback if provided (for indexing or other post-processing)
+        if on_completion_callback:
+          try:
+            self.logger.info(f"Triggering completion callback for document {doc.id}")
+            await on_completion_callback()
+            self.logger.info(f"Completion callback executed successfully for document {doc.id}")
+          except Exception as callback_error:
+            self.logger.error(f"Error in completion callback for document {doc.id}: {str(callback_error)}")
 
-      # If we have a charge and extraction failed, release part of the hold
-      if charge:
-        try:
-          await charge.delete(reason=f"Error in document processing: {str(e)}")
-          self.logger.info(f"Released charge for transaction {charge.transaction_id} due to error in processing")
-        except Exception as charge_error:
-          self.logger.error(f"Failed to release charge for document ID: {doc.id}: {str(charge_error)}")
+      except Exception as e:
+        self.logger.error(f"Error during document processing for ID {doc.id}: {str(e)}")
+        doc.extraction_status = DocumentStatus.FAILED
+        doc.error_message = str(e)
+        session.add(doc)
+        await session.commit()
+        import traceback
 
-    finally:
-      await handler.cleanup(doc)
-      self.logger.info(f"Cleanup completed for document ID: {doc.id}")
-      await self.ws_manager.broadcast(
-        kwargs.get("org_id"),
-        {"id": str(doc.id), "extraction_status": doc.extraction_status, "source_extraction_status": True},
-        "kb",
-        "write",
-      )
-      self.logger.info(f"Broadcast completed for document ID: {doc.id}")
+        print(traceback.format_exc())
+        self.logger.error(f"Error processing document ID: {doc.id}: {str(e)}")
+
+        # If we have a charge and extraction failed, release part of the hold
+        if charge:
+          try:
+            self.logger.info(f"Releasing charge due to processing error: {charge.transaction_id}")
+            await charge.delete(reason=f"Error in document processing: {str(e)}")
+            self.logger.info(f"Released charge for transaction {charge.transaction_id} due to error in processing")
+          except Exception as charge_error:
+            self.logger.error(f"Failed to release charge for document ID: {doc.id}: {str(charge_error)}")
+
+      finally:
+        self.logger.info("Starting cleanup phase")
+        await handler.cleanup(doc)
+        self.logger.info(f"Cleanup completed for document ID: {doc.id}")
+
+        self.logger.debug(f"Broadcasting status update for document {doc.id}")
+        await self.ws_manager.broadcast(
+          kwargs.get("org_id"),
+          {"id": str(doc.id), "extraction_status": doc.extraction_status, "source_extraction_status": True},
+          "kb",
+          "write",
+        )
+        self.logger.info(f"Broadcast completed for document ID: {doc.id}")

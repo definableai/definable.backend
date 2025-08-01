@@ -15,6 +15,7 @@ from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
 from langchain_core.documents import Document as LangChainDocument
 from langchain_openai import OpenAIEmbeddings
 from langchain_postgres import PGVector
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from database import async_engine
 from libs.s3.v1 import s3_client
@@ -170,13 +171,55 @@ class DocumentProcessor:
 
       lc_documents: List[LangChainDocument] = []
       for document in documents:
-        # Use DoclingFileLoader for consistent chunking
-        loader = DoclingFileLoader(kb_id=kb_id, document=document)
-        async for doc in loader.load():
-          lc_documents.append(doc)
+        # Check if document has s3_key (file document) or existing content (URL document)
+        if document.source_metadata.get("s3_key"):
+          # File document - use DoclingFileLoader to download from S3 and process
+          loader = DoclingFileLoader(kb_id=kb_id, document=document)
+          async for doc in loader.load():
+            lc_documents.append(doc)
+        elif document.content:
+          # URL document - use existing content directly
+          chunks = await self._chunk_text_content(document, kb_id)
+          lc_documents.extend(chunks)
+        else:
+          raise Exception(f"Document {document.id} has no s3_key and no content available")
 
       # Store in vector DB
       await vectorstore.aadd_documents(lc_documents)
 
     except Exception as e:
       raise Exception(f"Error processing document {document.id}: {str(e)}")
+
+  async def _chunk_text_content(self, document: KBDocumentModel, kb_id: UUID) -> List[LangChainDocument]:
+    """Chunk text content for URL documents that don't have files."""
+    # Create text splitter with the same settings as file processing
+    text_splitter = RecursiveCharacterTextSplitter(
+      chunk_size=self.chunk_size,
+      chunk_overlap=self.chunk_overlap,
+      length_function=len,
+    )
+
+    # Split the content into chunks
+    text_chunks = text_splitter.split_text(document.content)
+
+    # Convert to LangChain documents with metadata
+    lc_documents = []
+    for idx, chunk_text in enumerate(text_chunks, start=1):
+      metadata = {
+        "id": str(uuid4()),
+        "kb_id": str(kb_id),
+        "doc_id": str(document.id),
+        "title": document.title,
+        "chunk_id": idx,
+        "tokens": len(chunk_text.split()),
+        "source_type": "url",
+      }
+
+      # Add URL-specific metadata if available
+      if document.source_metadata.get("url"):
+        metadata["source_url"] = document.source_metadata["url"]
+
+      lc_doc = LangChainDocument(page_content=chunk_text, metadata=metadata)
+      lc_documents.append(lc_doc)
+
+    return lc_documents
