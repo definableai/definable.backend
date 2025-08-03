@@ -1,3 +1,5 @@
+import hashlib
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -8,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from libs.stytch.v1 import stytch_base
-from models import OrganizationMemberModel, PermissionModel, RoleModel, RolePermissionModel
+from models import APIKeyModel, OrganizationMemberModel, PermissionModel, RoleModel, RolePermissionModel
+from utils.auth_util import verify_jwt_token
 
 
 class JWTBearer(HTTPBearer):
@@ -48,6 +51,95 @@ class JWTBearer(HTTPBearer):
         raise HTTPException(status_code=403, detail=str(e))
     else:
       raise HTTPException(status_code=403, detail="Invalid authorization")
+
+
+class APIKeyAuth:
+  """API Key authentication for webhook endpoints."""
+
+  async def __call__(
+    self,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+  ) -> dict:
+    """Authenticate using API key from x-api-key header."""
+    try:
+      # Get API key from header
+      api_key = request.headers.get("x-api-key")
+      if not api_key:
+        raise HTTPException(status_code=401, detail="Missing API key. Include 'x-api-key' header.")
+
+      # Hash the API key for database lookup
+      api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+
+      # Look up API key in database
+      api_key_query = select(APIKeyModel).where(
+        and_(
+          APIKeyModel.api_key_hash == api_key_hash,
+          APIKeyModel.is_active,
+        )
+      )
+      result = await session.execute(api_key_query)
+      api_key_model = result.scalar_one_or_none()
+
+      if not api_key_model:
+        raise HTTPException(status_code=401, detail="Invalid or inactive API key")
+
+      # Check if API key has expired
+      if api_key_model.expires_at and api_key_model.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=401, detail="API key has expired")
+
+      # Verify the JWT token to get user_id and org_id
+      try:
+        token_payload = verify_jwt_token(api_key_model.api_key_token)
+      except ValueError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid API key token: {str(e)}")
+
+      user_id = UUID(token_payload.get("user_id"))
+      org_id = UUID(token_payload.get("org_id"))
+
+      # Check if user is owner of the organization
+      member_query = (
+        select(OrganizationMemberModel, RoleModel)
+        .join(RoleModel, OrganizationMemberModel.role_id == RoleModel.id)
+        .where(
+          and_(
+            OrganizationMemberModel.user_id == user_id, OrganizationMemberModel.organization_id == org_id, OrganizationMemberModel.status == "active"
+          )
+        )
+      )
+      member_result = await session.execute(member_query)
+      member_data = member_result.first()
+
+      if not member_data:
+        raise HTTPException(status_code=403, detail="User not found in organization")
+
+      member, role = member_data
+
+      # Check if user has owner role
+      if role.name.lower() != "owner":
+        raise HTTPException(status_code=403, detail="API key can only be used by organization owners")
+
+      # Update last used timestamp
+      api_key_model.last_used_at = datetime.utcnow()
+      session.add(api_key_model)
+      await session.commit()
+
+      # Return authentication context
+      return {
+        "api_key_id": str(api_key_model.id),
+        "user_id": token_payload.get("user_id"),
+        "org_id": token_payload.get("org_id"),
+        "agent_id": str(api_key_model.agent_id) if api_key_model.agent_id else None,
+        "permissions": api_key_model.permissions,
+        "auth_type": "api_key",
+        "role": role.name,
+        "role_level": role.hierarchy_level,
+      }
+
+    except HTTPException:
+      raise
+    except Exception as e:
+      raise HTTPException(status_code=500, detail=f"API key authentication failed: {str(e)}")
 
 
 class RBAC:
