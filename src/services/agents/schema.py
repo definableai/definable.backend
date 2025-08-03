@@ -10,18 +10,20 @@ class AgentBase(BaseModel):
 
   name: str = Field(..., min_length=1, max_length=255)
   description: Optional[str] = None
-  model_id: UUID
+  model_id: Optional[UUID] = None
   is_active: bool = True
   settings: dict = Field(default_factory=dict)
 
 
 class AgentCreate(AgentBase):
   """Create agent schema."""
+
   name: str = Field(..., min_length=1, max_length=255)
   description: Optional[str] = None
   is_active: bool = True
   version: str = Field(default="v1")
   settings: Dict[str, Any] = Field(default_factory=dict)
+
 
 class AgentUpdate(BaseModel):
   """Update agent schema."""
@@ -68,12 +70,14 @@ class PaginatedAgentResponse(BaseModel):
   total: int
   has_more: bool
 
-class AgentCategoryResponse(BaseModel):
-    """Agent category response schema."""
-    id: UUID
-    name: str
-    description: Optional[str]
-    agent_count: int
 
-    class Config:
-        from_attributes = True
+class AgentCategoryResponse(BaseModel):
+  """Agent category response schema."""
+
+  id: UUID
+  name: str
+  description: Optional[str]
+  agent_count: int
+
+  class Config:
+    from_attributes = True

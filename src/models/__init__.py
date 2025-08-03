@@ -1,5 +1,6 @@
 from database import Base
 from models.agent_model import AgentModel, AgentToolModel
+from models.api_key_model import APIKeyModel
 from models.auth_model import UserModel
 from models.billing_models import BillingPlanModel, ChargeModel, TransactionModel, TransactionStatus, TransactionType, WalletModel
 from models.chat_model import ChatModel, ChatUploadModel, MessageModel
@@ -14,6 +15,7 @@ from models.tool_model import ToolCategoryModel, ToolModel
 
 __all__ = [
   "Base",
+  "APIKeyModel",
   "AgentModel",
   "AgentToolModel",
   "BillingPlanModel",

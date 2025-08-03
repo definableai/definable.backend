@@ -1,22 +1,27 @@
+import hashlib
 import json
-from uuid import uuid4
+from datetime import datetime, timedelta
+from uuid import UUID, uuid4
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies.security import RBAC
 from libs.stytch.v1 import stytch_base
 from models import (
+  APIKeyModel,
   OrganizationMemberModel,
   OrganizationModel,
   RoleModel,
   UserModel,
 )
 from services.__base.acquire import Acquire
+from services.api_keys.schema import VerifyAPIKeyRequest, VerifyAPIKeyResponse
 from utils import verify_svix_signature
+from utils.auth_util import create_access_token  # Add this line
 
 from .schema import InviteSignup, StytchUser, TestLogin, TestResponse, TestSignup
 
@@ -24,7 +29,12 @@ from .schema import InviteSignup, StytchUser, TestLogin, TestResponse, TestSignu
 class AuthService:
   """Authentication service."""
 
-  http_exposed = ["post=signup_invite", "post=test_signup", "post=test_login"]
+  http_exposed = [
+    "post=signup_invite",
+    "post=test_signup",
+    "post=test_login",
+    "post=verify_api_key",
+  ]
 
   def __init__(self, acquire: Acquire):
     """Initialize service."""
@@ -138,6 +148,14 @@ class AuthService:
       stytch_user_id=authenticate_user_response.data.user.user_id,
     )
 
+  async def post_verify_api_key(self, request: VerifyAPIKeyRequest, db: AsyncSession = Depends(get_db)) -> VerifyAPIKeyResponse:
+    """Verify an API key and return user context."""
+    try:
+      return await self.verify_api_key(request.api_key, db)
+    except Exception as e:
+      self.logger.error(f"Error verifying API key: {str(e)}")
+      return VerifyAPIKeyResponse(valid=False, message="API key verification failed")
+
   ### PRIVATE METHODS ###
 
   async def _create_new_user(self, user_data: StytchUser, session: AsyncSession) -> UserModel | None:
@@ -152,11 +170,15 @@ class AuthService:
         stytch_id=user_data.stytch_id,
         first_name=user_data.first_name,
         last_name=user_data.last_name,
+        token_expires_at=datetime.utcnow() + timedelta(days=365),  # 1 year expiry
         _metadata=user_data.metadata,
       )
       session.add(user)
       await session.flush()
-      await self._setup_default_organization(user, session)
+
+      # Generate default auth token as API key after user is created and org is set up
+      org = await self._setup_default_organization(user, session)
+      await self._create_default_auth_token(user.id, org.id, session)
       await session.commit()
       await session.refresh(user)
       return user
@@ -219,3 +241,87 @@ class AuthService:
     )
 
     return org
+
+  async def _create_default_auth_token(self, user_id: UUID, org_id: UUID, session: AsyncSession) -> str:
+    """Create default auth token as API key for new user."""
+
+    # Generate JWT token
+    payload = {"user_id": str(user_id), "org_id": str(org_id), "type": "auth_token"}
+    auth_token = create_access_token(payload, timedelta(days=365))
+
+    # Create API key entry with token_type="auth"
+    api_key_model = APIKeyModel(
+      user_id=user_id,
+      agent_id=None,  # No specific agent for auth tokens
+      token_type="auth",
+      name="Default Auth Token",
+      api_key_token=auth_token,
+      api_key_hash=hashlib.sha256(auth_token.encode()).hexdigest(),
+      permissions={"*": True},  # Full permissions for auth tokens
+      expires_at=datetime.utcnow() + timedelta(days=365),
+      is_active=True,
+    )
+
+    session.add(api_key_model)
+    await session.flush()
+    return auth_token
+
+  async def verify_api_key(self, api_key: str, session: AsyncSession) -> VerifyAPIKeyResponse:
+    """
+    Verify an API key using simple database lookup approach.
+
+    Args:
+        api_key: The plain text API key (JWT token) to verify
+        session: Database session
+
+    Returns:
+        VerifyAPIKeyResponse with verification results
+    """
+    try:
+      # Step 1: Look up the API key in database (plain token match)
+      query = select(APIKeyModel).where(and_(APIKeyModel.api_key_token == api_key, APIKeyModel.is_active))
+      result = await session.execute(query)
+      api_key_model = result.scalar_one_or_none()
+
+      if not api_key_model:
+        return VerifyAPIKeyResponse(valid=False, message="API key not found or inactive")
+
+      # Step 2: Verify JWT signature from stored token (extra security)
+      try:
+        from utils.auth_util import verify_jwt_token
+
+        payload = verify_jwt_token(api_key_model.api_key_token)
+
+        # Accept both "auth_token" and "api_key" types in JWT payload
+        expected_types = ["auth_token", "api_key"]
+        if not payload or payload.get("type") not in expected_types:
+          return VerifyAPIKeyResponse(valid=False, message="Invalid token format")
+
+      except Exception as jwt_error:
+        self.logger.error(f"JWT verification failed: {str(jwt_error)}")
+        return VerifyAPIKeyResponse(valid=False, message="Invalid or expired token")
+
+      # Step 3: Check if the key is expired
+      if api_key_model.is_expired:
+        return VerifyAPIKeyResponse(valid=False, message="Token has expired")
+
+      # Step 4: Update last used timestamp
+      api_key_model.update_last_used()
+      await session.commit()
+
+      # Build response message based on token type
+      message = f"{'Auth token' if api_key_model.token_type == 'auth' else 'API key'} is valid"
+
+      return VerifyAPIKeyResponse(
+        valid=True,
+        user_id=api_key_model.user_id,
+        agent_id=api_key_model.agent_id,
+        permissions=api_key_model.permissions,
+        expires_at=api_key_model.expires_at,
+        last_used_at=api_key_model.last_used_at,
+        message=message,
+      )
+
+    except Exception as e:
+      self.logger.error(f"Error in verify_api_key: {str(e)}")
+      return VerifyAPIKeyResponse(valid=False, message="Token verification failed")

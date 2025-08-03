@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, func, text
@@ -47,7 +48,7 @@ class AgentModel(CRUD):
   user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
   name: Mapped[str] = mapped_column(String(255), nullable=False)
   description: Mapped[str] = mapped_column(Text, nullable=True)
-  model_id: Mapped[UUID] = mapped_column(ForeignKey("models.id", ondelete="CASCADE"), nullable=False)
+  model_id: Mapped[Optional[UUID]] = mapped_column(ForeignKey("models.id", ondelete="CASCADE"), nullable=True)
   category_id: Mapped[UUID] = mapped_column(ForeignKey("agents_category.id", ondelete="CASCADE"), nullable=True)
   properties: Mapped[dict] = mapped_column(JSONB, nullable=False, default={})
   is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
