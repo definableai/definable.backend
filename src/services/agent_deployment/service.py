@@ -357,8 +357,8 @@ class AgentDeploymentService:
       await self.ws_manager.broadcast(
         org_id=org_id,
         data=event_data,
-        resource="agent_deployment",
-        required_action="read",
+        resource="agents",
+        required_action="write",
       )
     except Exception as e:
       self.logger.error("Failed to broadcast log event", error=str(e))
@@ -385,8 +385,8 @@ class AgentDeploymentService:
       await self.ws_manager.broadcast(
         org_id=org_id,
         data=event_data,
-        resource="agent_deployment",
-        required_action="read",
+        resource="agents",
+        required_action="write",
       )
     except Exception as e:
       self.logger.error("Failed to broadcast trace event", error=str(e))
