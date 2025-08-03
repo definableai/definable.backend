@@ -1,4 +1,11 @@
 from database import Base
+from models.agent_deployment_model import (
+  AgentDeploymentLogModel,
+  AgentDeploymentTraceModel,
+  LogLevel,
+  LogType,
+  TraceStatus,
+)
 from models.agent_model import AgentModel, AgentToolModel
 from models.api_key_model import APIKeyModel
 from models.auth_model import UserModel
@@ -18,8 +25,12 @@ __all__ = [
   "APIKeyModel",
   "AgentModel",
   "AgentToolModel",
+  "AgentDeploymentLogModel",
+  "AgentDeploymentTraceModel",
   "BillingPlanModel",
   "ChargeModel",
+  "ChatModel",
+  "ChatUploadModel",
   "DocumentStatus",
   "InvitationModel",
   "InvitationStatus",
@@ -27,6 +38,8 @@ __all__ = [
   "KBFolder",
   "KnowledgeBaseModel",
   "LLMModel",
+  "LogLevel",
+  "LogType",
   "MessageModel",
   "OrganizationMemberModel",
   "OrganizationModel",
@@ -38,12 +51,11 @@ __all__ = [
   "RolePermissionModel",
   "SourceTypeModel",
   "ToolCategoryModel",
+  "ToolModel",
+  "TraceStatus",
   "TransactionModel",
   "TransactionStatus",
   "TransactionType",
-  "ToolModel",
   "UserModel",
   "WalletModel",
-  "ChatModel",
-  "ChatUploadModel",
 ]
