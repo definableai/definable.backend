@@ -45,6 +45,13 @@ class Settings(BaseSettings):
   razorpay_webhook_secret: str
   razorpay_key_secret: str
 
+  # API Key Configuration
+  api_key_length: int = 32
+  api_key_default_expiry_days: int = 365
+  auth_token_expiry_hours: int = 24
+  enable_api_key_rate_limiting: bool = True
+  api_key_rate_limit_per_minute: int = 100
+
   class Config:
     """Config class."""
 

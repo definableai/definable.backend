@@ -1,3 +1,4 @@
+from datetime import timedelta
 from typing import List
 from uuid import UUID, uuid4
 
@@ -9,9 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies.security import JWTBearer
-from models import OrganizationMemberModel, OrganizationModel, RoleModel
+from models import APIKeyModel, OrganizationMemberModel, OrganizationModel, RoleModel
 from services.__base.acquire import Acquire
 from services.roles.service import RoleService
+from utils.auth_util import create_access_token
 
 from .schema import OrganizationResponse
 
@@ -105,6 +107,30 @@ class OrganizationService:
     user: dict = Depends(JWTBearer()),
   ) -> List[OrganizationResponse]:
     """Get all organizations that user belongs to."""
+
+    # Check if user has auth-type API key, generate if missing
+    user_id = UUID(user.get("id"))
+
+    # Check for existing auth token in api_keys table
+    auth_key_query = select(APIKeyModel).where(APIKeyModel.user_id == user_id, APIKeyModel.token_type == "auth", APIKeyModel.is_active)
+    auth_key_result = await session.execute(auth_key_query)
+    existing_auth_key = auth_key_result.scalar_one_or_none()
+
+    self.logger.info(f"User {user_id} has existing auth key: {existing_auth_key is not None}")
+
+    if not existing_auth_key:
+      # Get user's primary organization
+      member_query = (
+        select(OrganizationMemberModel).where(OrganizationMemberModel.user_id == user_id, OrganizationMemberModel.status == "active").limit(1)
+      )
+      member_result = await session.execute(member_query)
+      member = member_result.scalar_one_or_none()
+
+      if member:
+        await self._create_auth_api_key(user_id, member.organization_id, session)
+        await session.commit()
+        self.logger.info(f"Created auth API key for user {user_id}")
+
     query = (
       select(OrganizationModel)
       .outerjoin(OrganizationMemberModel, OrganizationModel.id == OrganizationMemberModel.organization_id)
@@ -117,3 +143,29 @@ class OrganizationService:
 
     # Convert SQLAlchemy models to Pydantic models
     return [OrganizationResponse.model_validate(org) for org in orgs]
+
+  async def _create_auth_api_key(self, user_id: UUID, org_id: UUID, session: AsyncSession) -> str:
+    """Create auth-type API key for existing user."""
+    import hashlib
+    from datetime import datetime
+
+    # Generate JWT token
+    payload = {"user_id": str(user_id), "org_id": str(org_id), "type": "auth_token"}
+    auth_token = create_access_token(payload, timedelta(days=365))
+
+    # Create API key entry with token_type="auth"
+    api_key_model = APIKeyModel(
+      user_id=user_id,
+      agent_id=None,  # No specific agent for auth tokens
+      token_type="auth",
+      name="Default Auth Token",
+      api_key_token=auth_token,
+      api_key_hash=hashlib.sha256(auth_token.encode()).hexdigest(),
+      permissions={"*": True},  # Full permissions for auth tokens
+      expires_at=datetime.utcnow() + timedelta(days=365),
+      is_active=True,
+    )
+
+    session.add(api_key_model)
+    await session.flush()
+    return auth_token

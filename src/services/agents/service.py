@@ -46,21 +46,22 @@ class AgentService:
   ) -> AgentResponse:
     """Create a new agent."""
     try:
-      # Check if the model exists
-      query = select(LLMModel).where(LLMModel.id == data.model_id)
-      model = await session.scalar(query)
+      # Check if the model exists (only if model_id is provided)
+      if data.model_id:
+        query = select(LLMModel).where(LLMModel.id == data.model_id)
+        model = await session.scalar(query)
 
-      if not model:
-        raise HTTPException(
-          status_code=HTTPStatus.NOT_FOUND,
-          detail="Model not found",
-        )
+        if not model:
+          raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND,
+            detail="Model not found",
+          )
 
-      if not model.is_active:
-        raise HTTPException(
-          status_code=HTTPStatus.BAD_REQUEST,
-          detail="Model is not active",
-        )
+        if not model.is_active:
+          raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail="Model is not active",
+          )
 
       # Extract data
       user_id = user["id"]
@@ -85,6 +86,7 @@ class AgentService:
       await session.refresh(agent)
 
       # Get the category
+      category = None
       if category_id:
         _, category = await self._get_agents_and_category(category_id=category_id, session=session)
 
