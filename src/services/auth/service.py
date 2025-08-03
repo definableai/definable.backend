@@ -170,7 +170,6 @@ class AuthService:
         stytch_id=user_data.stytch_id,
         first_name=user_data.first_name,
         last_name=user_data.last_name,
-        token_expires_at=datetime.utcnow() + timedelta(days=365),  # 1 year expiry
         _metadata=user_data.metadata,
       )
       session.add(user)
