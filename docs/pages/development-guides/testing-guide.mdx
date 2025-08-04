@@ -1,9 +1,9 @@
 ---
 title: 'Testing Guide'
-description: 'Comprehensive guidelines for writing and running tests in the Zyeta backend'
+description: 'Comprehensive guidelines for writing and running tests in the Definable backend'
 ---
 
-This guide outlines the testing strategy, standards, and best practices for the Zyeta backend codebase. It serves as a blueprint for developers to ensure consistent quality and reliability through automated testing.
+This guide outlines the testing strategy, standards, and best practices for the Definable backend codebase. It serves as a blueprint for developers to ensure consistent quality and reliability through automated testing.
 
 ## Overview
 
@@ -50,7 +50,7 @@ This visualization demonstrates that:
 Organize tests with a clear structure that mirrors the source code:
 
 ```
-zyeta.backend/
+definable.backend/
 ├── src/
 │   ├── models/
 │   ├── services/
@@ -72,7 +72,7 @@ zyeta.backend/
 
 ```mermaid
 graph TD
-    A[zyeta.backend] --> B[src]
+    A[definable.backend] --> B[src]
     A --> C[tests]
     
     B --> B1[models]
@@ -130,7 +130,7 @@ from src.database import Base, get_db
 from src.config import get_settings
 
 # Test database URL - use an isolated test database
-TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/test_zyeta"
+TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/test_definable"
 
 @pytest.fixture(scope="session")
 def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
@@ -779,7 +779,7 @@ jobs:
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_USER: postgres
-          POSTGRES_DB: test_zyeta
+          POSTGRES_DB: test_definable
         ports:
           - 5432:5432
         options: >-
@@ -982,7 +982,7 @@ classDiagram
 
 ## Conclusion
 
-A comprehensive testing strategy is essential for maintaining a healthy codebase. By following this guide, developers can write effective tests that ensure the reliability and quality of the Zyeta backend.
+A comprehensive testing strategy is essential for maintaining a healthy codebase. By following this guide, developers can write effective tests that ensure the reliability and quality of the Definable backend.
 
 Remember that tests are an investment in the future of the codebase, making it safer to refactor and extend functionality while maintaining confidence in the system's behavior.
 
