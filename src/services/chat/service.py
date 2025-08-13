@@ -82,7 +82,7 @@ class ChatService:
     metadata = {}
     if data.settings:
       metadata["settings"] = data.settings.dict(exclude_none=True)
-    
+
     db_session = ChatModel(
       title=data.title or "New Chat",
       status=data.status,
@@ -128,7 +128,7 @@ class ChatService:
       db_session.title = data.title
     if data.status is not None:
       db_session.status = data.status
-    
+
     # Update settings if provided
     if data.settings is not None:
       if not db_session._metadata:
@@ -981,26 +981,26 @@ class ChatService:
   ### PRIVATE METHODS ###
 
   def _get_effective_settings(
-    self, 
-    chat: ChatModel, 
-    temperature: Optional[float], 
-    max_tokens: Optional[int], 
+    self,
+    chat: ChatModel,
+    temperature: Optional[float],
+    max_tokens: Optional[int],
     top_p: Optional[float]
   ) -> tuple[Optional[float], Optional[int], Optional[float]]:
     """Get effective settings: query params override saved settings."""
     saved_settings = chat._metadata.get("settings", {}) if chat._metadata else {}
-    
+
     effective_temp = temperature if temperature is not None else saved_settings.get("temperature")
     effective_max = max_tokens if max_tokens is not None else saved_settings.get("max_tokens")
     effective_top_p = top_p if top_p is not None else saved_settings.get("top_p")
-    
+
     return effective_temp, effective_max, effective_top_p
 
   def _save_settings_to_chat(
-    self, 
-    chat: ChatModel, 
-    temperature: Optional[float], 
-    max_tokens: Optional[int], 
+    self,
+    chat: ChatModel,
+    temperature: Optional[float],
+    max_tokens: Optional[int],
     top_p: Optional[float]
   ) -> None:
     """Save provided settings to chat metadata."""
@@ -1008,7 +1008,7 @@ class ChatService:
       chat._metadata = {}
     if "settings" not in chat._metadata:
       chat._metadata["settings"] = {}
-    
+
     if temperature is not None:
       chat._metadata["settings"]["temperature"] = temperature
     if max_tokens is not None:
@@ -1020,7 +1020,7 @@ class ChatService:
     """Extract ChatSettings from chat metadata."""
     if not chat._metadata or "settings" not in chat._metadata:
       return None
-    
+
     settings_data = chat._metadata["settings"]
     return ChatSettings(
       temperature=settings_data.get("temperature"),

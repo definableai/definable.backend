@@ -54,7 +54,7 @@ class MessageResponse(BaseModel):
 
 class ChatSettings(BaseModel):
   """Chat settings schema for per-session LLM parameters."""
-  
+
   temperature: Optional[float] = None
   max_tokens: Optional[int] = None
   top_p: Optional[float] = None
