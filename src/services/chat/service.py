@@ -1,5 +1,6 @@
 import json
 import os
+import mimetypes
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -34,6 +35,7 @@ from .schema import (
   ChatSessionResponse,
   ChatSessionUpdate,
   ChatSessionWithMessages,
+  ChatSettings,
   ChatStatus,
   ChatUploadData,
   MessageCreate,
@@ -76,11 +78,17 @@ class ChatService:
     user: dict = Depends(RBAC("chats", "write")),
   ) -> JSONResponse:
     """Create a new chat session."""
+    # Prepare metadata with settings if provided
+    metadata = {}
+    if data.settings:
+      metadata["settings"] = data.settings.dict(exclude_none=True)
+    
     db_session = ChatModel(
       title=data.title or "New Chat",
       status=data.status,
       user_id=user["id"],
       org_id=user["org_id"],
+      _metadata=metadata,
     )
 
     session.add(db_session)
@@ -120,6 +128,12 @@ class ChatService:
       db_session.title = data.title
     if data.status is not None:
       db_session.status = data.status
+    
+    # Update settings if provided
+    if data.settings is not None:
+      if not db_session._metadata:
+        db_session._metadata = {}
+      db_session._metadata["settings"] = data.settings.dict(exclude_none=True)
 
     await session.commit()
     await session.refresh(db_session)
@@ -231,6 +245,7 @@ class ChatService:
       org_id=db_session.org_id,
       user_id=db_session.user_id,
       metadata=db_session._metadata,
+      settings=self._get_chat_settings(db_session),
       created_at=db_session.created_at.isoformat(),
       updated_at=db_session.updated_at.isoformat(),
       messages=message_responses,
@@ -280,6 +295,7 @@ class ChatService:
         org_id=db_session.org_id,
         user_id=db_session.user_id,
         metadata=db_session._metadata,
+        settings=self._get_chat_settings(db_session),
         created_at=db_session.created_at.isoformat(),
         updated_at=db_session.updated_at.isoformat(),
       )
@@ -347,6 +363,16 @@ class ChatService:
           )
         # Flag to update the chat title if it's "New Chat"
         is_new_chat = db_session.title == "New Chat"
+
+      # Get effective settings (saved + provided) and save any new settings
+      effective_temp, effective_max, effective_top_p = self._get_effective_settings(
+        db_session, temperature, max_tokens, top_p
+      )
+
+      # Save any new settings provided
+      if any(x is not None for x in [temperature, max_tokens, top_p]):
+        self._save_settings_to_chat(db_session, temperature, max_tokens, top_p)
+        await session.commit()
 
       # if instruction_id is provided, check if instruction exists
       if instruction_id:
@@ -464,9 +490,9 @@ class ChatService:
             message=message_data.content,
             assets=files,
             prompt=prompt,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=top_p,
+            temperature=effective_temp,
+            max_tokens=effective_max,
+            top_p=effective_top_p,
           ):
             # Handle streaming
             buffer.append(token.content)
@@ -843,7 +869,12 @@ class ChatService:
       key = f"{org_id}/{chat_id}/{file_name}"
     else:
       key = f"chats/{org_id}/{file_name}"
-    await self.s3_client.upload_file(file=BytesIO(file_content), key=key)
+    effective_content_type = (
+      (file.content_type or "").strip()
+      or (mimetypes.guess_type(file.filename)[0] if file.filename else None)
+      or ("application/pdf" if (file.filename or "").lower().endswith(".pdf") else "application/octet-stream")
+    )
+    await self.s3_client.upload_file(file=BytesIO(file_content), key=key, content_type=effective_content_type)
     url = await self.s3_client.get_presigned_url(key=key, expires_in=3600 * 24 * 30)
     metadata = {
       "org_id": str(org_id),
@@ -852,7 +883,7 @@ class ChatService:
     }
     db_upload = ChatUploadModel(
       filename=file_name,
-      content_type=file.content_type,
+      content_type=effective_content_type,
       file_size=file.size,
       url=url,
       _metadata=metadata,
@@ -948,6 +979,54 @@ class ChatService:
       raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error generating prompts: {str(e)}")
 
   ### PRIVATE METHODS ###
+
+  def _get_effective_settings(
+    self, 
+    chat: ChatModel, 
+    temperature: Optional[float], 
+    max_tokens: Optional[int], 
+    top_p: Optional[float]
+  ) -> tuple[Optional[float], Optional[int], Optional[float]]:
+    """Get effective settings: query params override saved settings."""
+    saved_settings = chat._metadata.get("settings", {}) if chat._metadata else {}
+    
+    effective_temp = temperature if temperature is not None else saved_settings.get("temperature")
+    effective_max = max_tokens if max_tokens is not None else saved_settings.get("max_tokens")
+    effective_top_p = top_p if top_p is not None else saved_settings.get("top_p")
+    
+    return effective_temp, effective_max, effective_top_p
+
+  def _save_settings_to_chat(
+    self, 
+    chat: ChatModel, 
+    temperature: Optional[float], 
+    max_tokens: Optional[int], 
+    top_p: Optional[float]
+  ) -> None:
+    """Save provided settings to chat metadata."""
+    if not chat._metadata:
+      chat._metadata = {}
+    if "settings" not in chat._metadata:
+      chat._metadata["settings"] = {}
+    
+    if temperature is not None:
+      chat._metadata["settings"]["temperature"] = temperature
+    if max_tokens is not None:
+      chat._metadata["settings"]["max_tokens"] = max_tokens
+    if top_p is not None:
+      chat._metadata["settings"]["top_p"] = top_p
+
+  def _get_chat_settings(self, chat: ChatModel) -> Optional[ChatSettings]:
+    """Extract ChatSettings from chat metadata."""
+    if not chat._metadata or "settings" not in chat._metadata:
+      return None
+    
+    settings_data = chat._metadata["settings"]
+    return ChatSettings(
+      temperature=settings_data.get("temperature"),
+      max_tokens=settings_data.get("max_tokens"),
+      top_p=settings_data.get("top_p")
+    )
 
   async def _update_chat_name(
     self,
