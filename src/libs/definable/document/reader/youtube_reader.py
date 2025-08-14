@@ -1,0 +1,59 @@
+import asyncio
+from typing import List
+
+from libs.definable.document.base import Document
+from libs.definable.document.reader.base import Reader
+
+try:
+  from youtube_transcript_api import YouTubeTranscriptApi
+except ImportError:
+  raise ImportError("`youtube_transcript_api` not installed. Please install it via `pip install youtube_transcript_api`.")
+
+
+class YouTubeReader(Reader):
+  """Reader for YouTube video transcripts"""
+
+  def read(self, video_url: str) -> List[Document]:
+    try:
+      # Better video ID extraction
+      video_id = None
+
+      # Handle different YouTube URL formats
+      if "youtube.com" in video_url or "youtu.be" in video_url:
+        if "v=" in video_url:
+          video_id = video_url.split("v=")[-1].split("&")[0]
+        elif "youtu.be/" in video_url:
+          video_id = video_url.split("youtu.be/")[-1].split("?")[0]
+
+      if not video_id:
+        raise ValueError(f"Could not extract video ID from URL: {video_url}")
+
+      # Get transcript
+      transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+
+      # Combine transcript segments into full text
+      transcript_text = ""
+      for segment in transcript_list:
+        transcript_text += f"{segment['text']} "
+
+      documents = [
+        Document(
+          name=f"youtube_{video_id}",
+          id=f"youtube_{video_id}",
+          meta_data={"video_url": video_url, "video_id": video_id},
+          content=transcript_text.strip(),
+        )
+      ]
+
+      if self.chunk:
+        chunked_documents = []
+        for document in documents:
+          chunked_documents.extend(self.chunk_document(document))
+        return chunked_documents
+      return documents
+
+    except Exception:
+      return []
+
+  async def async_read(self, video_url: str) -> List[Document]:
+    return await asyncio.get_event_loop().run_in_executor(None, self.read, video_url)

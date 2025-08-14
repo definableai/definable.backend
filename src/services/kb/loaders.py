@@ -20,8 +20,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from database import async_engine
 from libs.s3.v1 import s3_client
 from models import KBDocumentModel
-
-from .schema import AllowedFileExtension
+from services.kb.source_handlers.file import FileReaderFactory
 
 
 class DoclingFileLoader:
@@ -64,89 +63,209 @@ class DoclingFileLoader:
 
   def _get_input_format(self) -> InputFormat:
     """Determine the input format based on file extension."""
-    file_ext = self.document.file_type.lower()
+    file_ext = self.document.source_metadata.get("file_type", "").lower()
 
     # Map file extensions to Docling input formats
     format_mapping = {
-      AllowedFileExtension.PDF: InputFormat.PDF,
+      "pdf": InputFormat.PDF,
       # Office formats
-      AllowedFileExtension.DOCX: InputFormat.DOCX,
-      AllowedFileExtension.XLSX: InputFormat.XLSX,
-      AllowedFileExtension.PPTX: InputFormat.PPTX,
+      "docx": InputFormat.DOCX,
+      "xlsx": InputFormat.XLSX,
+      "pptx": InputFormat.PPTX,
       # Web formats
-      AllowedFileExtension.HTML: InputFormat.HTML,
-      AllowedFileExtension.HTM: InputFormat.HTML,
+      "html": InputFormat.HTML,
+      "htm": InputFormat.HTML,
       # Image formats
-      AllowedFileExtension.JPG: InputFormat.IMAGE,
-      AllowedFileExtension.JPEG: InputFormat.IMAGE,
-      AllowedFileExtension.PNG: InputFormat.IMAGE,
-      AllowedFileExtension.TIFF: InputFormat.IMAGE,
-      AllowedFileExtension.BMP: InputFormat.IMAGE,
+      "jpg": InputFormat.IMAGE,
+      "jpeg": InputFormat.IMAGE,
+      "png": InputFormat.IMAGE,
+      "tiff": InputFormat.IMAGE,
+      "bmp": InputFormat.IMAGE,
       # Text formats
-      AllowedFileExtension.MD: InputFormat.MD,
-      AllowedFileExtension.ASCIIDOC: InputFormat.ASCIIDOC,
-      AllowedFileExtension.ADOC: InputFormat.ASCIIDOC,
+      "md": InputFormat.MD,
+      "markdown": InputFormat.MD,
+      "asciidoc": InputFormat.ASCIIDOC,
+      "adoc": InputFormat.ASCIIDOC,
       # Data formats
-      AllowedFileExtension.CSV: InputFormat.CSV,
+      "csv": InputFormat.CSV,
       # XML formats
-      AllowedFileExtension.XML: InputFormat.XML_JATS,  # Default to JATS for generic XML
-      AllowedFileExtension.NXML: InputFormat.XML_JATS,  # NXML is typically JATS
-      AllowedFileExtension.USPTO: InputFormat.XML_USPTO,  # USPTO patent XML
+      "xml": InputFormat.XML_JATS,  # Default to JATS for generic XML
+      "nxml": InputFormat.XML_JATS,  # NXML is typically JATS
+      "uspto": InputFormat.XML_USPTO,  # USPTO patent XML
     }
 
     return format_mapping.get(file_ext, InputFormat.MD)
 
+  def _is_docling_supported(self) -> bool:
+    """Check if the file type is supported by Docling."""
+    file_ext = self.document.source_metadata.get("file_type", "").lower()
+    print(f"File extension: {file_ext}")
+
+    # Remove markdown from Docling support since it fails in practice
+    docling_supported = {
+      "pdf",
+      "docx",
+      "xlsx",
+      "pptx",
+      "html",
+      "htm",
+      # "md",        # Remove this
+      # "markdown",  # Remove this
+      "asciidoc",
+      "adoc",
+      "csv",
+      "xml",
+      "nxml",
+      "uspto",
+      "jpg",
+      "jpeg",
+      "png",
+      "tiff",
+      "bmp",
+    }
+
+    # Special handling for text-based formats that should use custom readers
+    text_formats = {"md", "markdown", "txt", "text", "json"}
+    if file_ext in text_formats:
+      print(f"Using custom reader for text format: {file_ext}")
+      return False
+
+    return file_ext in docling_supported
+
   async def load(self) -> AsyncIterator[LangChainDocument]:
-    """Load document using Docling."""
+    """Load document using Docling or fallback to custom readers."""
     try:
       # Download file from S3 to temp location
       file_content = await s3_client.download_file(self.document.source_metadata["s3_key"])
       temp_path = f"/tmp/{self.document.id}"
+      print(f"Downloading file from S3 to {temp_path}")
 
       with open(temp_path, "wb") as f:
         f.write(file_content.read())
-
+      print(f"File downloaded to {temp_path}")
       self.file_path = temp_path
 
-      try:
-        # Convert the document
-        conversion_result = self.converter.convert(self.file_path)
-        doc = conversion_result.document
+      document_yielded = False
 
-        # Chunk the document using HybridChunker
-        chunks = self.chunker.chunk(doc)
+      if self._is_docling_supported():
+        try:
+          # Use Docling for supported formats
+          print("Using Docling for supported formats")
+          async for doc in self._load_with_docling():
+            yield doc
+            document_yielded = True
+        except Exception as e:
+          print(f"Docling failed, falling back to custom reader: {str(e)}")
+          # Fallback to custom reader
+          async for doc in self._load_with_custom_reader():
+            yield doc
+            document_yielded = True
+      else:
+        # Use custom readers for unsupported formats
+        print("Using custom readers for unsupported formats")
+        async for doc in self._load_with_custom_reader():
+          yield doc
+          document_yielded = True
 
-        # Convert chunks to LangChain documents
-        for idx, chunk in enumerate(chunks, start=1):
-          # Extract metadata from the chunk
-          metadata: dict[str, Any] = {
-            "id": str(uuid4()),
-            "kb_id": str(self.kb_id),
-            "doc_id": str(self.document.id),
-            "title": self.document.title,
-            "file_type": self.document.source_metadata["file_type"],
-            "original_filename": self.document.source_metadata["original_filename"],
-            "tokens": len(chunk.text),
-            "chunk_id": idx,
-          }
-
-          # Add page number and bounding box if available in the chunk's attributes
-          if hasattr(chunk, "page_number"):
-            metadata["page_number"] = chunk.page_number
-          if hasattr(chunk, "bounding_box"):
-            metadata["bounding_box"] = chunk.bounding_box
-
-          # Create LangChain document
-          lc_doc = LangChainDocument(page_content=chunk.text, metadata=metadata)
-          yield lc_doc
-      except Exception as e:
-        print(f"Error processing {self.document.source_metadata['file_type']} file: {str(e)}")
-        return
+      if not document_yielded:
+        print("No documents were generated!")
 
     finally:
       # Cleanup temp file
       if self.file_path and Path(self.file_path).exists():
         Path(self.file_path).unlink()
+
+  async def _load_with_docling(self) -> AsyncIterator[LangChainDocument]:
+    """Load document using Docling."""
+    try:
+      conversion_result = self.converter.convert(self.file_path)
+      doc = conversion_result.document
+
+      # Check if conversion actually succeeded
+      if not doc or not hasattr(doc, "text") or not doc.text.strip():
+        print("Docling conversion produced empty result, falling back to custom reader")
+        raise ValueError("Docling conversion failed - empty document")
+
+      # Chunk the document using HybridChunker
+      chunks = list(self.chunker.chunk(doc))
+
+      if not chunks:
+        print("No chunks generated, falling back to custom reader")
+        raise ValueError("Docling chunking failed - no chunks generated")
+
+      print(f"Generated {len(chunks)} chunks")
+
+      # Convert chunks to LangChain documents
+      for idx, chunk in enumerate(chunks, start=1):
+        # Extract metadata from the chunk
+        metadata: dict[str, Any] = {
+          "id": str(uuid4()),
+          "kb_id": str(self.kb_id),
+          "doc_id": str(self.document.id),
+          "title": self.document.title,
+          "file_type": self.document.source_metadata["file_type"],
+          "original_filename": self.document.source_metadata["original_filename"],
+          "tokens": len(chunk.text),
+          "chunk_id": idx,
+        }
+
+        print(f"Metadata: {metadata}")
+
+        # Add page number and bounding box if available in the chunk's attributes
+        if hasattr(chunk, "page_number"):
+          metadata["page_number"] = chunk.page_number
+        if hasattr(chunk, "bounding_box"):
+          metadata["bounding_box"] = chunk.bounding_box
+
+        # Create LangChain document
+        lc_doc = LangChainDocument(page_content=chunk.text, metadata=metadata)
+        yield lc_doc
+    except Exception as e:
+      print(f"Error processing document with Docling: {str(e)}")
+      raise
+
+  async def _load_with_custom_reader(self) -> AsyncIterator[LangChainDocument]:
+    """Load document using custom readers for unsupported formats."""
+    file_type = self.document.source_metadata.get("file_type", "")
+
+    # Get appropriate reader
+    reader = FileReaderFactory.get_reader(file_type)
+
+    # Read the document
+    documents = await reader.async_read(Path(self.file_path))
+
+    # Initialize text splitter for chunking
+    text_splitter = RecursiveCharacterTextSplitter(
+      chunk_size=500,
+      chunk_overlap=50,
+      length_function=len,
+    )
+
+    # Process each document
+    for doc_idx, doc in enumerate(documents, start=1):
+      # Split content into chunks
+      chunks = text_splitter.split_text(doc.content)
+
+      # Convert chunks to LangChain documents
+      for chunk_idx, chunk_text in enumerate(chunks, start=1):
+        metadata: dict[str, Any] = {
+          "id": str(uuid4()),
+          "kb_id": str(self.kb_id),
+          "doc_id": str(self.document.id),
+          "title": self.document.title,
+          "file_type": self.document.source_metadata["file_type"],
+          "original_filename": self.document.source_metadata["original_filename"],
+          "tokens": len(chunk_text),
+          "chunk_id": f"{doc_idx}_{chunk_idx}",
+        }
+
+        # Add metadata from the original document if available
+        if hasattr(doc, "meta_data") and doc.meta_data:
+          metadata.update(doc.meta_data)
+
+        # Create LangChain document
+        lc_doc = LangChainDocument(page_content=chunk_text, metadata=metadata)
+        yield lc_doc
 
 
 class DocumentProcessor:
@@ -169,6 +288,7 @@ class DocumentProcessor:
         create_extension=False,
       )
 
+      print(f"Processing {len(documents)} documents")
       lc_documents: List[LangChainDocument] = []
       for document in documents:
         # Check if document has s3_key (file document) or existing content (URL document)
@@ -185,7 +305,8 @@ class DocumentProcessor:
           raise Exception(f"Document {document.id} has no s3_key and no content available")
 
       # Store in vector DB
-      await vectorstore.aadd_documents(lc_documents)
+      if lc_documents:  # Only add if we have documents
+        await vectorstore.aadd_documents(lc_documents)
 
     except Exception as e:
       raise Exception(f"Error processing document {document.id}: {str(e)}")
