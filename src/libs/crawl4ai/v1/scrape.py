@@ -5,11 +5,11 @@ from typing import AsyncIterator
 from uuid import uuid4
 
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CacheMode, CrawlerRunConfig  # type: ignore
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.document_loaders.base import BaseLoader
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_postgres import PGVector
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlalchemy.ext.asyncio import create_async_engine
 
 os.environ["OPENAI_API_KEY"] = (
