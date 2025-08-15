@@ -59,6 +59,7 @@ class ChatService:
     "post=transcribe",
     "post=generate_prompts",
     "post=prompt",
+    "get=available_knowledge_bases",
   ]
 
   def __init__(self, acquire: Acquire):
@@ -474,6 +475,49 @@ class ChatService:
         # Store the chat_id and is_new_chat at a higher scope for access in the async generator
         stored_chat_id = chat_id
 
+        # Search knowledge bases if provided
+        enhanced_prompt = prompt
+        if hasattr(message_data, 'knowledge_base_ids') and message_data.knowledge_base_ids:
+          try:
+            from services.kb.service import KnowledgeBaseService
+            kb_service = KnowledgeBaseService(self.acquire)
+            
+            kb_context_parts = []
+            for kb_id in message_data.knowledge_base_ids:
+              try:
+                chunks = await kb_service.post_search_chunks(
+                  org_id=org_id,
+                  kb_id=UUID(kb_id),
+                  query=message_data.content,
+                  limit=getattr(message_data, 'kb_search_limit', 10),
+                  score_threshold=0.1,  
+                  session=session,
+                  user=user
+                )
+                
+                for chunk in chunks:
+                  kb_context_parts.append(f"[Knowledge Base Context]: {chunk.content}")
+                  
+              except Exception as e:
+                self.logger.error(f"Error searching KB {kb_id}: {str(e)}")
+                continue
+            
+            if kb_context_parts:
+              kb_context = "\n\n".join(kb_context_parts)
+              enhanced_prompt = f"""{prompt}
+
+KNOWLEDGE BASE CONTEXT:
+{kb_context}
+
+Use the above context to answer the user's question when relevant. If the context doesn't contain relevant information, use your high IQ to answer
+
+"""
+              self.logger.info(f"Enhanced prompt with context from {len(message_data.knowledge_base_ids)} knowledge bases")
+                
+          except Exception as e:
+            self.logger.error(f"Error processing knowledge bases: {str(e)}")
+            enhanced_prompt = prompt
+
         # generate a streaming response
         async def generate_model_response() -> AsyncGenerator[str, None]:
           full_response = ""
@@ -489,7 +533,7 @@ class ChatService:
             chat_session_id=chat_id,
             message=message_data.content,
             assets=files,
-            prompt=prompt,
+            prompt=enhanced_prompt,  # Use enhanced prompt with KB context
             temperature=effective_temp,
             max_tokens=effective_max,
             top_p=effective_top_p,
@@ -1100,4 +1144,22 @@ class ChatService:
       raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail="Error getting prompt",
+      )
+
+  async def get_available_knowledge_bases(
+    self,
+    org_id: UUID,
+    session: AsyncSession = Depends(get_db),
+    user: dict = Depends(RBAC("kb", "read")),
+  ):
+    """Get available knowledge bases for chat."""
+    try:
+      from services.kb.service import KnowledgeBaseService
+      kb_service = KnowledgeBaseService(self.acquire)
+      return await kb_service.get_list(org_id=org_id, session=session, user=user)
+    except Exception as e:
+      self.logger.error(f"Error getting available knowledge bases: {str(e)}")
+      raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Error getting available knowledge bases",
       )
