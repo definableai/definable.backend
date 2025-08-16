@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config.settings import settings
 from database import get_db
 from dependencies.security import RBAC, JWTBearer
-from libs.chats.v1 import LLMFactory, generate_chat_name, generate_prompts_stream
+from libs.chats.v1 import LLMFactory, generate_chat_name, generate_prompts_stream, extract_file_content
 from libs.s3.v1 import S3Client
 from libs.speech.v1 import transcribe
 from models import ChatModel, ChatUploadModel, LLMModel, MessageModel
@@ -435,6 +435,9 @@ class ChatService:
           content=message_data.content,
           prompt_id=instruction_id or None,
           role=MessageRole.USER,
+          _metadata={
+            "knowledge_base_ids": message_data.knowledge_base_ids if message_data.knowledge_base_ids else []
+          },
           created_at=datetime.now(timezone.utc),
         )
         session.add(user_message)
@@ -444,6 +447,8 @@ class ChatService:
 
         # Handle file uploads if any
         files: List[Union[File, Image]] = []
+        file_content_for_prompt = ""
+        
         if message_data.file_uploads:
           # Fetch the file uploads from the database
           query = select(ChatUploadModel).filter(ChatUploadModel.id.in_(message_data.file_uploads))
@@ -451,12 +456,6 @@ class ChatService:
           file_uploads = result.scalars().all()
 
           for file_upload in file_uploads:
-            # Create the appropriate File object based on mimetype
-            if file_upload.content_type.startswith("image/"):
-              files.append(Image(url=file_upload.url))
-            else:
-              files.append(File(url=file_upload.url, mime_type=file_upload.content_type))
-
             # Create a new ChatUploadModel linking to this message
             new_upload = ChatUploadModel(
               message_id=user_message.id,
@@ -468,15 +467,41 @@ class ChatService:
             )
             session.add(new_upload)
 
+            # Handle file processing based on provider
+            if llm_model.provider == "deepseek":
+              # For DeepSeek: Extract text content using Agno readers
+              try:
+                extracted_text = await extract_file_content(
+                  file_upload.url, 
+                  file_upload.filename, 
+                  file_upload.content_type
+                )
+                if extracted_text:
+                  file_content_for_prompt += f"\n\n--- File: {file_upload.filename} ---\n{extracted_text}\n"
+                  self.logger.info(f"Extracted content from {file_upload.filename} for DeepSeek")
+              except Exception as e:
+                self.logger.error(f"Failed to extract content from {file_upload.filename}: {str(e)}")
+                file_content_for_prompt += f"\n\n--- File: {file_upload.filename} ---\n[Error processing file: {str(e)}]\n"
+            else:
+              # For other providers: Use existing file handling
+              if file_upload.content_type.startswith("image/"):
+                files.append(Image(url=file_upload.url))
+              else:
+                files.append(File(url=file_upload.url, mime_type=file_upload.content_type))
+
           # Commit the new file uploads
           await session.commit()
-          self.logger.info(f"Processed {len(files)} file uploads")
+          
+          if llm_model.provider == "deepseek":
+            self.logger.info(f"Processed {len(file_uploads)} files for DeepSeek with text extraction")
+          else:
+            self.logger.info(f"Processed {len(files)} file uploads for {llm_model.provider}")
 
         # Store the chat_id and is_new_chat at a higher scope for access in the async generator
         stored_chat_id = chat_id
 
         # Search knowledge bases if provided
-        enhanced_prompt = prompt
+        enhanced_prompt = prompt if prompt is not None else ""
         if hasattr(message_data, 'knowledge_base_ids') and message_data.knowledge_base_ids:
           try:
             from services.kb.service import KnowledgeBaseService
@@ -504,7 +529,8 @@ class ChatService:
             
             if kb_context_parts:
               kb_context = "\n\n".join(kb_context_parts)
-              enhanced_prompt = f"""{prompt}
+              base_prompt = prompt if prompt is not None else ""
+              enhanced_prompt = f"""{base_prompt}
 
 KNOWLEDGE BASE CONTEXT:
 {kb_context}
@@ -516,7 +542,12 @@ Use the above context to answer the user's question when relevant. If the contex
                 
           except Exception as e:
             self.logger.error(f"Error processing knowledge bases: {str(e)}")
-            enhanced_prompt = prompt
+            enhanced_prompt = prompt if prompt is not None else ""
+
+        # Add file content to prompt for DeepSeek
+        if file_content_for_prompt:
+          enhanced_prompt += f"\n\nFILE CONTENT:{file_content_for_prompt}\n"
+          self.logger.info("Added extracted file content to prompt")
 
         # generate a streaming response
         async def generate_model_response() -> AsyncGenerator[str, None]:
@@ -657,6 +688,9 @@ Use the above context to answer the user's question when relevant. If the contex
           agent_id=agent_id,
           content=message_data.content,
           role=MessageRole.USER,
+          _metadata={
+            "knowledge_base_ids": message_data.knowledge_base_ids if message_data.knowledge_base_ids else []
+          },
           created_at=datetime.now(timezone.utc),
         )
         session.add(user_message)
