@@ -88,7 +88,7 @@ class LLMFactory:
         max_tokens=max_tokens,
         top_p=top_p,
       ), # type: ignore
-      tools=tools if tools else None,
+      tools=tools or None,
       storage=self.storage,
       markdown=True,
       stream=True,
