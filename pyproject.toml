@@ -26,6 +26,7 @@ dependencies = [
     "langchain-core>=0.3.52",
     "langchain-openai>=0.3.12",
     "langchain-postgres>=0.0.14",
+    "langchain-text-splitters>=0.3.9"
     "loguru>=0.7.3",
     "lxml-html-clean>=0.4.2",
     "mypy>=1.15.0",
