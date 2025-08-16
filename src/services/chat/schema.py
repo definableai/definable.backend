@@ -22,7 +22,6 @@ class MessageCreate(BaseModel):
 
   content: str
   file_uploads: Optional[List[str]] = None
-  generate_image: Optional[bool] = False
 
 class PromptData(BaseModel):
   """Prompt response data"""

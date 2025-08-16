@@ -459,11 +459,19 @@ class ChatService:
           # Stream the response
           self.logger.debug(f"Sending message to {llm_model.provider} {llm_model.version}")
           
-          # Choose appropriate agent based on whether image generation is requested
-          if message_data.generate_image:
-            self.logger.info(f"Using image generation agent for message: {message_data.content}")
+          # Analyze user intent to determine if image generation is needed
+          from libs.chats.v1.intent_analysis import get_intent_service, UserIntent
+          
+          intent_service = get_intent_service()
+          
+          user_intent = await intent_service.analyze_intent(message_data.content)
+          
+          # Choose appropriate agent based on detected intent
+          if user_intent == UserIntent.IMAGE_GENERATION:
+            self.logger.info(f"Detected image generation intent for message: {message_data.content}")
             chat_method = self.llm_factory.image_chat
           else:
+            self.logger.info(f"Detected normal chat intent for message: {message_data.content}")
             chat_method = self.llm_factory.chat
             
           async for token in chat_method(
@@ -497,7 +505,7 @@ class ChatService:
 
           # Process generated images if this was an image generation request
           processed_response = full_response
-          if message_data.generate_image:
+          if user_intent == UserIntent.IMAGE_GENERATION:
             # Create AI message first to get the ID
             ai_message = MessageModel(
               chat_session_id=chat_id,
