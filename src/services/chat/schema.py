@@ -22,7 +22,7 @@ class MessageCreate(BaseModel):
 
   content: str
   file_uploads: Optional[List[str]] = None
-  knowledge_base_ids: Optional[List[str]] = None 
+  knowledge_base_ids: Optional[List[str]] = None
 
 class PromptData(BaseModel):
   """Prompt response data"""

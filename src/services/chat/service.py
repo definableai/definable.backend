@@ -436,7 +436,7 @@ class ChatService:
           prompt_id=instruction_id or None,
           role=MessageRole.USER,
           _metadata={
-            "knowledge_base_ids": message_data.knowledge_base_ids if message_data.knowledge_base_ids else []
+            "knowledge_base_ids": message_data.knowledge_base_ids or []
           },
           created_at=datetime.now(timezone.utc),
         )
@@ -448,7 +448,7 @@ class ChatService:
         # Handle file uploads if any
         files: List[Union[File, Image]] = []
         file_content_for_prompt = ""
-        
+
         if message_data.file_uploads:
           # Fetch the file uploads from the database
           query = select(ChatUploadModel).filter(ChatUploadModel.id.in_(message_data.file_uploads))
@@ -472,8 +472,8 @@ class ChatService:
               # For DeepSeek: Extract text content using Agno readers
               try:
                 extracted_text = await extract_file_content(
-                  file_upload.url, 
-                  file_upload.filename, 
+                  file_upload.url,
+                  file_upload.filename,
                   file_upload.content_type
                 )
                 if extracted_text:
@@ -491,7 +491,7 @@ class ChatService:
 
           # Commit the new file uploads
           await session.commit()
-          
+
           if llm_model.provider == "deepseek":
             self.logger.info(f"Processed {len(file_uploads)} files for DeepSeek with text extraction")
           else:
@@ -506,7 +506,7 @@ class ChatService:
           try:
             from services.kb.service import KnowledgeBaseService
             kb_service = KnowledgeBaseService(self.acquire)
-            
+
             kb_context_parts = []
             for kb_id in message_data.knowledge_base_ids:
               try:
@@ -515,18 +515,18 @@ class ChatService:
                   kb_id=UUID(kb_id),
                   query=message_data.content,
                   limit=getattr(message_data, 'kb_search_limit', 10),
-                  score_threshold=0.1,  
+                  score_threshold=0.1,
                   session=session,
                   user=user
                 )
-                
+
                 for chunk in chunks:
                   kb_context_parts.append(f"[Knowledge Base Context]: {chunk.content}")
-                  
+
               except Exception as e:
                 self.logger.error(f"Error searching KB {kb_id}: {str(e)}")
                 continue
-            
+
             if kb_context_parts:
               kb_context = "\n\n".join(kb_context_parts)
               base_prompt = prompt if prompt is not None else ""
@@ -539,7 +539,7 @@ Use the above context to answer the user's question when relevant. If the contex
 
 """
               self.logger.info(f"Enhanced prompt with context from {len(message_data.knowledge_base_ids)} knowledge bases")
-                
+
           except Exception as e:
             self.logger.error(f"Error processing knowledge bases: {str(e)}")
             enhanced_prompt = prompt if prompt is not None else ""
@@ -689,7 +689,7 @@ Use the above context to answer the user's question when relevant. If the contex
           content=message_data.content,
           role=MessageRole.USER,
           _metadata={
-            "knowledge_base_ids": message_data.knowledge_base_ids if message_data.knowledge_base_ids else []
+            "knowledge_base_ids": message_data.knowledge_base_ids or []
           },
           created_at=datetime.now(timezone.utc),
         )
