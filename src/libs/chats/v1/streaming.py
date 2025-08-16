@@ -105,9 +105,9 @@ class LLMFactory:
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
     top_p: Optional[float] = None,
-  ) -> AsyncGenerator[RunResponse, None]:
+    ) -> AsyncGenerator[RunResponse, None]:
     """Stream image generation responses using Agno agent with DalleTools.
-    
+
     Args:
         llm: The LLM model identifier
         chat_session_id: Unique ID for the chat session
@@ -118,7 +118,7 @@ class LLMFactory:
         temperature: Model temperature parameter
         max_tokens: Maximum tokens to generate
         top_p: Top-p parameter for nucleus sampling
-        
+
     Yields:
         Streaming response tokens including image generation results
     """
@@ -133,7 +133,7 @@ class LLMFactory:
         files.append(asset)
 
     model_class = self.get_model_class(provider)
-    
+
     # Create agent with DalleTools for image generation
     agent = Agent(
       model=model_class(
@@ -149,9 +149,12 @@ class LLMFactory:
       add_history_to_messages=True,
       session_id=str(chat_session_id),
       num_history_responses=memory_size,
-      instructions=prompt or "You are an AI assistant that can generate images. When users ask for images, use the image generation tool to create them based on their descriptions.",
+      instructions=prompt or (
+        "You are an AI assistant that can generate images. When users ask for images, "
+        "use the image generation tool to create them based on their descriptions."
+      ),
     )
-    
+
     async for token in await agent.arun(message, files=files or None, images=images or None):
       yield token
 
