@@ -262,7 +262,13 @@ class KnowledgeBaseService:
         raise HTTPException(status_code=404, detail="Source type not found")
 
       # Extract file metadata
-      file_metadata = document_data.get_metadata()
+      try:
+        file_metadata = document_data.get_metadata()
+        self.logger.info(f"File metadata: {file_metadata['original_filename']} ({file_metadata['file_type']}, {file_metadata['size']} bytes)")
+      except Exception as metadata_error:
+        self.logger.error(f"File metadata extraction failed: {str(metadata_error)}")
+        await charge.delete(reason=f"File metadata extraction failed: {str(metadata_error)}")
+        raise HTTPException(status_code=400, detail=f"Invalid file metadata: {str(metadata_error)}")
 
       # Calculate proper charge quantity based on file size or page count
       file_content = await document_data.file.read()
@@ -310,9 +316,16 @@ class KnowledgeBaseService:
         # Upload to S3 (using already read file_content)
         await s3_client.upload_file(BytesIO(file_content), s3_key, content_type=document_data.file.content_type)
       except Exception as e:
-        # Release charge if file upload fails
-        await charge.delete(reason=f"S3 upload failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
+        self.logger.error(f"File upload failed: {str(e)} (file: {getattr(document_data.file, 'filename', 'unknown')})")
+
+        if "charge" in locals():
+          try:
+            await charge.delete(reason=f"Error in file document upload: {str(e)}")
+            self.logger.info(f"Released charge: {charge.transaction_id}")
+          except Exception as release_error:
+            self.logger.error(f"Failed to release charge: {str(release_error)}")
+
+        raise
 
       # Update file metadata with s3 key and folder info
       file_metadata["s3_key"] = s3_key
@@ -356,6 +369,16 @@ class KnowledgeBaseService:
       return KBDocumentResponse.model_validate(db_doc)
 
     except Exception as e:
+      # Log the detailed error information
+      import traceback
+
+      self.logger.error("=== DETAILED ERROR IN POST_ADD_FILE_DOCUMENT ===")
+      self.logger.error(f"Error type: {type(e).__name__}")
+      self.logger.error(f"Error message: {str(e)}")
+      self.logger.error(f"Full traceback:\n{traceback.format_exc()}")
+      self.logger.error(f"Document data: {document_data}")
+      self.logger.error("=== END DETAILED ERROR ===")
+
       # If we have a charge and encounter any error, release the hold
       if "charge" in locals():
         try:
@@ -375,7 +398,7 @@ class KnowledgeBaseService:
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("kb", "write")),
-    usage: dict = Depends(Usage("url_extraction", qty=1, background=True, metadata={"operation": "url_document_extraction"})),
+    usage: dict = Depends(Usage("pdf_extraction", qty=1, background=True, metadata={"operation": "url_document_extraction"})),
   ) -> KBDocumentResponse:
     """Add URL document to knowledge base."""
     self.logger.info(f"Starting URL document addition for org_id={org_id}, kb_id={kb_id}")
@@ -385,7 +408,7 @@ class KnowledgeBaseService:
       # Get charge from usage dependency
       charge = usage["charge"]
       self.logger.info(f"Created initial charge for URL extraction: {charge.transaction_id}")
-      self.logger.debug(f"Charge details: name=url_extraction, transaction_id={charge.transaction_id}")
+      self.logger.debug(f"Charge details: name=pdf_extraction, transaction_id={charge.transaction_id}")
 
       self.logger.debug(f"Full document_data: {document_data}")
 
@@ -1342,11 +1365,15 @@ class KnowledgeBaseService:
 
         # Extract content
         self.logger.info("Starting content extraction phase")
+
+        # Clean kwargs to avoid session conflicts
+        clean_kwargs = {k: v for k, v in kwargs.items() if k != "session"}
+
         content = await handler.extract_content(
           doc,
           session=session,
           ws_manager=self.ws_manager,
-          **kwargs,
+          **clean_kwargs,
         )
         content_length = len(content) if content else 0
         self.logger.info(f"Content extracted for document ID: {doc.id}, content length: {content_length}")
@@ -1390,15 +1417,21 @@ class KnowledgeBaseService:
             self.logger.error(f"Error in completion callback for document {doc.id}: {str(callback_error)}")
 
       except Exception as e:
-        self.logger.error(f"Error during document processing for ID {doc.id}: {str(e)}")
+        import traceback
+
+        self.logger.error("=== DETAILED ERROR IN DOCUMENT PROCESSING ===")
+        self.logger.error(f"Document ID: {doc.id}")
+        self.logger.error(f"Source type: {source_type.name}")
+        self.logger.error(f"Error type: {type(e).__name__}")
+        self.logger.error(f"Error message: {str(e)}")
+        self.logger.error(f"Full traceback:\n{traceback.format_exc()}")
+        self.logger.error(f"Document metadata: {doc.source_metadata}")
+        self.logger.error("=== END DOCUMENT PROCESSING ERROR ===")
+
         doc.extraction_status = DocumentStatus.FAILED
         doc.error_message = str(e)
         session.add(doc)
         await session.commit()
-        import traceback
-
-        print(traceback.format_exc())
-        self.logger.error(f"Error processing document ID: {doc.id}: {str(e)}")
 
         # If we have a charge and extraction failed, release part of the hold
         if charge:
