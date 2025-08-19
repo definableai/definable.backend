@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any, AsyncIterator, List
 from uuid import UUID, uuid4
+import tempfile
 
 from docling.chunking import HybridChunker
 from docling.datamodel.base_models import InputFormat
@@ -99,12 +100,15 @@ class DoclingFileLoader:
   async def load(self) -> AsyncIterator[LangChainDocument]:
     """Load document using Docling."""
     try:
-      # Download file from S3 to temp location
+      # Download file from S3 to temp location asynchronously
       file_content = await s3_client.download_file(self.document.source_metadata["s3_key"])
-      temp_path = f"/tmp/{self.document.id}"
+      temp_path = str(Path(tempfile.gettempdir()) / str(self.document.id))
 
-      with open(temp_path, "wb") as f:
-        f.write(file_content.read())
+      # Write file asynchronously using asyncio
+      import aiofiles  # type: ignore
+
+      async with aiofiles.open(temp_path, "wb") as f:
+        await f.write(file_content.read())
 
       self.file_path = temp_path
 
