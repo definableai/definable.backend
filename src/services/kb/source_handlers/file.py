@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Dict, Optional
+import tempfile
 
 from pydantic import BaseModel, Field
 
@@ -50,7 +51,7 @@ class FileSourceHandler(BaseSourceHandler):
   def __init__(self, config: Dict):
     super().__init__(config)
     self.max_file_size = config.get("max_file_size", 20 * 1024 * 1024)  # 20MB default
-    self.temp_dir = Path("/tmp")
+    self.temp_dir = Path(tempfile.gettempdir())
 
   async def validate_metadata(self, metadata: Dict, **kwargs) -> bool:
     """Validate file metadata."""
@@ -81,6 +82,7 @@ class FileSourceHandler(BaseSourceHandler):
 
   async def extract_content(self, document: KBDocumentModel, **kwargs) -> str:
     """Extract content from the file."""
+    temp_path = None
     try:
       metadata = document.source_metadata
       s3_key = metadata.get("s3_key")
@@ -88,12 +90,15 @@ class FileSourceHandler(BaseSourceHandler):
       if not s3_key:
         raise ValueError("S3 key not found in metadata")
 
-      # Download file from S3
+      # Download file from S3 asynchronously
       file_content = await s3_client.download_file(s3_key)
       temp_path = self.temp_dir / f"{document.id}"
 
-      with open(temp_path, "wb") as f:
-        f.write(file_content.read())
+      # Write file asynchronously
+      import aiofiles  # type: ignore
+
+      async with aiofiles.open(temp_path, "wb") as f:
+        await f.write(file_content.read())
 
       # Use Docling loader with required arguments
       loader = DoclingFileLoader(kb_id=document.kb_id, document=document)
@@ -109,7 +114,7 @@ class FileSourceHandler(BaseSourceHandler):
 
     finally:
       # Cleanup temp file
-      if temp_path.exists():
+      if temp_path and temp_path.exists():
         temp_path.unlink()
 
   async def cleanup(self, document: KBDocumentModel, **kwargs) -> None:
