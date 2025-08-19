@@ -337,7 +337,7 @@ class Charge:
   # Helper methods
   @staticmethod
   async def _get_charge_details(name: str, session: AsyncSession):
-    query = select(ChargeModel).where(ChargeModel.name == name)
+    query = select(ChargeModel).where(ChargeModel.name == name, ChargeModel.is_active)
     result = await session.execute(query)
     charge = result.scalar_one_or_none()
     if not charge:
@@ -363,6 +363,193 @@ class Charge:
     return wallet
 
   async def _get_transaction(self, for_update: bool = False):
+    if for_update:
+      lock_query = text("SELECT * FROM transactions WHERE id = :tx_id FOR UPDATE")
+      await self.session.execute(lock_query, {"tx_id": str(self.transaction_id)})
+
+    query = select(TransactionModel).where(TransactionModel.id == self.transaction_id)
+    result = await self.session.execute(query)
+    return result.scalar_one_or_none()
+
+  @classmethod
+  def from_transaction_id(cls, transaction_id: str, session):
+    """Create a Charge instance from an existing transaction ID for sync sessions."""
+    from sqlalchemy import select
+    from models import TransactionModel
+
+    # Get the transaction
+    query = select(TransactionModel).where(TransactionModel.id == UUID(transaction_id))
+    result = session.execute(query)
+    transaction = result.scalar_one_or_none()
+
+    if not transaction:
+      raise ValueError(f"Transaction {transaction_id} not found")
+
+    # Extract metadata to recreate charge
+    metadata = transaction.transaction_metadata or {}
+    charge_name = metadata.get("charge_name", "unknown")
+    service = metadata.get("service", "default")
+
+    # Create charge instance
+    charge = cls(name=charge_name, user_id=transaction.user_id, org_id=transaction.organization_id, session=session, service=service)
+
+    # Set the transaction_id to link to existing transaction
+    charge.transaction_id = transaction.id
+
+    return charge
+
+  async def calculate_and_update_sync(self, content=None, metadata=None, status="completed", additional_metadata=None):
+    """
+    Sync version of calculate_and_update for use with synchronous sessions.
+    """
+    self.logger.info(f"Starting sync calculate_and_update for charge: {self.name}")
+
+    try:
+      # Get charge details to determine the appropriate measure
+      charge_details = await self._get_charge_details_sync(self.name, self.session)
+      self.logger.info(f"Charge details obtained for charge: {self.name}")
+
+      # Initialize metadata dictionary
+      meta = additional_metadata or {}
+      meta["processing_status"] = status
+
+      # For sync version, we'll keep it simple and just update with metadata
+      # without complex quantity calculations
+      if metadata:
+        meta.update({k: v for k, v in metadata.items() if k not in meta})
+
+      # Include content length if provided
+      if content:
+        meta["content_length"] = len(content) if isinstance(content, str) else 0
+
+      # Add billing metric details for transparency
+      meta["measure_type"] = charge_details.measure
+      meta["unit_type"] = charge_details.unit
+
+      # Update the transaction
+      await self.update_sync(additional_metadata=meta)
+
+      self.logger.info(f"Completed sync calculate_and_update for charge: {self.name}")
+      return self
+    except Exception as e:
+      self.logger.error(f"Failed to calculate and update charge: {str(e)}")
+      raise
+
+  async def update_sync(self, additional_metadata=None):
+    """Sync version of update to complete charge by converting hold to debit."""
+    transaction = await self._get_transaction_sync(for_update=True)
+
+    if not transaction or transaction.type != TransactionType.HOLD or transaction.status != TransactionStatus.PENDING:
+      self.logger.warning(f"Invalid transaction update attempt for transaction_id: {self.transaction_id}")
+      raise InvalidTransactionError("Invalid or already processed transaction")
+
+    wallet = await self._get_wallet_sync(self.org_id, self.session, for_update=True)
+    self.logger.info(f"Current wallet state: balance={wallet.balance}, hold={wallet.hold or 0}")
+
+    self.logger.info(f"Converting HOLD to DEBIT for transaction {transaction.id}")
+    transaction.type = TransactionType.DEBIT
+    transaction.status = TransactionStatus.COMPLETED
+
+    # Get existing metadata which already contains service information from create()
+    current_metadata = transaction.transaction_metadata or {}
+    service_name = self.service  # Use the service from initialization
+
+    # Create more descriptive message based on service type
+    if service_name == "chat":
+      # For chat service, include model name without chat_id
+      model = current_metadata.get("model", self.name)
+      transaction.description = f"Credits used for {model} chat"
+    else:
+      # Generic description for other services
+      transaction.description = f"Credits used for {self.name}" + (f" ({service_name})" if service_name else "")
+
+    if additional_metadata:
+      transaction.transaction_metadata = {**(transaction.transaction_metadata or {}), **additional_metadata}
+
+    wallet.hold = (wallet.hold or 0) - transaction.credits
+    if wallet.hold < 0:
+      self.logger.warning(f"Negative hold detected: {wallet.hold}, resetting to 0")
+      wallet.hold = 0
+
+    wallet.balance -= transaction.credits
+    wallet.credits_spent = (wallet.credits_spent or 0) + transaction.credits
+
+    await self.session.flush()
+    await self.session.commit()
+
+    self.logger.info(f"Transaction completed - Updated wallet: balance={wallet.balance}, hold={wallet.hold}, credits_spent={wallet.credits_spent}")
+    return self
+
+  async def delete_sync(self, reason=None):
+    """Sync version of delete to cancel charge by releasing hold."""
+    transaction = await self._get_transaction_sync(for_update=True)
+
+    if not transaction or transaction.type != TransactionType.HOLD or transaction.status != TransactionStatus.PENDING:
+      self.logger.warning(f"Invalid transaction deletion attempt for transaction_id: {self.transaction_id}")
+      raise InvalidTransactionError("Invalid or already processed transaction")
+
+    self.logger.info(f"Converting HOLD to RELEASE for transaction {transaction.id}")
+    transaction.type = TransactionType.RELEASE
+    transaction.status = TransactionStatus.COMPLETED
+
+    # Generic release description that works for all services
+    transaction.description = f"Released hold for {self.name}"
+    if reason:
+      transaction.description += f": {reason}"
+
+    if transaction.transaction_metadata:
+      if reason:
+        transaction.transaction_metadata["release_reason"] = reason
+      transaction.transaction_metadata["original_status"] = "CANCELLED"
+
+    # Update wallet hold
+    wallet = await self._get_wallet_sync(self.org_id, self.session, for_update=True)
+    self.logger.info(f"Current wallet state: balance={wallet.balance}, hold={wallet.hold or 0}")
+    self.logger.info(f"Transaction credits: {transaction.credits}")
+    wallet.hold = (wallet.hold or 0) - transaction.credits
+    self.logger.info(f"Updated wallet hold: {wallet.hold}")
+    if wallet.hold < 0:
+      self.logger.warning(f"Negative hold detected: {wallet.hold}, resetting to 0")
+      wallet.hold = 0
+
+    # Commit changes to the database
+    await self.session.flush()
+    await self.session.commit()
+
+    self.logger.info(f"Hold released - Updated wallet: balance={wallet.balance}, hold={wallet.hold}")
+    return self
+
+  # Sync helper methods
+  async def _get_charge_details_sync(self, name: str, session):
+    query = select(ChargeModel).where(ChargeModel.name == name, ChargeModel.is_active)
+    result = await session.execute(query)
+    charge = result.scalar_one_or_none()
+    if not charge:
+      raise ChargeNotFoundError(f"Charge not found: {name}")
+    return charge
+
+  async def _get_wallet_sync(self, org_id: UUID, session, for_update: bool = False):
+    from sqlalchemy.sql import text
+
+    if for_update:
+      lock_query = text("SELECT * FROM wallets WHERE organization_id = :organization_id FOR UPDATE")
+      await session.execute(lock_query, {"organization_id": str(org_id)})
+
+    query = select(WalletModel).where(WalletModel.organization_id == org_id)
+    result = await session.execute(query)
+    wallet = result.scalar_one_or_none()
+
+    if not wallet:
+      wallet = WalletModel(id=uuid4(), organization_id=org_id, balance=0, hold=0, credits_spent=0)
+      session.add(wallet)
+      await session.commit()
+      await session.refresh(wallet)
+
+    return wallet
+
+  async def _get_transaction_sync(self, for_update: bool = False):
+    from sqlalchemy.sql import text
+
     if for_update:
       lock_query = text("SELECT * FROM transactions WHERE id = :tx_id FOR UPDATE")
       await self.session.execute(lock_query, {"tx_id": str(self.transaction_id)})
