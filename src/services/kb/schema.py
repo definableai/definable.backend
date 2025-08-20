@@ -12,7 +12,7 @@ from models import DocumentStatus
 class AllowedFileExtension(str, Enum):
   """Allowed file extensions for knowledge base documents."""
 
-  # Basic formats
+  # Document formats
   PDF = "pdf"
   DOCX = "docx"
   XLSX = "xlsx"
@@ -20,9 +20,11 @@ class AllowedFileExtension(str, Enum):
   HTML = "html"
   HTM = "htm"
   MD = "md"
+  TXT = "txt"
+  JSON = "json"
+  CSV = "csv"
   ASCIIDOC = "asciidoc"
   ADOC = "adoc"
-  CSV = "csv"
 
   # Image formats
   JPG = "jpg"
