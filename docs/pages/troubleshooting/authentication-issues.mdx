@@ -1,9 +1,9 @@
 ---
 title: 'Authentication Issues'
-description: 'Troubleshooting JWT, RBAC, and user authentication problems in the Zyeta backend'
+description: 'Troubleshooting JWT, RBAC, and user authentication problems in the Definable backend'
 ---
 
-This guide covers common authentication-related issues that may arise when working with the Zyeta backend.
+This guide covers common authentication-related issues that may arise when working with the Definable backend.
 
 ## JWT Token Issues
 
@@ -36,7 +36,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   2. **Implement proper token refresh:**
      ```python
-     # Zyeta doesn't use refresh tokens by default 
+     # Definable doesn't use refresh tokens by default 
      # You'll need to re-login when tokens expire
      # Default expiration time is set in settings.jwt_expire_minutes
      
@@ -53,7 +53,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   3. **Verify token format:**
      ```python
-     # Zyeta uses HS256 algorithm for JWT
+     # Definable uses HS256 algorithm for JWT
      # Tokens should have header.payload.signature format
      def is_valid_jwt_format(token):
          parts = token.split(".")
@@ -82,7 +82,7 @@ This guide covers common authentication-related issues that may arise when worki
      ```
 
   5. **Verify client settings for JWT expiration:**
-     - Zyeta's JWT expiration is configured in the `settings.py` file
+     - Definable's JWT expiration is configured in the `settings.py` file
      - Default setting is `jwt_expire_minutes`
      - The token creation uses this setting:
        ```python
@@ -108,12 +108,12 @@ This guide covers common authentication-related issues that may arise when worki
   
   1. **Check header format against JWTBearer implementation:**
      ```python
-     # Correct format for Zyeta's JWTBearer middleware
+     # Correct format for Definable's JWTBearer middleware
      headers = {
          "Authorization": f"Bearer {token}"  # Note the space after "Bearer"
      }
      
-     # Incorrect formats that will fail with Zyeta's JWTBearer:
+     # Incorrect formats that will fail with Definable's JWTBearer:
      # headers = {"Authorization": token}  # Missing 'Bearer' prefix
      # headers = {"Authorization": f"bearer {token}"}  # Case sensitive, must be 'Bearer'
      # headers = {"Authorization": f"Bearer{token}"}   # Missing space after 'Bearer'
@@ -135,7 +135,7 @@ This guide covers common authentication-related issues that may arise when worki
      ```
   
   3. **Check request object in JWTBearer middleware:**
-     - Zyeta's JWTBearer middleware extracts token from either HTTP Request or WebSocket
+     - Definable's JWTBearer middleware extracts token from either HTTP Request or WebSocket
      - For HTTP, it checks `credentials.scheme == "Bearer"`
      - For WebSocket, it checks `websocket.query_params.get("token")`
      ```python
@@ -164,7 +164,7 @@ This guide covers common authentication-related issues that may arise when worki
      ```
 </Accordion>
 
-<Accordion title="Token security with Zyeta's implementation">
+<Accordion title="Token security with Definable's implementation">
   **Symptoms:**
   - Unexpected logins from unknown locations
   - Security alerts about unauthorized access
@@ -172,9 +172,9 @@ This guide covers common authentication-related issues that may arise when worki
   
   **Solutions:**
   
-  1. **Understand Zyeta's token content:**
+  1. **Understand Definable's token content:**
      ```python
-     # Zyeta JWT payload typically contains:
+     # Definable JWT payload typically contains:
      # - id: The user's UUID
      # - exp: Expiration timestamp
      
@@ -205,7 +205,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   2. **Implement client-side security measures:**
      ```javascript
-     // Since Zyeta doesn't implement token revocation by default,
+     // Since Definable doesn't implement token revocation by default,
      // implement these client-side security measures:
      
      // 1. Store token securely
@@ -239,7 +239,7 @@ This guide covers common authentication-related issues that may arise when worki
      ```
   
   3. **Configure JWT validity period:**
-     - Zyeta uses `settings.jwt_expire_minutes` to control token lifetime
+     - Definable uses `settings.jwt_expire_minutes` to control token lifetime
      - Check your `.env` file and update `JWT_EXPIRE_MINUTES` to an appropriate value:
      ```ini
      # Recommended values based on security requirements:
@@ -250,7 +250,7 @@ This guide covers common authentication-related issues that may arise when worki
      ```
   
   4. **Additional security for production:**
-     - Zyeta doesn't include fingerprinting or IP validation by default
+     - Definable doesn't include fingerprinting or IP validation by default
      - For production, consider implementing an enhanced authentication middleware:
      ```python
      # Example of enhanced JWT validation middleware
@@ -286,7 +286,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   1. **Verify user roles in organization context:**
      ```python
-     # Zyeta's RBAC implementation is organization-specific
+     # Definable's RBAC implementation is organization-specific
      # Check current user's role in the organization:
      response = requests.get(
          f"{API_URL}/roles/list_roles?org_id={org_id}",
@@ -309,18 +309,18 @@ This guide covers common authentication-related issues that may arise when worki
          print(f"User role: {role}")
      ```
   
-  2. **Understand Zyeta's RBAC middleware:**
-     - Zyeta's RBAC middleware checks for specific resource and action permissions
+  2. **Understand Definable's RBAC middleware:**
+     - Definable's RBAC middleware checks for specific resource and action permissions
      - Routes are protected with: `user: dict = Depends(RBAC("resource", "action"))`
      - Permissions follow `resource:action` pattern, with wildcard support (`*`)
      ```python
-     # Example of Zyeta's RBAC middleware usage
+     # Example of Definable's RBAC middleware usage
      @app.get("/api/protected")
      async def protected_route(user: dict = Depends(RBAC("kb", "read"))):
          # If execution reaches here, the user is authorized
          return {"message": "Access granted", "user_id": user["id"]}
      
-     # For wildcards, Zyeta supports patterns like:
+     # For wildcards, Definable supports patterns like:
      # - "*" (any resource and any action)
      # - "kb:*" (any action on kb resource)
      # - "*:read" (read action on any resource)
@@ -328,7 +328,7 @@ This guide covers common authentication-related issues that may arise when worki
      ```
   
   3. **Check organization membership status:**
-     - Zyeta's RBAC checks `OrganizationMemberModel.status == "active"`
+     - Definable's RBAC checks `OrganizationMemberModel.status == "active"`
      - If user is not active in the organization, they'll get 403 error
      ```python
      # Check user's status in organization
@@ -370,9 +370,9 @@ This guide covers common authentication-related issues that may arise when worki
      )
      ```
   
-  5. **Debug Zyeta's RBAC wildcard matching:**
+  5. **Debug Definable's RBAC wildcard matching:**
      ```python
-     # Zyeta uses a custom wildcard matcher in the RBAC class
+     # Definable uses a custom wildcard matcher in the RBAC class
      # You can recreate it for testing:
      def check_wildcard_match(permission_value: str, required_value: str) -> bool:
          """Check if permission matches required value with wildcard support."""
@@ -418,9 +418,9 @@ This guide covers common authentication-related issues that may arise when worki
   
   **Solutions:**
   
-  1. **Verify role was correctly assigned in Zyeta's database:**
+  1. **Verify role was correctly assigned in Definable's database:**
      ```python
-     # Zyeta stores role assignments in OrganizationMemberModel
+     # Definable stores role assignments in OrganizationMemberModel
      member_query = select(OrganizationMemberModel).where(
          and_(
              OrganizationMemberModel.user_id == user_id,
@@ -441,7 +441,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   2. **Check role existence and permissions:**
      ```python
-     # Get role definition using Zyeta's roles service
+     # Get role definition using Definable's roles service
      response = requests.get(
          f"{API_URL}/roles/{role_id}?org_id={org_id}",
          headers={"Authorization": f"Bearer {admin_token}"}
@@ -457,7 +457,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   3. **Check for hierarchy level conflicts:**
      ```python
-     # Zyeta uses hierarchy_level to determine role precedence
+     # Definable uses hierarchy_level to determine role precedence
      # Higher numbers = higher privilege
      # RoleService._validate_hierarchy_level ensures hierarchy levels are unique
      
@@ -513,9 +513,9 @@ This guide covers common authentication-related issues that may arise when worki
   
   **Solutions:**
   
-  1. **Understand Zyeta's organization-based permissions:**
+  1. **Understand Definable's organization-based permissions:**
      ```python
-     # Zyeta's RBAC is organization-scoped
+     # Definable's RBAC is organization-scoped
      # The org_id query parameter is required for most endpoints
      
      # Correct request with org_id:
@@ -550,9 +550,9 @@ This guide covers common authentication-related issues that may arise when worki
      # If org_id is None, you need to add it to your request
      ```
   
-  3. **Verify permission scope in Zyeta:**
+  3. **Verify permission scope in Definable:**
      ```python
-     # In Zyeta's implementation, permissions are tied to:
+     # In Definable's implementation, permissions are tied to:
      # 1. A user's role in a specific organization
      # 2. The PermissionModel defines resource & action
      # 3. RolePermissionModel links roles to permissions
@@ -632,9 +632,9 @@ This guide covers common authentication-related issues that may arise when worki
   
   **Solutions:**
   
-  1. **Verify credentials against Zyeta's auth service:**
+  1. **Verify credentials against Definable's auth service:**
      ```python
-     # Zyeta's AuthService.post_login uses verify_password to check credentials
+     # Definable's AuthService.post_login uses verify_password to check credentials
      
      # Example login request:
      response = requests.post(
@@ -653,9 +653,9 @@ This guide covers common authentication-related issues that may arise when worki
          print(f"Login successful. Token obtained: {token_data.get('access_token')[:10]}...")
      ```
   
-  2. **Check password verification in Zyeta:**
+  2. **Check password verification in Definable:**
      ```python
-     # Zyeta uses verify_password from auth_util:
+     # Definable uses verify_password from auth_util:
      def verify_password(plain_password, hashed_password):
          """Verify a password against a hash."""
          return pwd_context.verify(plain_password, hashed_password)
@@ -666,7 +666,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   3. **Check for account status issues:**
      ```python
-     # Zyeta checks user status during login
+     # Definable checks user status during login
      # Check user status in the database:
      user_query = select(UserModel).where(UserModel.email == email)
      user = await session.execute(user_query)
@@ -682,7 +682,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   4. **Check for email verification requirements:**
      ```python
-     # Zyeta may require email verification before login
+     # Definable may require email verification before login
      # Check if email verified status:
      user_query = select(UserModel).where(UserModel.email == email)
      user = await session.execute(user_query)
@@ -700,7 +700,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   5. **Handle login lockouts:**
      ```python
-     # Zyeta's implementation may have rate limiting on login attempts
+     # Definable's implementation may have rate limiting on login attempts
      # Check for specific error messages indicating lockout
      
      # If using RateLimiter middleware from ratelimit.py:
@@ -758,7 +758,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   1. **Verify invitation token:**
      ```python
-     # Zyeta handles invitations in AuthService.post_signup_invite and get_signup_invite
+     # Definable handles invitations in AuthService.post_signup_invite and get_signup_invite
      
      # Check invitation status:
      response = requests.get(
@@ -776,7 +776,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   2. **Debug invitation token issues:**
      ```python
-     # Zyeta validates invite tokens by:
+     # Definable validates invite tokens by:
      # 1. Checking if invite exists in the database
      # 2. Verifying it's not expired
      # 3. Ensuring it's not already used
@@ -852,7 +852,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   1. **Debug password reset flow:**
      ```python
-     # Zyeta's password reset flow:
+     # Definable's password reset flow:
      # 1. Request password reset token
      response = requests.post(
          f"{API_URL}/auth/forgot-password",
@@ -880,7 +880,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   2. **Check email verification status:**
      ```python
-     # Zyeta tracks email verification status
+     # Definable tracks email verification status
      
      # Get user profile to check verification status
      response = requests.get(
@@ -904,7 +904,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   3. **Update user profile:**
      ```python
-     # Update user profile in Zyeta
+     # Update user profile in Definable
      response = requests.put(
          f"{API_URL}/auth/me",
          headers={"Authorization": f"Bearer {token}"},
@@ -924,7 +924,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   4. **Handle account deletion:**
      ```python
-     # Zyeta process for account deactivation
+     # Definable process for account deactivation
      
      # Deactivate (soft delete) account:
      response = requests.delete(
@@ -958,7 +958,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   1. **Verify WebSocket connection with token:**
      ```javascript
-     // Zyeta's WebSocket authentication requires token in query parameters
+     // Definable's WebSocket authentication requires token in query parameters
      // Correct format:
      const socket = new WebSocket(`wss://${API_URL}/ws/connect?token=${jwt_token}&org_id=${org_id}`);
      
@@ -977,7 +977,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   2. **Debug WebSocket auth errors:**
      ```python
-     # Zyeta's JWTBearer validates WebSocket connections
+     # Definable's JWTBearer validates WebSocket connections
      # For WebSockets, validate_socket_token is called
      
      # Server-side debugging:
@@ -1044,7 +1044,7 @@ This guide covers common authentication-related issues that may arise when worki
            return;
          }
          
-         // Zyeta's WebSocket endpoint with required auth parameters
+         // Definable's WebSocket endpoint with required auth parameters
          this.socket = new WebSocket(`${this.baseUrl}/ws/connect?token=${token}&org_id=${orgId}`);
          
          this.socket.onopen = (event) => {
@@ -1121,7 +1121,7 @@ This guide covers common authentication-related issues that may arise when worki
      
      // Usage:
      const ws = new AuthenticatedWebSocket(
-       'wss://api.zyeta.io',
+       'wss://api.definable.ai',
        () => localStorage.getItem('access_token'),
        () => localStorage.getItem('current_org_id')
      );
@@ -1133,7 +1133,7 @@ This guide covers common authentication-related issues that may arise when worki
   
   4. **Check RBAC permissions for WebSocket connections:**
      ```python
-     # Zyeta's WebSocketService uses RBAC for permission checking
+     # Definable's WebSocketService uses RBAC for permission checking
      # WebSocket routes are protected with RBAC dependency
      
      # In WebSocketService.ws_connect, RBAC dependency is used:

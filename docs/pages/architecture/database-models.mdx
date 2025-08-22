@@ -1,9 +1,9 @@
 ---
 title: 'Database Models'
-description: 'Understanding the database model architecture in Zyeta'
+description: 'Understanding the database model architecture in Definable'
 ---
 
-Zyeta uses SQLAlchemy ORM with asynchronous operations to interact with a PostgreSQL database. The models are organized in a structured hierarchy that promotes code reuse through mixins and inheritance.
+Definable uses SQLAlchemy ORM with asynchronous operations to interact with a PostgreSQL database. The models are organized in a structured hierarchy that promotes code reuse through mixins and inheritance.
 
 ## Model Architecture
 
@@ -91,7 +91,7 @@ Every model inherits standardized CRUD operations:
 
 ## Core Domain Models
 
-Zyeta's domain is represented by the following core models:
+Definable's domain is represented by the following core models:
 
 ### User and Authentication
 
@@ -140,22 +140,51 @@ Zyeta's domain is represented by the following core models:
 The database schema uses relationships to model domain connections:
 
 ```mermaid
+---
+config:
+  layout: elk
+---
 erDiagram
-    User ||--o{ OrganizationMember : "belongs to"
-    Organization ||--o{ OrganizationMember : "has"
-    Role ||--o{ OrganizationMember : "assigned to"
-    Organization ||--o{ KnowledgeBase : "owns"
-    KnowledgeBase ||--o{ KBDocument : "contains"
-    User ||--o{ Conversation : "has"
-    Conversation ||--o{ Message : "contains"
-    Organization ||--o{ Agent : "owns"
-    Agent ||--o{ AgentTool : "uses"
-    Tool ||--o{ AgentTool : "used by"
+	direction LR
+	User {
+	}
+	OrganizationMember {
+	}
+	Organization {
+	}
+	Role {
+	}
+	KnowledgeBase {
+	}
+	KBDocument {
+	}
+	Conversation {
+	}
+	Message {
+	}
+	Agent {
+	}
+	AgentTool {
+	}
+	Tool {
+	}
+
+	User||--o{OrganizationMember:"belongs to"
+	Organization||--o{OrganizationMember:"has"
+	Role||--o{OrganizationMember:"assigned to"
+	Organization||--o{KnowledgeBase:"owns"
+	KnowledgeBase||--o{KBDocument:"contains"
+	User||--o{Conversation:"has"
+	Conversation||--o{Message:"contains"
+	Organization||--o{Agent:"owns"
+	Agent||--o{AgentTool:"uses"
+	Tool||--o{AgentTool:"used by"
+
 ```
 
 ## PostgreSQL Features
 
-Zyeta leverages PostgreSQL-specific features:
+Definable leverages PostgreSQL-specific features:
 
 - **UUID Generation**: Native `gen_random_uuid()` function
 - **pgvector Extension**: Enables vector embeddings storage and similarity search
@@ -215,7 +244,7 @@ async def get_db():
 
 ## Best Practices for Model Development
 
-When extending or creating models in Zyeta:
+When extending or creating models in Definable:
 
 1. **Inherit from CRUD**: Always extend the CRUD base class
 2. **Use Type Annotations**: Leverage SQLAlchemy's `Mapped[Type]` for clarity
