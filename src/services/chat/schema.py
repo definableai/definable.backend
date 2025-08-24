@@ -53,6 +53,17 @@ class MessageResponse(BaseModel):
     from_attributes = True
 
 
+class ChatSettings(BaseModel):
+  """Chat settings schema for per-session LLM parameters."""
+
+  temperature: Optional[float] = None
+  max_tokens: Optional[int] = None
+  top_p: Optional[float] = None
+
+  class Config:
+    from_attributes = True
+
+
 class ChatSessionBase(BaseModel):
   """Base chat session schema."""
 
@@ -63,7 +74,7 @@ class ChatSessionBase(BaseModel):
 class ChatSessionCreate(ChatSessionBase):
   """Create chat session schema."""
 
-  pass
+  settings: Optional[ChatSettings] = None
 
 
 class ChatSessionUpdate(BaseModel):
@@ -71,6 +82,7 @@ class ChatSessionUpdate(BaseModel):
 
   title: Optional[str] = None
   status: Optional[ChatStatus] = None
+  settings: Optional[ChatSettings] = None
 
 
 class ChatSessionResponse(ChatSessionBase):
@@ -80,6 +92,7 @@ class ChatSessionResponse(ChatSessionBase):
   org_id: UUID
   user_id: UUID
   metadata: Dict[str, Any] = {}
+  settings: Optional[ChatSettings] = None
   created_at: str
   updated_at: str
 

@@ -76,6 +76,11 @@ class LLMFactory:
 
     model_class = self.get_model_class(provider)
 
+    # Anthropic requires max_tokens;
+    effective_max_tokens = max_tokens
+    if provider == "anthropic" and effective_max_tokens is None:
+      effective_max_tokens = 1024
+      
     tools = []
     if thinking:
       tools.append(ReasoningTools(add_instructions=True))
@@ -85,7 +90,7 @@ class LLMFactory:
       model=model_class(
         id=llm,
         temperature=temperature,
-        max_tokens=max_tokens,
+        max_tokens=effective_max_tokens,
         top_p=top_p,
       ), # type: ignore
       tools=tools or None,
