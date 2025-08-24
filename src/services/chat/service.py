@@ -367,9 +367,7 @@ class ChatService:
         is_new_chat = db_session.title == "New Chat"
 
       # Get effective settings (saved + provided) and save any new settings
-      effective_temp, effective_max, effective_top_p = self._get_effective_settings(
-        db_session, temperature, max_tokens, top_p
-      )
+      effective_temp, effective_max, effective_top_p = self._get_effective_settings(db_session, temperature, max_tokens, top_p)
 
       # Save any new settings provided
       if any(x is not None for x in [temperature, max_tokens, top_p]):
@@ -436,9 +434,7 @@ class ChatService:
           content=message_data.content,
           prompt_id=instruction_id or None,
           role=MessageRole.USER,
-          _metadata={
-            "knowledge_base_ids": message_data.knowledge_base_ids or []
-          },
+          _metadata={"knowledge_base_ids": message_data.knowledge_base_ids or []},
           created_at=datetime.now(timezone.utc),
         )
         session.add(user_message)
@@ -472,11 +468,7 @@ class ChatService:
             if llm_model.provider == "deepseek":
               # For DeepSeek: Extract text content using Agno readers
               try:
-                extracted_text = await extract_file_content(
-                  file_upload.url,
-                  file_upload.filename,
-                  file_upload.content_type
-                )
+                extracted_text = await extract_file_content(file_upload.url, file_upload.filename, file_upload.content_type)
                 if extracted_text:
                   file_content_for_prompt += f"\n\n--- File: {file_upload.filename} ---\n{extracted_text}\n"
                   self.logger.info(f"Extracted content from {file_upload.filename} for DeepSeek")
@@ -503,9 +495,10 @@ class ChatService:
 
         # Search knowledge bases if provided
         enhanced_prompt = prompt if prompt is not None else ""
-        if hasattr(message_data, 'knowledge_base_ids') and message_data.knowledge_base_ids:
+        if hasattr(message_data, "knowledge_base_ids") and message_data.knowledge_base_ids:
           try:
             from services.kb.service import KnowledgeBaseService
+
             kb_service = KnowledgeBaseService(self.acquire)
 
             kb_context_parts = []
@@ -515,10 +508,10 @@ class ChatService:
                   org_id=org_id,
                   kb_id=UUID(kb_id),
                   query=message_data.content,
-                  limit=getattr(message_data, 'kb_search_limit', 10),
+                  limit=getattr(message_data, "kb_search_limit", 10),
                   score_threshold=0.1,
                   session=session,
-                  user=user
+                  user=user,
                 )
 
                 for chunk in chunks:
@@ -585,12 +578,12 @@ Use the above context to answer the user's question when relevant. If the contex
             temperature=effective_temp,
             max_tokens=effective_max,
             top_p=effective_top_p,
-            thinking=getattr(message_data, 'thinking', False),
+            thinking=getattr(message_data, "thinking", False),
           ):
             # Handle streaming
             if token.content is not None:
               # Check if this is a reasoning step by checking token type or content type
-              if hasattr(token, 'type') and token.type == 'reasoning':
+              if hasattr(token, "type") and token.type == "reasoning":
                 # This is a reasoning step - send separately so frontend can show/hide it
                 reasoning_data = {"type": "reasoning", "content": str(token.content)}
                 yield f"data: {json.dumps(reasoning_data)}\n\n"
@@ -747,9 +740,7 @@ Use the above context to answer the user's question when relevant. If the contex
           agent_id=agent_id,
           content=message_data.content,
           role=MessageRole.USER,
-          _metadata={
-            "knowledge_base_ids": message_data.knowledge_base_ids or []
-          },
+          _metadata={"knowledge_base_ids": message_data.knowledge_base_ids or []},
           created_at=datetime.now(timezone.utc),
         )
         session.add(user_message)
@@ -1118,11 +1109,7 @@ Use the above context to answer the user's question when relevant. If the contex
   ### PRIVATE METHODS ###
 
   def _get_effective_settings(
-    self,
-    chat: ChatModel,
-    temperature: Optional[float],
-    max_tokens: Optional[int],
-    top_p: Optional[float]
+    self, chat: ChatModel, temperature: Optional[float], max_tokens: Optional[int], top_p: Optional[float]
   ) -> tuple[Optional[float], Optional[int], Optional[float]]:
     """Get effective settings: query params override saved settings."""
     saved_settings = chat._metadata.get("settings", {}) if chat._metadata else {}
@@ -1133,13 +1120,7 @@ Use the above context to answer the user's question when relevant. If the contex
 
     return effective_temp, effective_max, effective_top_p
 
-  def _save_settings_to_chat(
-    self,
-    chat: ChatModel,
-    temperature: Optional[float],
-    max_tokens: Optional[int],
-    top_p: Optional[float]
-  ) -> None:
+  def _save_settings_to_chat(self, chat: ChatModel, temperature: Optional[float], max_tokens: Optional[int], top_p: Optional[float]) -> None:
     """Save provided settings to chat metadata."""
     if not chat._metadata:
       chat._metadata = {}
@@ -1159,11 +1140,7 @@ Use the above context to answer the user's question when relevant. If the contex
       return None
 
     settings_data = chat._metadata["settings"]
-    return ChatSettings(
-      temperature=settings_data.get("temperature"),
-      max_tokens=settings_data.get("max_tokens"),
-      top_p=settings_data.get("top_p")
-    )
+    return ChatSettings(temperature=settings_data.get("temperature"), max_tokens=settings_data.get("max_tokens"), top_p=settings_data.get("top_p"))
 
   async def _update_chat_name(
     self,
@@ -1250,7 +1227,7 @@ Use the above context to answer the user's question when relevant. If the contex
     """Process DALL-E URLs in response text and replace with our S3 URLs."""
     try:
       # Find all DALL-E URLs in the response using regex
-      dalle_url_pattern = r'https://oaidalleapiprodscus\.blob\.core\.windows\.net/[^\s\)]+\.png[^\s\)]*'
+      dalle_url_pattern = r"https://oaidalleapiprodscus\.blob\.core\.windows\.net/[^\s\)]+\.png[^\s\)]*"
       dalle_urls = re.findall(dalle_url_pattern, response_text)
 
       if not dalle_urls:
@@ -1273,11 +1250,7 @@ Use the above context to answer the user's question when relevant. If the contex
           s3_key = f"{org_id}/{chat_id}/generated-{image_id}.png"
 
           # Upload to our S3
-          our_image_url = await self.s3_client.upload_file(
-            file=BytesIO(image_bytes),
-            key=s3_key,
-            content_type="image/png"
-          )
+          our_image_url = await self.s3_client.upload_file(file=BytesIO(image_bytes), key=s3_key, content_type="image/png")
           # Create upload record in database
           upload_record = ChatUploadModel(
             message_id=ai_message_id,
@@ -1285,7 +1258,7 @@ Use the above context to answer the user's question when relevant. If the contex
             content_type="image/png",
             file_size=len(image_bytes),
             url=our_image_url,
-            _metadata={"generated": True, "type": "image_generation", "original_dalle_url": dalle_url}
+            _metadata={"generated": True, "type": "image_generation", "original_dalle_url": dalle_url},
           )
           session.add(upload_record)
 
@@ -1317,6 +1290,7 @@ Use the above context to answer the user's question when relevant. If the contex
     """Get available knowledge bases for chat."""
     try:
       from services.kb.service import KnowledgeBaseService
+
       kb_service = KnowledgeBaseService(self.acquire)
       return await kb_service.get_list(org_id=org_id, session=session, user=user)
     except Exception as e:

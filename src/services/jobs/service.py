@@ -184,4 +184,3 @@ class JobService:
     await session.commit()
 
     return {"message": "Job cancelled successfully"}
-
