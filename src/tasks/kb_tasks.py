@@ -2,15 +2,114 @@
 
 import platform
 import sys
+import time
 from typing import List, Optional
 from uuid import UUID
 
+import httpx
 from sqlalchemy import select
 
 from common.logger import logger
 from common.q import task
+from config.settings import settings
 from database import sync_session
 from models.job_model import JobModel, JobStatus
+
+
+def send_job_update(
+  org_id: UUID,
+  job_id: UUID,
+  status: str,
+  message: str,
+  progress: float = 0.0,
+  kb_id: Optional[UUID] = None,
+  file_id: Optional[UUID] = None,
+  timeout: int = 10,
+) -> bool:
+  """Send job status update via HTTP to the job update endpoint.
+
+  Args:
+      org_id: Organization UUID
+      job_id: Job UUID
+      status: Job status string ("pending" | "uploading" | "extracting" | "indexing" | "completed" | "failed")
+      message: Status message
+      progress: Progress percentage (0-100)
+      kb_id: Optional Knowledge Base UUID
+      file_id: Optional File/Document UUID
+      timeout: Request timeout in seconds
+
+  Returns:
+      bool: True if update was sent successfully, False otherwise
+  """
+  try:
+    from datetime import datetime
+
+    # Map string status to numeric status for backend
+    status_mapping = {
+      "pending": 0,
+      "uploading": 1,
+      "extracting": 1,
+      "indexing": 1,
+      "processing": 1,
+      "uploaded": 2,  # Intermediate completion - upload finished
+      "processed": 2,  # Intermediate completion - processing finished
+      "step_completed": 2,  # Generic intermediate completion
+      "completed": 2,
+      "failed": 3,
+    }
+    numeric_status = status_mapping.get(status, 1)  # Default to PROCESSING if unknown
+
+    # Prepare simplified payload for job update endpoint
+    payload = {
+      "org_id": str(org_id),
+      "job_id": str(job_id),
+      "status": numeric_status,  # Use correct numeric status
+      "message": message,
+      "data": {
+        "jobId": str(job_id),
+        "status": status,
+        "updated_at": datetime.utcnow().isoformat() + "Z",
+        "message": message,
+        "progress": progress,
+        "kbId": str(kb_id) if kb_id else None,
+        "fileId": str(file_id) if file_id else None,
+      },
+    }
+
+    # Prepare headers with internal token authentication
+    headers = {
+      "Content-Type": "application/json",
+      "x-internal-token": settings.internal_token,
+    }
+
+    logger.info(f"Sending job update for {job_id}: status={status}, progress={progress}%")
+    logger.debug(f"Update payload: {payload}")
+
+    # Send HTTP request to job update endpoint using httpx
+    with httpx.Client(timeout=timeout) as client:
+      response = client.post(url=settings.job_update_url, headers=headers, json=payload)
+
+    # Check response status
+    if response.status_code == 200:
+      response_data = response.json()
+      logger.info(f"Job update sent successfully for {job_id}: {response_data.get('message', 'Success')}")
+      return True
+    else:
+      logger.error(f"Job update failed for {job_id}: HTTP {response.status_code} - {response.text}")
+      return False
+
+  except httpx.TimeoutException as e:
+    logger.error(f"Job update request timed out for {job_id} after {timeout} seconds: {str(e)}")
+    return False
+  except httpx.ConnectError as e:
+    logger.error(f"Job update connection failed for {job_id} - service may be unavailable: {str(e)}")
+    return False
+  except httpx.RequestError as e:
+    logger.error(f"Job update request failed for {job_id}: {str(e)}")
+    return False
+  except Exception as e:
+    logger.error(f"Unexpected error sending job update for {job_id}: {str(e)}")
+    return False
 
 
 def create_crawl_folder_sync(parent_doc, session, url: str):
@@ -108,19 +207,30 @@ def create_child_document_sync(parent_doc, page_url: str, content: str, folder_i
     return None
 
 
-def update_job_progress(job_id: UUID, progress: float, message: str, session, metadata: Optional[dict] = None, celery_task_id: Optional[str] = None):
-  """Update job progress in database for WebSocket broadcasting by main app."""
+def update_job_progress(
+  job_id: UUID,
+  progress: float,
+  message: str,
+  session,
+  metadata: Optional[dict] = None,
+  celery_task_id: Optional[str] = None,
+  org_id: Optional[UUID] = None,
+  send_update: bool = True,
+):
+  """Update job progress in database and optionally send HTTP update for WebSocket broadcasting."""
   try:
     job = session.get(JobModel, job_id)
     if job:
+      # Get previous progress and status to check if we should send update
+      previous_progress = job.context.get("progress", 0.0) if job.context else 0.0
+      previous_status = job.context.get("last_sent_status") if job.context else None
+
       # Update job with progress information
       job.message = message
 
       # Store progress and metadata in job context
       if job.context is None:
         job.context = {}
-
-      import time
 
       job.context.update({"progress": progress, "last_update": str(time.time()), "metadata": metadata or {}})
 
@@ -131,8 +241,96 @@ def update_job_progress(job_id: UUID, progress: float, message: str, session, me
       session.commit()
       logger.info(f"Updated job progress: {job_id} - {progress}% - {message}")
 
+      # Only send HTTP update if explicitly requested and there's meaningful change
+      if send_update and org_id:
+        # Determine status string based on job status and metadata
+        status_str = "pending"
+        if job.status == JobStatus.PROCESSING:
+          task_type = metadata.get("task_type", "")
+          if "upload" in task_type or "file" in task_type:
+            status_str = "uploading"
+          elif "extract" in task_type or "processing" in task_type or "document_processing" in task_type:
+            status_str = "processing"
+          elif "index" in task_type:
+            status_str = "indexing"
+          else:
+            status_str = "processing"  # Default for processing
+        elif job.status == JobStatus.COMPLETED:
+          # Differentiate between intermediate completions and final completion
+          task_type = metadata.get("task_type", "")
+          if "document_indexing" in task_type:
+            status_str = "completed"  # Final job - indexing is the last step
+          else:
+            # Intermediate jobs (upload, processing) - use task-specific completion status
+            if "file_upload" in task_type:
+              status_str = "uploaded"
+            elif "document_processing" in task_type:
+              status_str = "processed"
+            else:
+              status_str = "step_completed"  # Generic intermediate completion
+        elif job.status == JobStatus.FAILED:
+          status_str = "failed"
+
+        # Determine if we should send update based on status change or significant progress change
+        status_changed = previous_status != status_str
+        is_completion = progress >= 100.0
+        is_start = progress == 0.0 and previous_progress == 0.0
+        is_first_update = previous_status is None
+
+        should_send_update = (
+          status_changed  # Status actually changed
+          or is_completion  # Always send completion
+          or is_first_update  # Always send first update
+          or (is_start and status_str in ["uploading", "processing", "indexing"])  # Starting a new phase
+        )
+
+        if should_send_update:
+          # Store the status we're about to send to avoid duplicates
+          job.context["last_sent_status"] = status_str
+          session.commit()
+
+          # Extract kb_id and file_id from metadata
+          kb_id = None
+          file_id = None
+
+          if metadata:
+            # Try to get kb_id from metadata
+            if metadata.get("kb_id"):
+              try:
+                kb_id = UUID(metadata.get("kb_id"))
+              except (ValueError, TypeError):
+                kb_id = None
+
+            # Try to get file_id from doc_id
+            if metadata.get("doc_id"):
+              try:
+                file_id = UUID(metadata.get("doc_id"))
+              except (ValueError, TypeError):
+                file_id = None
+
+          # Send progress update
+          logger.info(f"Sending job update: {job_id} status={status_str} (was {previous_status}), progress={progress}%")
+          send_job_update(
+            org_id=org_id,
+            job_id=job_id,
+            status=status_str,
+            message=message,
+            progress=progress,
+            kb_id=kb_id,
+            file_id=file_id,
+          )
+        else:
+          logger.debug(f"Skipping job update for {job_id}: status={status_str}, progress={progress}% (no significant change)")
+
   except Exception as e:
-    logger.warning(f"Failed to update job progress: {e}")
+    logger.error(
+      f"Failed to update job progress for job {job_id}: {str(e)}",
+      extra={
+        "job_id": str(job_id) if job_id else None,
+        "org_id": str(org_id) if org_id else None,
+        "error": str(e),
+      },
+    )
 
 
 @task(bind=True)
@@ -170,14 +368,21 @@ def process_document_task(
         job.message = "Starting document processing"
         session.commit()
 
-      # Update job progress with Celery task ID
+      # Update job progress with Celery task ID (send update since this is the start)
       update_job_progress(
         job_id=UUID(job_id),
         progress=0.0,
         message="Starting document processing",
         session=session,
-        metadata={"doc_id": doc_id, "source_type": source_type_name},
+        metadata={
+          "doc_id": doc_id,
+          "source_type": source_type_name,
+          "task_type": "document_processing",
+          "kb_id": job.context.get("kb_id") if job and job.context else None,
+        },
         celery_task_id=self.request.id,
+        org_id=UUID(org_id),
+        send_update=True,
       )
 
       # Import models locally to avoid circular imports
@@ -196,13 +401,20 @@ def process_document_task(
       doc.extraction_status = DocumentStatus.PROCESSING
       session.commit()
 
-      # Update job progress
+      # Update job progress (send update for significant progress change)
       update_job_progress(
         job_id=UUID(job_id),
         progress=25.0,
         message="Processing document content",
         session=session,
-        metadata={"doc_id": doc_id, "source_type": source_type_name},
+        metadata={
+          "doc_id": doc_id,
+          "source_type": source_type_name,
+          "task_type": "document_processing",
+          "kb_id": job.context.get("kb_id") if job and job.context else None,
+        },
+        org_id=UUID(org_id),
+        send_update=True,
       )
 
       # Get source type
@@ -387,13 +599,20 @@ def process_document_task(
       doc.extraction_completed_at = datetime.now()
       session.commit()
 
-      # Update job progress
+      # Update job progress (send update for significant progress change)
       update_job_progress(
         job_id=UUID(job_id),
         progress=75.0,
         message="Document content extracted successfully",
         session=session,
-        metadata={"doc_id": doc_id, "content_length": len(content)},
+        metadata={
+          "doc_id": doc_id,
+          "content_length": len(content),
+          "task_type": "document_processing",
+          "kb_id": job.context.get("kb_id") if job and job.context else None,
+        },
+        org_id=UUID(org_id),
+        send_update=True,
       )
 
       # Handle charging if provided
@@ -413,13 +632,20 @@ def process_document_task(
         job.message = "Document processing completed successfully"
         session.commit()
 
-      # Update job progress
+      # Update job progress (completion will trigger status update automatically)
       update_job_progress(
         job_id=UUID(job_id),
         progress=100.0,
         message="Document processing completed successfully",
         session=session,
-        metadata={"doc_id": doc_id, "content_length": len(content)},
+        metadata={
+          "doc_id": doc_id,
+          "content_length": len(content),
+          "task_type": "document_processing",
+          "kb_id": job.context.get("kb_id") if job and job.context else None,
+        },
+        org_id=UUID(org_id),
+        send_update=True,
       )
 
       # Create and trigger indexing job
@@ -460,7 +686,15 @@ def process_document_task(
       }
 
     except Exception as e:
-      logger.error(f"Document processing failed: {str(e)}")
+      logger.error(
+        f"Document processing failed for document {doc_id}: {str(e)}",
+        extra={
+          "doc_id": str(doc_id),
+          "job_id": str(job_id),
+          "org_id": str(org_id),
+          "error": str(e),
+        },
+      )
 
       # Update document status on error
       try:
@@ -479,6 +713,21 @@ def process_document_task(
           job.status = JobStatus.FAILED
           job.message = f"Document processing error: {str(e)}"
           session.commit()
+
+          # Update job progress to trigger failure status update
+          update_job_progress(
+            job_id=UUID(job_id),
+            progress=0.0,
+            message=f"Document processing error: {str(e)}",
+            session=session,
+            metadata={
+              "doc_id": doc_id,
+              "task_type": "document_processing",
+              "kb_id": job.context.get("kb_id") if job and job.context else None,
+            },
+            org_id=UUID(org_id),
+            send_update=True,
+          )
       except Exception:
         pass
 
@@ -520,15 +769,17 @@ def index_documents_task(
         session.commit()
         logger.info(f"Job {job_id} status updated to PROCESSING")
 
-      # Update job progress with Celery task ID
-      update_job_progress(
-        job_id=UUID(job_id),
-        progress=0.0,
-        message="Starting document indexing",
-        session=session,
-        metadata={"kb_id": kb_id, "doc_count": len(doc_ids)},
-        celery_task_id=self.request.id,
-      )
+        # Update job progress with Celery task ID and send initial status
+        update_job_progress(
+          job_id=UUID(job_id),
+          progress=0.0,
+          message="Starting document indexing",
+          session=session,
+          metadata={"kb_id": kb_id, "doc_count": len(doc_ids), "task_type": "document_indexing", "doc_id": doc_ids[0] if doc_ids else None},
+          celery_task_id=self.request.id,
+          org_id=UUID(org_id),
+          send_update=True,
+        )
 
       # Import models locally
       from datetime import datetime
@@ -583,7 +834,15 @@ def index_documents_task(
           else:
             logger.warning(f"Could not find charge with ID: {initial_charge_id}")
         except Exception as e:
-          logger.error(f"Failed to get existing charge: {str(e)}")
+          logger.error(
+            f"Failed to get existing charge {initial_charge_id}: {str(e)}",
+            extra={
+              "charge_id": initial_charge_id,
+              "kb_id": str(kb_id),
+              "job_id": str(job_id),
+              "error": str(e),
+            },
+          )
           embedding_charge = None
 
       # Process documents one by one
@@ -600,14 +859,16 @@ def index_documents_task(
         session.commit()
         logger.info(f"Document {doc_model.id} status updated to PROCESSING")
 
-        # Update job progress
+        # Update job progress (only send updates for significant progress changes)
         progress = (doc_index - 1) / total_docs * 80.0  # Reserve 20% for final steps
         update_job_progress(
           job_id=UUID(job_id),
           progress=progress,
           message=f"Processing document {doc_index}/{total_docs}: {doc_model.title}",
           session=session,
-          metadata={"current_doc": str(doc_model.id), "doc_progress": f"{doc_index}/{total_docs}"},
+          metadata={"current_doc": str(doc_model.id), "doc_progress": f"{doc_index}/{total_docs}", "task_type": "document_indexing"},
+          org_id=UUID(org_id),
+          send_update=False,  # Don't send update for each document, only for significant changes
         )
 
         try:
@@ -764,10 +1025,27 @@ def index_documents_task(
                   logger.debug("Updating charge with actual chunk count - skipping in sync context")
                   logger.info(f"Embedding charge will be updated asynchronously for {actual_chunks} chunks")
                 except Exception as e:
-                  logger.error(f"Failed to log charge update: {str(e)}")
+                  logger.error(
+                    f"Failed to log charge update: {str(e)}",
+                    extra={
+                      "doc_id": str(doc_model.id) if doc_model else None,
+                      "kb_id": str(kb_id),
+                      "job_id": str(job_id),
+                      "actual_chunks": actual_chunks if "actual_chunks" in locals() else None,
+                      "error": str(e),
+                    },
+                  )
 
             except Exception as embed_error:
-              logger.error(f"Failed to create embeddings for document {doc_model.id}: {str(embed_error)}")
+              logger.error(
+                f"Failed to create embeddings for document {doc_model.id}: {str(embed_error)}",
+                extra={
+                  "doc_id": str(doc_model.id),
+                  "kb_id": str(kb_id),
+                  "job_id": str(job_id),
+                  "error": str(embed_error),
+                },
+              )
               # Mark as failed but continue with other documents
               doc_model.indexing_status = DocumentStatus.FAILED
               doc_model.error_message = f"Embedding generation failed: {str(embed_error)}"
@@ -776,7 +1054,15 @@ def index_documents_task(
               logger.info(f"Document {doc_model.id} marked as FAILED due to embedding error")
 
         except Exception as e:
-          logger.error(f"Error processing document {doc_model.id} for indexing: {str(e)}")
+          logger.error(
+            f"Error processing document {doc_model.id} for indexing: {str(e)}",
+            extra={
+              "doc_id": str(doc_model.id),
+              "kb_id": str(kb_id),
+              "job_id": str(job_id),
+              "error": str(e),
+            },
+          )
           # Update status to failed
           doc_model.indexing_status = DocumentStatus.FAILED
           doc_model.error_message = str(e)
@@ -790,7 +1076,15 @@ def index_documents_task(
               logger.info(f"Charge error handling for document {doc_model.id} will be processed asynchronously")
               logger.info(f"Error details logged for charge: {embedding_charge.transaction_id}")
             except Exception as charge_error:
-              logger.error(f"Failed to log charge error info: {str(charge_error)}")
+              logger.error(
+                f"Failed to log charge error info: {str(charge_error)}",
+                extra={
+                  "kb_id": str(kb_id),
+                  "job_id": str(job_id),
+                  "doc_id": str(doc_model.id) if doc_model else None,
+                  "error": str(charge_error),
+                },
+              )
 
       # Complete charge if provided (handled asynchronously elsewhere)
       if embedding_charge and embedding_charge.transaction_id:
@@ -811,13 +1105,15 @@ def index_documents_task(
         job.message = f"Document indexing completed. Indexed {indexed_count}/{total_docs} documents"
         session.commit()
 
-      # Update final job progress
+      # Update final job progress (completion will trigger status update automatically)
       update_job_progress(
         job_id=UUID(job_id),
         progress=100.0,
         message=f"Document indexing completed. Indexed {indexed_count}/{total_docs} documents",
         session=session,
-        metadata={"kb_id": kb_id, "indexed_count": indexed_count, "total_docs": total_docs},
+        metadata={"kb_id": kb_id, "indexed_count": indexed_count, "total_docs": total_docs, "task_type": "document_indexing", "doc_id": doc_ids[0] if doc_ids else None},  # noqa: E501
+        org_id=UUID(org_id),
+        send_update=True,
       )
 
       logger.info(f"Indexing task completed for all documents: {doc_ids}")
@@ -830,7 +1126,15 @@ def index_documents_task(
       }
 
     except Exception as e:
-      logger.error(f"Document indexing failed: {str(e)}")
+      logger.error(
+        f"Document indexing failed for KB {kb_id}: {str(e)}",
+        extra={
+          "kb_id": str(kb_id),
+          "job_id": str(job_id),
+          "org_id": str(org_id),
+          "error": str(e),
+        },
+      )
 
       # Update job status on error
       try:
@@ -839,6 +1143,17 @@ def index_documents_task(
           job.status = JobStatus.FAILED
           job.message = f"Document indexing error: {str(e)}"
           session.commit()
+
+          # Update job progress to trigger failure status update
+          update_job_progress(
+            job_id=UUID(job_id),
+            progress=0.0,
+            message=f"Document indexing error: {str(e)}",
+            session=session,
+            metadata={"kb_id": kb_id, "task_type": "document_indexing", "doc_id": doc_ids[0] if doc_ids and len(doc_ids) > 0 else None},
+            org_id=UUID(org_id),
+            send_update=True,
+          )
       except Exception:
         pass
 
@@ -869,15 +1184,29 @@ def upload_file_task(
         job.message = "Starting file upload"
         session.commit()
 
-      # Update job progress with Celery task ID
-      update_job_progress(
-        job_id=UUID(job_id),
-        progress=0.0,
-        message="Starting file upload to S3",
-        session=session,
-        metadata={"doc_id": doc_id, "s3_key": s3_key},
-        celery_task_id=self.request.id,
-      )
+        # Send HTTP update for upload start
+        # Get kb_id from document
+        from models import KBDocumentModel
+
+        doc = session.get(KBDocumentModel, UUID(doc_id))
+        kb_id_value = doc.kb_id if doc else None
+
+        # Update job progress with Celery task ID and send initial status
+        update_job_progress(
+          job_id=UUID(job_id),
+          progress=0.0,
+          message="Starting file upload to S3",
+          session=session,
+          metadata={
+            "doc_id": doc_id,
+            "s3_key": s3_key,
+            "task_type": "file_upload",
+            "kb_id": str(kb_id_value) if kb_id_value else None,
+          },
+          celery_task_id=self.request.id,
+          org_id=UUID(org_id),
+          send_update=True,
+        )
 
       # Upload file to S3 using async client in sync context
       try:
@@ -894,13 +1223,21 @@ def upload_file_task(
         finally:
           loop.close()
 
-        # Update job progress
+        # Update job progress (send update for significant progress change)
         update_job_progress(
           job_id=UUID(job_id),
           progress=75.0,
           message="File uploaded to S3 successfully",
           session=session,
-          metadata={"doc_id": doc_id, "s3_key": s3_key, "s3_url": s3_url},
+          metadata={
+            "doc_id": doc_id,
+            "s3_key": s3_key,
+            "s3_url": s3_url,
+            "task_type": "file_upload",
+            "kb_id": str(kb_id_value) if kb_id_value else None,
+          },
+          org_id=UUID(org_id),
+          send_update=True,
         )
 
       except Exception as e:
@@ -909,10 +1246,25 @@ def upload_file_task(
           job.status = JobStatus.FAILED
           job.message = f"S3 upload failed: {str(e)}"
           session.commit()
+
+          # Update job progress to trigger failure status update
+          update_job_progress(
+            job_id=UUID(job_id),
+            progress=0.0,
+            message=f"S3 upload failed: {str(e)}",
+            session=session,
+            metadata={
+              "doc_id": doc_id,
+              "s3_key": s3_key,
+              "task_type": "file_upload",
+              "kb_id": str(kb_id_value) if kb_id_value else None,
+            },
+            org_id=UUID(org_id),
+            send_update=True,
+          )
         return {"success": False, "error": f"S3 upload failed: {str(e)}"}
 
       # Update document with S3 info
-      from models import KBDocumentModel
 
       doc = session.get(KBDocumentModel, UUID(doc_id))
       if doc:
@@ -935,13 +1287,15 @@ def upload_file_task(
         job.message = "File upload completed successfully"
         session.commit()
 
-      # Update job progress
+      # Update job progress (completion will trigger status update automatically)
       update_job_progress(
         job_id=UUID(job_id),
         progress=100.0,
         message="File upload completed successfully",
         session=session,
-        metadata={"doc_id": doc_id, "s3_key": s3_key},
+        metadata={"doc_id": doc_id, "s3_key": s3_key, "task_type": "file_upload", "kb_id": str(kb_id_value) if kb_id_value else None},
+        org_id=UUID(org_id),
+        send_update=True,
       )
 
       # Trigger child process job
@@ -985,7 +1339,16 @@ def upload_file_task(
             )
             logger.info(f"Successfully submitted process task {task_id} for child job {child_job.id}")
           except Exception as e:
-            logger.error(f"Failed to submit process task for child job {child_job.id}: {str(e)}")
+            logger.error(
+              f"Failed to submit process task for child job {child_job.id}: {str(e)}",
+              extra={
+                "child_job_id": str(child_job.id),
+                "job_id": str(job_id),
+                "org_id": str(org_id),
+                "doc_id": str(doc_id),
+                "error": str(e),
+              },
+            )
         else:
           logger.warning(f"Child job {child_job.id} does not have source_type_name in context")
 
@@ -996,7 +1359,15 @@ def upload_file_task(
       }
 
     except Exception as e:
-      logger.error(f"File upload failed: {str(e)}")
+      logger.error(
+        f"File upload failed for document {doc_id}: {str(e)}",
+        extra={
+          "doc_id": str(doc_id),
+          "job_id": str(job_id),
+          "org_id": str(org_id),
+          "error": str(e),
+        },
+      )
 
       # Update job status on error
       try:
@@ -1005,6 +1376,20 @@ def upload_file_task(
           job.status = JobStatus.FAILED
           job.message = f"File upload error: {str(e)}"
           session.commit()
+
+          # Get kb_id from document for metadata
+          doc = session.get(KBDocumentModel, UUID(doc_id))
+          kb_id_value = doc.kb_id if doc else None
+          # Update job progress to trigger failure status update
+          update_job_progress(
+            job_id=UUID(job_id),
+            progress=0.0,
+            message=f"File upload error: {str(e)}",
+            session=session,
+            metadata={"doc_id": doc_id, "task_type": "file_upload", "kb_id": str(kb_id_value) if kb_id_value else None},
+            org_id=UUID(org_id),
+            send_update=True,
+          )
       except Exception:
         pass
 
