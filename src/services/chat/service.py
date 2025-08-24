@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import mimetypes
 import tempfile
 import uuid
@@ -558,7 +559,23 @@ Use the above context to answer the user's question when relevant. If the contex
 
           # Stream the response
           self.logger.debug(f"Sending message to {llm_model.provider} {llm_model.version}")
-          async for token in self.llm_factory.chat(
+
+          # Analyze user intent to determine if image generation is needed
+          from libs.chats.v1.intent_analysis import get_intent_service, UserIntent
+
+          intent_service = get_intent_service()
+
+          user_intent = await intent_service.analyze_intent(message_data.content)
+
+          # Choose appropriate agent based on detected intent
+          if user_intent == UserIntent.IMAGE_GENERATION:
+            self.logger.info(f"Detected image generation intent for message: {message_data.content}")
+            chat_method = self.llm_factory.image_chat
+          else:
+            self.logger.info(f"Detected normal chat intent for message: {message_data.content}")
+            chat_method = self.llm_factory.chat
+
+          async for token in chat_method(
             provider=llm_model.provider,
             llm=llm_model.version,
             chat_session_id=chat_id,
@@ -597,22 +614,53 @@ Use the above context to answer the user's question when relevant. If the contex
 
           yield f"data: {json.dumps({'message': 'DONE'})}\n\n"
 
-          # Create AI message
-          ai_message = MessageModel(
-            chat_session_id=chat_id,
-            parent_message_id=user_message.id,
-            model_id=model_id,
-            content=full_response,
-            role=MessageRole.MODEL,
-            created_at=datetime.now(timezone.utc),
-          )
-          session.add(ai_message)
-          await session.commit()
-          await session.refresh(ai_message)
-          self.logger.info(f"Created AI response message: {ai_message.id}")
+          # Process generated images if this was an image generation request
+          processed_response = full_response
+          if user_intent == UserIntent.IMAGE_GENERATION:
+            # Create AI message first to get the ID
+            ai_message = MessageModel(
+              chat_session_id=chat_id,
+              parent_message_id=user_message.id,
+              model_id=model_id,
+              content=full_response,  # Temporary content
+              role=MessageRole.MODEL,
+              created_at=datetime.now(timezone.utc),
+            )
+            session.add(ai_message)
+            await session.commit()
+            await session.refresh(ai_message)
+
+            # Process images and get updated response text
+            processed_response = await self._process_generated_images(
+              response_text=full_response,
+              chat_id=chat_id,
+              org_id=org_id,
+              ai_message_id=ai_message.id,
+              session=session,
+            )
+
+            # Update the AI message with processed content
+            ai_message.content = processed_response
+            await session.commit()
+
+            self.logger.info(f"Created AI image message: {ai_message.id} with processed images")
+          else:
+            # Create AI message normally for regular chat
+            ai_message = MessageModel(
+              chat_session_id=chat_id,
+              parent_message_id=user_message.id,
+              model_id=model_id,
+              content=full_response,
+              role=MessageRole.MODEL,
+              created_at=datetime.now(timezone.utc),
+            )
+            session.add(ai_message)
+            await session.commit()
+            await session.refresh(ai_message)
+            self.logger.info(f"Created AI response message: {ai_message.id}")
 
           # Update chat title if needed
-          response_message = full_response
+          response_message = processed_response
           if is_new_chat:
             await self._update_chat_name(
               response_message,
@@ -1190,6 +1238,75 @@ Use the above context to answer the user's question when relevant. If the contex
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail="Error getting prompt",
       )
+
+  async def _process_generated_images(
+    self,
+    response_text: str,
+    chat_id: UUID,
+    org_id: UUID,
+    ai_message_id: UUID,
+    session: AsyncSession,
+  ) -> str:
+    """Process DALL-E URLs in response text and replace with our S3 URLs."""
+    try:
+      # Find all DALL-E URLs in the response using regex
+      dalle_url_pattern = r'https://oaidalleapiprodscus\.blob\.core\.windows\.net/[^\s\)]+\.png[^\s\)]*'
+      dalle_urls = re.findall(dalle_url_pattern, response_text)
+
+      if not dalle_urls:
+        return response_text
+
+      processed_text = response_text
+
+      for dalle_url in dalle_urls:
+        try:
+          self.logger.info(f"Processing DALL-E image URL: {dalle_url}")
+
+          # Download the image from DALL-E URL
+          async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(dalle_url)
+            response.raise_for_status()
+            image_bytes = response.content
+
+          # Generate our S3 key
+          image_id = str(uuid.uuid4())
+          s3_key = f"{org_id}/{chat_id}/generated-{image_id}.png"
+
+          # Upload to our S3
+          our_image_url = await self.s3_client.upload_file(
+            file=BytesIO(image_bytes),
+            key=s3_key,
+            content_type="image/png"
+          )
+          # Create upload record in database
+          upload_record = ChatUploadModel(
+            message_id=ai_message_id,
+            filename=f"generated-{image_id}.png",
+            content_type="image/png",
+            file_size=len(image_bytes),
+            url=our_image_url,
+            _metadata={"generated": True, "type": "image_generation", "original_dalle_url": dalle_url}
+          )
+          session.add(upload_record)
+
+          # Replace DALL-E URL with our URL in the response text
+          processed_text = processed_text.replace(dalle_url, our_image_url)
+
+          self.logger.info(f"Successfully processed image: {dalle_url} -> {our_image_url}")
+
+        except Exception as e:
+          self.logger.error(f"Error processing DALL-E URL {dalle_url}: {str(e)}")
+          # Continue with other URLs if one fails
+          continue
+
+      # Commit all upload records
+      await session.commit()
+
+      return processed_text
+
+    except Exception as e:
+      self.logger.error(f"Error in _process_generated_images: {str(e)}")
+      return response_text  # Return original text if processing fails
 
   async def get_available_knowledge_bases(
     self,
