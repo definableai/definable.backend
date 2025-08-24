@@ -1,16 +1,61 @@
 ---
-title: 'Overview'
-description: 'Overview of the Zyeta API endpoints and functionality'
+title: 'API Overview'
+description: 'Overview of the Definable.ai API endpoints and functionality'
 ---
 
-The Zyeta API is organized around REST principles, using standard HTTP verbs, returning JSON responses, and using standard HTTP status codes to indicate errors.
+# Definable.ai API Reference
+
+The Definable.ai API is organized around REST principles, using standard HTTP verbs, returning JSON responses, and using standard HTTP status codes to indicate errors. Our API enables you to create, manage, and deploy AI agents and tools programmatically.
+
+## API Architecture Overview
+
+```mermaid
+graph TB
+    Client[Client Application] --> Auth[Authentication Layer]
+    Auth --> Gateway[API Gateway]
+    Gateway --> Services[Microservices]
+    
+    subgraph Services
+        AgentService[Agent Service]
+        ToolService[Tool Service]
+        KBService[Knowledge Base Service]
+        ChatService[Chat Service]
+        LLMService[LLM Service]
+        OrgService[Organization Service]
+        AuthService[Auth Service]
+        WSService[WebSocket Service]
+    end
+    
+    Services --> Database[(PostgreSQL Database)]
+    Services --> VectorDB[(Vector Database)]
+    Services --> S3[S3 Storage]
+    Services --> Redis[(Redis Cache)]
+    
+    subgraph External APIs
+        OpenAI[OpenAI API]
+        Anthropic[Anthropic API]
+        Stripe[Stripe API]
+    end
+    
+    LLMService --> OpenAI
+    LLMService --> Anthropic
+    Services --> Stripe
+    
+    style Client fill:#e1f5fe
+    style Auth fill:#f3e5f5
+    style Gateway fill:#e8f5e8
+    style Database fill:#fff3e0
+    style VectorDB fill:#fff3e0
+    style S3 fill:#fff3e0
+    style Redis fill:#fff3e0
+```
 
 ## Base URL
 
 All API requests should be made to the following base URL:
 
 ```
-https://api.zyeta.io
+https://api.definable.ai
 ```
 
 For local development, the base URL is:
@@ -21,7 +66,56 @@ http://localhost:8000
 
 ## Authentication
 
-All API endpoints require authentication. See the [Authentication Guide](/authentication) for details on how to authenticate your requests.
+All API endpoints require authentication using either JWT tokens or API keys. See the [Authentication Guide](/pages/authentication/overview) for details on how to authenticate your requests.
+
+### Bearer Token Authentication
+
+```bash
+curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  https://api.definable.ai/v1/agents
+```
+
+### API Key Authentication
+
+```bash
+curl -H "X-API-Key: YOUR_API_KEY" \
+  https://api.definable.ai/v1/agents
+```
+
+## Authentication Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as Auth Service
+    participant D as Database
+    participant S as Services
+    
+    Note over C,S: JWT Authentication Flow
+    C->>A: POST /auth/login (email, password)
+    A->>D: Validate credentials
+    D-->>A: User data
+    A->>A: Generate JWT token
+    A-->>C: JWT token + user info
+    
+    Note over C,S: API Request with JWT
+    C->>S: API Request + Authorization: Bearer JWT
+    S->>A: Validate JWT token
+    A-->>S: Token valid + user context
+    S->>D: Execute request
+    D-->>S: Response data
+    S-->>C: API Response
+    
+    Note over C,S: API Key Authentication Flow
+    C->>S: API Request + X-API-Key: API_KEY
+    S->>A: Validate API key
+    A->>D: Check API key
+    D-->>A: API key valid + permissions
+    A-->>S: Key valid + user context
+    S->>D: Execute request
+    D-->>S: Response data
+    S-->>C: API Response
+```
 
 ## Response Format
 
@@ -102,46 +196,370 @@ Paginated responses include:
 }
 ```
 
-## API Endpoints
+## 🚀 API Endpoints
 
-The Zyeta API is organized into the following categories:
+The Definable.ai API is organized into logical categories for easy navigation:
+
+### 🤖 AI & Intelligence APIs
 
 <CardGroup cols={2}>
-  <Card title="Authentication" icon="lock" href="/api-reference/auth">
-    Endpoints for authentication and user management
+  <Card 
+    title="🤖 Agents API" 
+    icon="robot" 
+    href="/pages/api-reference/agents-service" 
+    color="#6366F1"
+  >
+    **Core Intelligence** - Create, configure, and deploy AI agents with custom personalities, tools, and capabilities 🎯
   </Card>
-  <Card title="Users" icon="user" href="/api-reference/users">
-    User-related endpoints
+  <Card 
+    title="🧠 LLM Services" 
+    icon="brain" 
+    href="/pages/api-reference/llm-service" 
+    color="#8B5CF6"
+  >
+    **Language Models** - Integrate with GPT-4, Claude, and other cutting-edge models for natural conversation 💬
   </Card>
-  <Card title="Projects" icon="folder" href="/api-reference/projects">
-    Project management endpoints
+  <Card 
+    title="🛠️ Tools API" 
+    icon="wrench" 
+    href="/pages/api-reference/tools-service" 
+    color="#A855F7"
+  >
+    **Agent Superpowers** - Build and manage custom functions that extend agent capabilities ⚡
   </Card>
-  <Card title="Tasks" icon="list-check" href="/api-reference/tasks">
-    Task management endpoints
+  <Card 
+    title="📚 Knowledge Base API" 
+    icon="database" 
+    href="/pages/api-reference/kb-service" 
+    color="#C084FC"
+  >
+    **Smart Memory** - Upload, process, and query documents with semantic search capabilities 🔍
+  </Card>
+</CardGroup>
+
+### 💬 Communication APIs
+
+<CardGroup cols={2}>
+  <Card 
+    title="💬 Conversations API" 
+    icon="chat" 
+    href="/pages/api-reference/conversation-service" 
+    color="#10B981"
+  >
+    **Chat Management** - Handle multi-turn conversations, context, and message history 📝
+  </Card>
+  <Card 
+    title="⚡ WebSocket API" 
+    icon="bolt" 
+    href="/pages/api-reference/ws-service" 
+    color="#059669"
+  >
+    **Real-time Streaming** - Live communication with agents through WebSocket connections 🔄
+  </Card>
+</CardGroup>
+
+### 👥 Organization & Security
+
+<CardGroup cols={2}>
+  <Card 
+    title="🔐 Authentication API" 
+    icon="shield" 
+    href="/pages/api-reference/auth-service" 
+    color="#DC2626"
+  >
+    **Security Layer** - JWT tokens, API keys, and secure authentication flows 🛡️
+  </Card>
+  <Card 
+    title="🏢 Organizations API" 
+    icon="building" 
+    href="/pages/api-reference/org-service" 
+    color="#EA580C"
+  >
+    **Team Management** - Multi-tenant organization structure and user management 👥
+  </Card>
+  <Card 
+    title="👤 Roles & Permissions" 
+    icon="users" 
+    href="/pages/api-reference/roles-service" 
+    color="#D97706"
+  >
+    **Access Control** - Fine-grained permissions and role-based access control (RBAC) ⚖️
+  </Card>
+  <Card 
+    title="📧 Invitations API" 
+    icon="mail" 
+    href="/pages/api-reference/invitations-service" 
+    color="#CA8A04"
+  >
+    **User Onboarding** - Invite users and manage team member access 🎫
+  </Card>
+</CardGroup>
+
+### 🔧 Utility APIs
+
+<CardGroup cols={1}>
+  <Card 
+    title="📁 File Upload API" 
+    icon="upload" 
+    href="/pages/api-reference/public-upload-service" 
+    color="#6B7280"
+  >
+    **Asset Management** - Secure file uploads, processing, and storage for documents, images, and media 📎
   </Card>
 </CardGroup>
 
 ## OpenAPI Specification
 
-The complete OpenAPI specification for the Zyeta API is available at:
+The complete OpenAPI specification for the Definable.ai API is available at:
 
 ```
-https://api.zyeta.io/openapi.json
+https://api.definable.ai/openapi.json
 ```
 
 You can also explore the API interactively using Swagger UI:
 
 ```
-https://api.zyeta.io/docs
+https://api.definable.ai/docs
 ```
+
+## Agent Creation Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant AS as Agent Service
+    participant TS as Tool Service
+    participant LLM as LLM Service
+    participant KB as Knowledge Base
+    participant D as Database
+    
+    C->>AS: POST /agents (agent config)
+    AS->>D: Validate & save agent metadata
+    AS->>TS: Fetch configured tools
+    TS-->>AS: Tool specifications
+    AS->>LLM: Validate model availability
+    LLM-->>AS: Model validation
+    AS->>KB: Setup agent knowledge base
+    KB-->>AS: KB ready
+    AS->>D: Save complete agent config
+    D-->>AS: Agent created
+    AS-->>C: Agent ID + metadata
+    
+    Note over C,D: Agent is now ready for deployment
+```
+
+## Conversation Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant CS as Chat Service
+    participant AS as Agent Service
+    participant LLM as LLM Service
+    participant TS as Tool Service
+    participant KB as Knowledge Base
+    participant WS as WebSocket Service
+    
+    C->>CS: POST /conversations (start chat)
+    CS->>D: Create conversation
+    CS-->>C: Conversation ID
+    
+    C->>WS: Connect WebSocket
+    WS-->>C: Connection established
+    
+    C->>CS: POST /messages (user message)
+    CS->>AS: Get agent context
+    AS-->>CS: Agent config + tools
+    CS->>KB: Query knowledge base
+    KB-->>CS: Relevant context
+    CS->>LLM: Generate response
+    
+    alt Tool usage required
+        LLM-->>CS: Tool call request
+        CS->>TS: Execute tool
+        TS-->>CS: Tool result
+        CS->>LLM: Continue with tool result
+    end
+    
+    LLM-->>CS: Final response
+    CS->>D: Save message + response
+    CS->>WS: Stream response
+    WS-->>C: Real-time response
+    CS-->>C: Complete response
+```
+
+## Knowledge Base Processing Flow
+
+```mermaid
+flowchart TD
+    A[Upload Document] --> B{Document Type?}
+    B -->|PDF| C[PDF Processor]
+    B -->|Text| D[Text Processor]
+    B -->|URL| E[Web Scraper]
+    B -->|Image| F[OCR Processor]
+    
+    C --> G[Extract Text]
+    D --> G
+    E --> G
+    F --> G
+    
+    G --> H[Text Chunking]
+    H --> I[Generate Embeddings]
+    I --> J[Store in Vector DB]
+    J --> K[Index Document]
+    K --> L[Document Ready for Search]
+    
+    style A fill:#e3f2fd
+    style L fill:#e8f5e8
+    style J fill:#fff3e0
+```
+
+## Code Examples
+
+### Creating an AI Agent
+
+<CodeGroup>
+
+```bash curl
+curl -X POST "https://api.definable.ai/v1/agents" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Customer Support Agent",
+    "description": "AI agent for handling customer inquiries",
+    "model": "gpt-4",
+    "system_prompt": "You are a helpful customer support assistant.",
+    "tools": ["web_search", "knowledge_base"]
+  }'
+```
+
+```python python
+import requests
+
+url = "https://api.definable.ai/v1/agents"
+headers = {
+    "Authorization": "Bearer YOUR_JWT_TOKEN",
+    "Content-Type": "application/json"
+}
+data = {
+    "name": "Customer Support Agent",
+    "description": "AI agent for handling customer inquiries",
+    "model": "gpt-4",
+    "system_prompt": "You are a helpful customer support assistant.",
+    "tools": ["web_search", "knowledge_base"]
+}
+
+response = requests.post(url, headers=headers, json=data)
+agent = response.json()
+print(f"Created agent: {agent['data']['id']}")
+```
+
+```typescript typescript
+interface Agent {
+  name: string;
+  description: string;
+  model: string;
+  system_prompt: string;
+  tools: string[];
+}
+
+const createAgent = async (agent: Agent): Promise<any> => {
+  const response = await fetch('https://api.definable.ai/v1/agents', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer YOUR_JWT_TOKEN',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(agent),
+  });
+  
+  return await response.json();
+};
+
+const newAgent = await createAgent({
+  name: "Customer Support Agent",
+  description: "AI agent for handling customer inquiries",
+  model: "gpt-4",
+  system_prompt: "You are a helpful customer support assistant.",
+  tools: ["web_search", "knowledge_base"]
+});
+```
+
+```go go
+package main
+
+import (
+    "bytes"
+    "encoding/json"
+    "fmt"
+    "net/http"
+)
+
+type Agent struct {
+    Name         string   `json:"name"`
+    Description  string   `json:"description"`
+    Model        string   `json:"model"`
+    SystemPrompt string   `json:"system_prompt"`
+    Tools        []string `json:"tools"`
+}
+
+func createAgent(agent Agent) error {
+    url := "https://api.definable.ai/v1/agents"
+    
+    jsonData, err := json.Marshal(agent)
+    if err != nil {
+        return err
+    }
+    
+    req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+    if err != nil {
+        return err
+    }
+    
+    req.Header.Set("Authorization", "Bearer YOUR_JWT_TOKEN")
+    req.Header.Set("Content-Type", "application/json")
+    
+    client := &http.Client{}
+    resp, err := client.Do(req)
+    if err != nil {
+        return err
+    }
+    defer resp.Body.Close()
+    
+    fmt.Println("Agent created successfully!")
+    return nil
+}
+
+func main() {
+    agent := Agent{
+        Name:         "Customer Support Agent",
+        Description:  "AI agent for handling customer inquiries",
+        Model:        "gpt-4",
+        SystemPrompt: "You are a helpful customer support assistant.",
+        Tools:        []string{"web_search", "knowledge_base"},
+    }
+    
+    createAgent(agent)
+}
+```
+
+</CodeGroup>
 
 ## Client Libraries
 
-Official client libraries for the Zyeta API:
+Official client libraries for the Definable.ai API:
 
-- [Python](https://github.com/zyeta-io/zyeta-python)
-- [JavaScript](https://github.com/zyeta-io/zyeta-js)
+- [Python SDK](https://github.com/Neuron-Square/definable-python) - Full-featured Python client
+- [TypeScript/JavaScript SDK](https://github.com/Neuron-Square/definable-js) - Browser and Node.js support
+- [Go SDK](https://github.com/Neuron-Square/definable-go) - Lightweight Go client
 
 ## Webhooks
 
-Zyeta supports webhooks for real-time notifications about events in your account. See the [Webhooks Guide](/webhooks) for details. 
+Definable.ai supports webhooks for real-time notifications about events in your account, including:
+
+- Agent deployment status changes
+- Conversation updates
+- Billing events
+- Knowledge base processing completion
+
+See the [Webhooks Guide](/pages/development-guides/webhooks) for implementation details. 

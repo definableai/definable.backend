@@ -5,6 +5,62 @@ description: 'API reference for managing AI agents and agent deployments'
 
 The Agents Service provides endpoints for creating, configuring, and deploying AI agents within your organization. It enables you to define agent behaviors, tools, and deployment configurations.
 
+## Agent Lifecycle Overview
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created: Create Agent
+    Created --> Configured: Add Tools & Settings
+    Configured --> Testing: Test Agent
+    Testing --> Configured: Modify Configuration
+    Testing --> Ready: Validation Passed
+    Ready --> Deployed: Create Deployment
+    Deployed --> Active: Start Receiving Requests
+    Active --> Deployed: Pause/Stop
+    Deployed --> Ready: Delete Deployment
+    Ready --> Configured: Update Agent
+    Configured --> [*]: Delete Agent
+    Active --> [*]: Delete Agent
+    
+    state Configured {
+        [*] --> AddingTools
+        AddingTools --> SettingParams
+        SettingParams --> [*]
+    }
+    
+    state Deployed {
+        [*] --> Widget
+        [*] --> API
+        [*] --> SDK
+        [*] --> Iframe
+    }
+```
+
+## Agent-Tool Integration Flow
+
+```mermaid
+sequenceDiagram
+    participant Dev as Developer
+    participant AS as Agent Service
+    participant TS as Tool Service
+    participant Agent as AI Agent
+    participant Tool as External Tool
+    
+    Dev->>AS: Create agent with tool list
+    AS->>TS: Validate tools exist
+    TS-->>AS: Tool validation response
+    AS->>TS: Get tool schemas
+    TS-->>AS: Tool function definitions
+    AS->>Agent: Initialize with tools
+    
+    Note over Agent,Tool: During conversation
+    Agent->>TS: Call tool function
+    TS->>Tool: Execute tool logic
+    Tool-->>TS: Tool result
+    TS-->>Agent: Formatted response
+    Agent->>AS: Continue conversation with result
+```
+
 ## Authentication
 
 All endpoints require a valid Bearer token in the Authorization header.
@@ -84,6 +140,170 @@ data = {
 
 response = requests.post(url, headers=headers, json=data)
 print(response.json())
+```
+
+```typescript typescript
+interface AgentConfig {
+  name: string;
+  description: string;
+  agent_type: string;
+  model_id: string;
+  tools?: Array<{
+    tool_id: string;
+    config: Array<{
+      name: string;
+      value: string;
+    }>;
+  }>;
+  params: {
+    system_prompt: string;
+    temperature: number;
+    max_tokens: number;
+  };
+  is_public: boolean;
+}
+
+const createAgent = async (orgId: string, config: AgentConfig): Promise<any> => {
+  const response = await fetch(`{{baseUrl}}/api/agents?org_id=${orgId}`, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer YOUR_TOKEN',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(config),
+  });
+  
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+  
+  return await response.json();
+};
+
+// Usage
+const agent = await createAgent('your-org-id', {
+  name: "Customer Support Agent",
+  description: "AI agent for handling customer support inquiries",
+  agent_type: "chat",
+  model_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  tools: [
+    {
+      tool_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      config: [
+        {
+          name: "api_key",
+          value: "sk-123456789"
+        }
+      ]
+    }
+  ],
+  params: {
+    system_prompt: "You are a helpful customer support agent for our e-commerce platform. Your goal is to assist customers with their inquiries, help them track orders, and resolve issues with their purchases. If you don't know the answer, you can use available tools to look up information.",
+    temperature: 0.7,
+    max_tokens: 1000
+  },
+  is_public: false
+});
+```
+
+```go go
+package main
+
+import (
+    "bytes"
+    "encoding/json"
+    "fmt"
+    "net/http"
+    "net/url"
+)
+
+type ToolConfig struct {
+    Name  string `json:"name"`
+    Value string `json:"value"`
+}
+
+type AgentTool struct {
+    ToolID string       `json:"tool_id"`
+    Config []ToolConfig `json:"config"`
+}
+
+type AgentParams struct {
+    SystemPrompt string  `json:"system_prompt"`
+    Temperature  float64 `json:"temperature"`
+    MaxTokens    int     `json:"max_tokens"`
+}
+
+type AgentConfig struct {
+    Name        string      `json:"name"`
+    Description string      `json:"description"`
+    AgentType   string      `json:"agent_type"`
+    ModelID     string      `json:"model_id"`
+    Tools       []AgentTool `json:"tools,omitempty"`
+    Params      AgentParams `json:"params"`
+    IsPublic    bool        `json:"is_public"`
+}
+
+func createAgent(baseURL, orgID, token string, config AgentConfig) error {
+    apiURL := fmt.Sprintf("%s/api/agents?org_id=%s", baseURL, url.QueryEscape(orgID))
+    
+    jsonData, err := json.Marshal(config)
+    if err != nil {
+        return fmt.Errorf("error marshaling config: %v", err)
+    }
+    
+    req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
+    if err != nil {
+        return fmt.Errorf("error creating request: %v", err)
+    }
+    
+    req.Header.Set("Authorization", "Bearer "+token)
+    req.Header.Set("Content-Type", "application/json")
+    
+    client := &http.Client{}
+    resp, err := client.Do(req)
+    if err != nil {
+        return fmt.Errorf("error sending request: %v", err)
+    }
+    defer resp.Body.Close()
+    
+    if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+        return fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+    }
+    
+    fmt.Println("Agent created successfully!")
+    return nil
+}
+
+func main() {
+    config := AgentConfig{
+        Name:        "Customer Support Agent",
+        Description: "AI agent for handling customer support inquiries",
+        AgentType:   "chat",
+        ModelID:     "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        Tools: []AgentTool{
+            {
+                ToolID: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                Config: []ToolConfig{
+                    {
+                        Name:  "api_key",
+                        Value: "sk-123456789",
+                    },
+                },
+            },
+        },
+        Params: AgentParams{
+            SystemPrompt: "You are a helpful customer support agent for our e-commerce platform. Your goal is to assist customers with their inquiries, help them track orders, and resolve issues with their purchases. If you don't know the answer, you can use available tools to look up information.",
+            Temperature:  0.7,
+            MaxTokens:    1000,
+        },
+        IsPublic: false,
+    }
+    
+    err := createAgent("{{baseUrl}}", "your-org-id", "YOUR_TOKEN", config)
+    if err != nil {
+        fmt.Printf("Error: %v\n", err)
+    }
+}
 ```
 
 ```json Response
