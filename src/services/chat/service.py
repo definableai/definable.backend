@@ -1308,7 +1308,6 @@ Use the above context to answer the user's question when relevant. If the contex
       self.logger.error(f"Error in _process_generated_images: {str(e)}")
       return response_text  # Return original text if processing fails
 
-
   async def get_available_knowledge_bases(
     self,
     org_id: UUID,
