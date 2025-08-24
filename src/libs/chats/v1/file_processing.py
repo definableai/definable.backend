@@ -91,7 +91,7 @@ class FileProcessor:
     """Extract content from CSV using Agno CSVReader."""
     try:
       reader = CSVReader()
-      documents = reader.read(file_path)
+      documents = reader.read(Path(file_path))
 
       # Extract data from CSV
       content_parts = []
@@ -112,7 +112,7 @@ class FileProcessor:
     """Extract content from DOCX using Agno DocxReader."""
     try:
       reader = DocxReader()
-      documents = reader.read(file_path)
+      documents = reader.read(Path(file_path))
 
       # Extract text from document
       content_parts = []

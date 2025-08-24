@@ -4,13 +4,11 @@ from uuid import UUID
 
 from agno.agent import Agent, RunResponse
 from agno.media import File, Image
-from agno.tools.dalle import DalleTools
-
 from agno.models.anthropic import Claude
-from agno.models.openai import OpenAIChat
 from agno.models.deepseek import DeepSeek
-
+from agno.models.openai import OpenAIChat
 from agno.storage.postgres import PostgresStorage
+from agno.tools.dalle import DalleTools
 from agno.tools.reasoning import ReasoningTools
 
 from config.settings import settings
@@ -93,7 +91,7 @@ class LLMFactory:
         max_tokens=effective_max_tokens,
         top_p=top_p,
       ),  # type: ignore
-      tools=tools or None,
+      tools=tools or None,  # type: ignore[arg-type]
       storage=self.storage,
       markdown=True,
       stream=True,
