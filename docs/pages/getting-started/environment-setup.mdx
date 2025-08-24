@@ -1,9 +1,9 @@
 ---
 title: 'Environment Setup'
-description: 'Configuring environment variables for the Zyeta backend'
+description: 'Configuring environment variables for the Definable backend'
 ---
 
-The Zyeta backend uses environment variables for configuration. This guide explains how to set up these variables for development and production environments.
+The Definable backend uses environment variables for configuration. This guide explains how to set up these variables for development and production environments.
 
 ## Environment File (.env)
 
@@ -23,7 +23,7 @@ Based on the application's settings module, the following environment variables 
 
 ```bash
 # Application
-APP_NAME=zyeta.backend
+APP_NAME=definable.backend
 ENVIRONMENT=dev  # Can be dev | beta | prod
 
 # Security
@@ -44,7 +44,7 @@ FIRECRAWL_API_KEY=your_firecrawl_api_key
 FRONTEND_URL=http://localhost:8000
 
 # Storage
-S3_BUCKET=zyeta-dev
+S3_BUCKET=definable-dev
 S3_ACCESS_KEY=your_s3_access_key
 S3_SECRET_KEY=your_s3_secret_key
 S3_ENDPOINT=https://s3.backendly.io
@@ -165,7 +165,7 @@ For testing, use separate databases and services:
 
 ```bash
 ENVIRONMENT=test
-DATABASE_URL=postgresql+asyncpg://postgres:mysecretpassword@localhost:5432/zyeta_test
+DATABASE_URL=postgresql+asyncpg://postgres:mysecretpassword@localhost:5432/definable_test
 ```
 
 ### Production Environment
@@ -174,7 +174,7 @@ For production, use secure, production-grade services:
 
 ```bash
 ENVIRONMENT=prod
-DATABASE_URL=postgresql+asyncpg://postgres:password@production-db-host:5432/zyeta
+DATABASE_URL=postgresql+asyncpg://postgres:password@production-db-host:5432/definable
 PYTHON_SANDBOX_TESTING_URL=https://python-sandbox-testing.backendly.io
 ```
 
