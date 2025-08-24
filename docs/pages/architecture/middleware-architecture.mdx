@@ -1,13 +1,13 @@
 ---
 title: 'Middleware Architecture'
-description: 'Understanding the middleware architecture in the Zyeta backend'
+description: 'Understanding the middleware architecture in the Definable backend'
 ---
 
-Middlewares play a crucial role in the Zyeta backend, providing cross-cutting functionality that applies to all requests and responses. This document explains the middleware architecture and how it fits into the overall application flow.
+Middlewares play a crucial role in the Definable backend, providing cross-cutting functionality that applies to all requests and responses. This document explains the middleware architecture and how it fits into the overall application flow.
 
 ## What are Middlewares?
 
-Middlewares in Zyeta are components that process HTTP requests and responses at the global level. They wrap around the request handling process, allowing code to be executed:
+Middlewares in Definable are components that process HTTP requests and responses at the global level. They wrap around the request handling process, allowing code to be executed:
 
 1. Before the request is processed by the route handlers
 2. After the route handler generates a response
@@ -48,7 +48,7 @@ sequenceDiagram
 
 ## Middleware Implementation
 
-Zyeta middlewares are implemented using Starlette's `BaseHTTPMiddleware` class, which FastAPI inherits from. Each middleware follows a consistent pattern:
+Definable middlewares are implemented using Starlette's `BaseHTTPMiddleware` class, which FastAPI inherits from. Each middleware follows a consistent pattern:
 
 ```python
 class Middleware(BaseHTTPMiddleware):
@@ -99,7 +99,7 @@ This approach allows middlewares to be added or removed without modifying the ap
 
 ## Middleware Stack
 
-Middlewares are executed in the reverse order they are added to the FastAPI application. The current middleware stack in Zyeta is:
+Middlewares are executed in the reverse order they are added to the FastAPI application. The current middleware stack in Definable is:
 
 1. **CORS Middleware** - Added directly in `app.py` for handling Cross-Origin Resource Sharing
 2. **RateLimiting Middleware** - Limits the number of requests per client IP
@@ -209,7 +209,7 @@ Key features:
 
 ## Middleware vs. Dependencies
 
-Zyeta uses both middlewares and FastAPI dependencies to handle cross-cutting concerns, but they serve different purposes:
+Definable uses both middlewares and FastAPI dependencies to handle cross-cutting concerns, but they serve different purposes:
 
 ### Middlewares
 
@@ -227,7 +227,7 @@ Zyeta uses both middlewares and FastAPI dependencies to handle cross-cutting con
 
 ## Creating New Middlewares
 
-To add a new middleware to the Zyeta backend:
+To add a new middleware to the Definable backend:
 
 1. Create a new file in the `src/middlewares/` directory
 2. Implement a class named `Middleware` that inherits from `BaseHTTPMiddleware`
@@ -264,7 +264,7 @@ class Middleware(BaseHTTPMiddleware):
 
 ## Middleware Best Practices
 
-When working with middlewares in Zyeta, follow these best practices:
+When working with middlewares in Definable, follow these best practices:
 
 1. **Keep middlewares focused**: Each middleware should have a single responsibility
 2. **Minimize middleware overhead**: Optimize performance-critical code
@@ -284,7 +284,7 @@ Middlewares run for every request, so they can impact API performance:
 
 ## Security Middlewares
 
-While authentication in Zyeta is primarily handled by dependencies (`JWTBearer` and `RBAC`), security-related middlewares could be added for:
+While authentication in Definable is primarily handled by dependencies (`JWTBearer` and `RBAC`), security-related middlewares could be added for:
 
 - **IP filtering**: Blocking requests from suspicious IPs
 - **Request validation**: Scanning for malicious patterns
@@ -293,6 +293,6 @@ While authentication in Zyeta is primarily handled by dependencies (`JWTBearer` 
 
 ## Summary
 
-Middlewares in Zyeta provide a powerful mechanism for implementing cross-cutting concerns that apply to all API requests. They are automatically discovered and registered, making the architecture extensible and maintainable.
+Middlewares in Definable provide a powerful mechanism for implementing cross-cutting concerns that apply to all API requests. They are automatically discovered and registered, making the architecture extensible and maintainable.
 
 The core middlewares handle essential functionality like exception management, rate limiting, and CORS, while working alongside FastAPI dependencies to create a comprehensive request processing pipeline.

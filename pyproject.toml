@@ -44,6 +44,9 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.40",
     "stripe>=12.0.0",
     "stytch>=13.3.0",
+    "pytesseract>=0.3.10",
+    "pillow>=10.0.0",
+    "easyocr>=1.7.0",
 ]
 
 [dependency-groups]

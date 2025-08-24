@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import mimetypes
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -18,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config.settings import settings
 from database import get_db
 from dependencies.security import RBAC, JWTBearer
-from libs.chats.v1 import LLMFactory, generate_chat_name, generate_prompts_stream
+from libs.chats.v1 import LLMFactory, generate_chat_name, generate_prompts_stream, extract_file_content
 from libs.s3.v1 import S3Client
 from libs.speech.v1 import transcribe
 from models import ChatModel, ChatUploadModel, LLMModel, MessageModel
@@ -35,6 +36,7 @@ from .schema import (
   ChatSessionResponse,
   ChatSessionUpdate,
   ChatSessionWithMessages,
+  ChatSettings,
   ChatStatus,
   ChatUploadData,
   MessageCreate,
@@ -58,6 +60,7 @@ class ChatService:
     "post=transcribe",
     "post=generate_prompts",
     "post=prompt",
+    "get=available_knowledge_bases",
   ]
 
   def __init__(self, acquire: Acquire):
@@ -77,11 +80,17 @@ class ChatService:
     user: dict = Depends(RBAC("chats", "write")),
   ) -> JSONResponse:
     """Create a new chat session."""
+    # Prepare metadata with settings if provided
+    metadata = {}
+    if data.settings:
+      metadata["settings"] = data.settings.dict(exclude_none=True)
+
     db_session = ChatModel(
       title=data.title or "New Chat",
       status=data.status,
       user_id=user["id"],
       org_id=user["org_id"],
+      _metadata=metadata,
     )
 
     session.add(db_session)
@@ -121,6 +130,12 @@ class ChatService:
       db_session.title = data.title
     if data.status is not None:
       db_session.status = data.status
+
+    # Update settings if provided
+    if data.settings is not None:
+      if not db_session._metadata:
+        db_session._metadata = {}
+      db_session._metadata["settings"] = data.settings.dict(exclude_none=True)
 
     await session.commit()
     await session.refresh(db_session)
@@ -232,6 +247,7 @@ class ChatService:
       org_id=db_session.org_id,
       user_id=db_session.user_id,
       metadata=db_session._metadata,
+      settings=self._get_chat_settings(db_session),
       created_at=db_session.created_at.isoformat(),
       updated_at=db_session.updated_at.isoformat(),
       messages=message_responses,
@@ -281,6 +297,7 @@ class ChatService:
         org_id=db_session.org_id,
         user_id=db_session.user_id,
         metadata=db_session._metadata,
+        settings=self._get_chat_settings(db_session),
         created_at=db_session.created_at.isoformat(),
         updated_at=db_session.updated_at.isoformat(),
       )
@@ -349,6 +366,16 @@ class ChatService:
         # Flag to update the chat title if it's "New Chat"
         is_new_chat = db_session.title == "New Chat"
 
+      # Get effective settings (saved + provided) and save any new settings
+      effective_temp, effective_max, effective_top_p = self._get_effective_settings(
+        db_session, temperature, max_tokens, top_p
+      )
+
+      # Save any new settings provided
+      if any(x is not None for x in [temperature, max_tokens, top_p]):
+        self._save_settings_to_chat(db_session, temperature, max_tokens, top_p)
+        await session.commit()
+
       # if instruction_id is provided, check if instruction exists
       if instruction_id:
         instruction = await self._get_prompt(instruction_id, session)
@@ -409,6 +436,9 @@ class ChatService:
           content=message_data.content,
           prompt_id=instruction_id or None,
           role=MessageRole.USER,
+          _metadata={
+            "knowledge_base_ids": message_data.knowledge_base_ids or []
+          },
           created_at=datetime.now(timezone.utc),
         )
         session.add(user_message)
@@ -418,6 +448,8 @@ class ChatService:
 
         # Handle file uploads if any
         files: List[Union[File, Image]] = []
+        file_content_for_prompt = ""
+
         if message_data.file_uploads:
           # Fetch the file uploads from the database
           query = select(ChatUploadModel).filter(ChatUploadModel.id.in_(message_data.file_uploads))
@@ -425,12 +457,6 @@ class ChatService:
           file_uploads = result.scalars().all()
 
           for file_upload in file_uploads:
-            # Create the appropriate File object based on mimetype
-            if file_upload.content_type.startswith("image/"):
-              files.append(Image(url=file_upload.url))
-            else:
-              files.append(File(url=file_upload.url, mime_type=file_upload.content_type))
-
             # Create a new ChatUploadModel linking to this message
             new_upload = ChatUploadModel(
               message_id=user_message.id,
@@ -442,12 +468,87 @@ class ChatService:
             )
             session.add(new_upload)
 
+            # Handle file processing based on provider
+            if llm_model.provider == "deepseek":
+              # For DeepSeek: Extract text content using Agno readers
+              try:
+                extracted_text = await extract_file_content(
+                  file_upload.url,
+                  file_upload.filename,
+                  file_upload.content_type
+                )
+                if extracted_text:
+                  file_content_for_prompt += f"\n\n--- File: {file_upload.filename} ---\n{extracted_text}\n"
+                  self.logger.info(f"Extracted content from {file_upload.filename} for DeepSeek")
+              except Exception as e:
+                self.logger.error(f"Failed to extract content from {file_upload.filename}: {str(e)}")
+                file_content_for_prompt += f"\n\n--- File: {file_upload.filename} ---\n[Error processing file: {str(e)}]\n"
+            else:
+              # For other providers: Use existing file handling
+              if file_upload.content_type.startswith("image/"):
+                files.append(Image(url=file_upload.url))
+              else:
+                files.append(File(url=file_upload.url, mime_type=file_upload.content_type))
+
           # Commit the new file uploads
           await session.commit()
-          self.logger.info(f"Processed {len(files)} file uploads")
+
+          if llm_model.provider == "deepseek":
+            self.logger.info(f"Processed {len(file_uploads)} files for DeepSeek with text extraction")
+          else:
+            self.logger.info(f"Processed {len(files)} file uploads for {llm_model.provider}")
 
         # Store the chat_id and is_new_chat at a higher scope for access in the async generator
         stored_chat_id = chat_id
+
+        # Search knowledge bases if provided
+        enhanced_prompt = prompt if prompt is not None else ""
+        if hasattr(message_data, 'knowledge_base_ids') and message_data.knowledge_base_ids:
+          try:
+            from services.kb.service import KnowledgeBaseService
+            kb_service = KnowledgeBaseService(self.acquire)
+
+            kb_context_parts = []
+            for kb_id in message_data.knowledge_base_ids:
+              try:
+                chunks = await kb_service.post_search_chunks(
+                  org_id=org_id,
+                  kb_id=UUID(kb_id),
+                  query=message_data.content,
+                  limit=getattr(message_data, 'kb_search_limit', 10),
+                  score_threshold=0.1,
+                  session=session,
+                  user=user
+                )
+
+                for chunk in chunks:
+                  kb_context_parts.append(f"[Knowledge Base Context]: {chunk.content}")
+
+              except Exception as e:
+                self.logger.error(f"Error searching KB {kb_id}: {str(e)}")
+                continue
+
+            if kb_context_parts:
+              kb_context = "\n\n".join(kb_context_parts)
+              base_prompt = prompt if prompt is not None else ""
+              enhanced_prompt = f"""{base_prompt}
+
+KNOWLEDGE BASE CONTEXT:
+{kb_context}
+
+Use the above context to answer the user's question when relevant. If the context doesn't contain relevant information, use your high IQ to answer
+
+"""
+              self.logger.info(f"Enhanced prompt with context from {len(message_data.knowledge_base_ids)} knowledge bases")
+
+          except Exception as e:
+            self.logger.error(f"Error processing knowledge bases: {str(e)}")
+            enhanced_prompt = prompt if prompt is not None else ""
+
+        # Add file content to prompt for DeepSeek
+        if file_content_for_prompt:
+          enhanced_prompt += f"\n\nFILE CONTENT:{file_content_for_prompt}\n"
+          self.logger.info("Added extracted file content to prompt")
 
         # generate a streaming response
         async def generate_model_response() -> AsyncGenerator[str, None]:
@@ -480,16 +581,26 @@ class ChatService:
             chat_session_id=chat_id,
             message=message_data.content,
             assets=files,
-            prompt=prompt,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=top_p,
+            prompt=enhanced_prompt,  # Use enhanced prompt with KB context
+            temperature=effective_temp,
+            max_tokens=effective_max,
+            top_p=effective_top_p,
+            thinking=getattr(message_data, 'thinking', False),
           ):
-            # Handle streaming - check for None content
+            # Handle streaming
             if token.content is not None:
-              buffer.append(token.content)
-              full_response += token.content
-              token_count += 1  # Simple token counting
+              # Check if this is a reasoning step by checking token type or content type
+              if hasattr(token, 'type') and token.type == 'reasoning':
+                # This is a reasoning step - send separately so frontend can show/hide it
+                reasoning_data = {"type": "reasoning", "content": str(token.content)}
+                yield f"data: {json.dumps(reasoning_data)}\n\n"
+              elif "ReasoningStep" in str(type(token.content)):
+                reasoning_data = {"type": "reasoning", "content": str(token.content)}
+                yield f"data: {json.dumps(reasoning_data)}\n\n"
+              else:
+                buffer.append(token.content)
+                full_response += token.content
+                token_count += 1  # Simple token counting
 
             if len(buffer) >= self.chunk_size:
               d = {"message": "".join(buffer)}
@@ -636,6 +747,9 @@ class ChatService:
           agent_id=agent_id,
           content=message_data.content,
           role=MessageRole.USER,
+          _metadata={
+            "knowledge_base_ids": message_data.knowledge_base_ids or []
+          },
           created_at=datetime.now(timezone.utc),
         )
         session.add(user_message)
@@ -892,7 +1006,12 @@ class ChatService:
       key = f"{org_id}/{chat_id}/{file_name}"
     else:
       key = f"chats/{org_id}/{file_name}"
-    await self.s3_client.upload_file(file=BytesIO(file_content), key=key)
+    effective_content_type = (
+      (file.content_type or "").strip()
+      or (mimetypes.guess_type(file.filename)[0] if file.filename else None)
+      or ("application/pdf" if (file.filename or "").lower().endswith(".pdf") else "application/octet-stream")
+    )
+    await self.s3_client.upload_file(file=BytesIO(file_content), key=key, content_type=effective_content_type)
     url = await self.s3_client.get_presigned_url(key=key, expires_in=3600 * 24 * 30)
     metadata = {
       "org_id": str(org_id),
@@ -901,7 +1020,7 @@ class ChatService:
     }
     db_upload = ChatUploadModel(
       filename=file_name,
-      content_type=file.content_type,
+      content_type=effective_content_type,
       file_size=file.size,
       url=url,
       _metadata=metadata,
@@ -997,6 +1116,54 @@ class ChatService:
       raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error generating prompts: {str(e)}")
 
   ### PRIVATE METHODS ###
+
+  def _get_effective_settings(
+    self,
+    chat: ChatModel,
+    temperature: Optional[float],
+    max_tokens: Optional[int],
+    top_p: Optional[float]
+  ) -> tuple[Optional[float], Optional[int], Optional[float]]:
+    """Get effective settings: query params override saved settings."""
+    saved_settings = chat._metadata.get("settings", {}) if chat._metadata else {}
+
+    effective_temp = temperature if temperature is not None else saved_settings.get("temperature")
+    effective_max = max_tokens if max_tokens is not None else saved_settings.get("max_tokens")
+    effective_top_p = top_p if top_p is not None else saved_settings.get("top_p")
+
+    return effective_temp, effective_max, effective_top_p
+
+  def _save_settings_to_chat(
+    self,
+    chat: ChatModel,
+    temperature: Optional[float],
+    max_tokens: Optional[int],
+    top_p: Optional[float]
+  ) -> None:
+    """Save provided settings to chat metadata."""
+    if not chat._metadata:
+      chat._metadata = {}
+    if "settings" not in chat._metadata:
+      chat._metadata["settings"] = {}
+
+    if temperature is not None:
+      chat._metadata["settings"]["temperature"] = temperature
+    if max_tokens is not None:
+      chat._metadata["settings"]["max_tokens"] = max_tokens
+    if top_p is not None:
+      chat._metadata["settings"]["top_p"] = top_p
+
+  def _get_chat_settings(self, chat: ChatModel) -> Optional[ChatSettings]:
+    """Extract ChatSettings from chat metadata."""
+    if not chat._metadata or "settings" not in chat._metadata:
+      return None
+
+    settings_data = chat._metadata["settings"]
+    return ChatSettings(
+      temperature=settings_data.get("temperature"),
+      max_tokens=settings_data.get("max_tokens"),
+      top_p=settings_data.get("top_p")
+    )
 
   async def _update_chat_name(
     self,
@@ -1142,3 +1309,20 @@ class ChatService:
       return response_text  # Return original text if processing fails
 
 
+  async def get_available_knowledge_bases(
+    self,
+    org_id: UUID,
+    session: AsyncSession = Depends(get_db),
+    user: dict = Depends(RBAC("kb", "read")),
+  ):
+    """Get available knowledge bases for chat."""
+    try:
+      from services.kb.service import KnowledgeBaseService
+      kb_service = KnowledgeBaseService(self.acquire)
+      return await kb_service.get_list(org_id=org_id, session=session, user=user)
+    except Exception as e:
+      self.logger.error(f"Error getting available knowledge bases: {str(e)}")
+      raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Error getting available knowledge bases",
+      )
