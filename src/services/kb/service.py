@@ -54,8 +54,7 @@ class FileItem(TypedDict):
   description: str
   file_type: str
   size: int
-  extraction_status: DocumentStatus
-  indexing_status: DocumentStatus
+  status: str
   created_at: Optional[str]
   updated_at: str
   download_url: Optional[str]
@@ -127,6 +126,77 @@ class KnowledgeBaseService:
       return ("firecrawl", "v2")  # Always use v2 for firecrawl
     else:
       raise ValueError(f"Unsupported crawler type: {crawler_type}")
+
+  def _get_status_string(self, status: DocumentStatus) -> str:
+    """
+    Convert DocumentStatus enum to string.
+
+    Args:
+        status: DocumentStatus enum value
+
+    Returns:
+        String representation of the status
+    """
+    status_mapping = {
+      DocumentStatus.PENDING: "pending",
+      DocumentStatus.PROCESSING: "extracting",  # For document processing
+      DocumentStatus.COMPLETED: "completed",
+      DocumentStatus.FAILED: "failed",
+    }
+    return status_mapping.get(status, "pending")
+
+  def _get_job_status_string(self, status: JobStatus) -> str:
+    """
+    Convert JobStatus enum to string.
+
+    Args:
+        status: JobStatus enum value
+
+    Returns:
+        String representation of the job status
+    """
+    status_mapping = {
+      JobStatus.PENDING: "pending",
+      JobStatus.PROCESSING: "processing",
+      JobStatus.COMPLETED: "completed",
+      JobStatus.FAILED: "failed",
+      JobStatus.CANCELLED: "cancelled",
+    }
+    return status_mapping.get(status, "pending")
+
+  def _get_document_overall_status(self, extraction_status: DocumentStatus, indexing_status: DocumentStatus) -> str:
+    """
+    Determine overall document status based on extraction and indexing statuses.
+
+    Args:
+        extraction_status: Document extraction status
+        indexing_status: Document indexing status
+
+    Returns:
+        Overall status string: pending, extracting, indexing, completed, failed
+    """
+    # If either is failed, overall is failed
+    if extraction_status == DocumentStatus.FAILED or indexing_status == DocumentStatus.FAILED:
+      return "failed"
+
+    # If both are completed, overall is completed
+    if extraction_status == DocumentStatus.COMPLETED and indexing_status == DocumentStatus.COMPLETED:
+      return "completed"
+
+    # If extraction is processing, overall is extracting
+    if extraction_status == DocumentStatus.PROCESSING:
+      return "extracting"
+
+    # If indexing is processing, overall is indexing
+    if indexing_status == DocumentStatus.PROCESSING:
+      return "indexing"
+
+    # If extraction is completed but indexing is pending, we're ready for indexing
+    if extraction_status == DocumentStatus.COMPLETED and indexing_status == DocumentStatus.PENDING:
+      return "indexing"
+
+    # Default to pending
+    return "pending"
 
   # TODO: add types for embedding models
   async def post_create(
@@ -234,6 +304,8 @@ class KnowledgeBaseService:
             print(str(e))
             doc_dict["download_url"] = None
 
+        # Convert status enums to strings before adding to response
+        doc_dict["status"] = self._get_document_overall_status(row.KBDocumentModel.extraction_status, row.KBDocumentModel.indexing_status)
         documents.append(KBDocumentResponse.model_validate(doc_dict))
 
     return KnowledgeBaseDetailResponse(**kb.__dict__, documents=documents)
@@ -395,9 +467,9 @@ class KnowledgeBaseService:
         charge_id=str(charge.transaction_id),
       )
 
-      # Return immediately with the document and upload job information only
+      # Return response with overall status
       response_dict = db_doc.__dict__.copy()
-      response_dict["upload_job_id"] = str(upload_job.id)
+      response_dict["status"] = "pending"  # Initial status for newly created document
       return KBDocumentResponse.model_validate(response_dict)
 
     except Exception as e:
@@ -581,11 +653,10 @@ class KnowledgeBaseService:
       )
       self.logger.info(f"Document processing task submitted to Celery for document {parent_doc.id}")
 
-      # Return immediately with the document and job information
+      # Return response with overall status
       self.logger.info(f"URL document addition completed successfully - document_id={parent_doc.id}, transaction_id={charge.transaction_id}")
       response_dict = parent_doc.__dict__.copy()
-      response_dict["process_job_id"] = str(process_job.id)
-      response_dict["index_job_id"] = str(index_job.id)
+      response_dict["status"] = "pending"  # Initial status for newly created document
       return KBDocumentResponse.model_validate(response_dict)
 
     except Exception as e:
@@ -915,7 +986,11 @@ class KnowledgeBaseService:
     doc_model = await self._get_document(doc_id, org_id, session)
     if not doc_model:
       raise HTTPException(status_code=404, detail="Document not found")
-    return KBDocumentResponse.model_validate(doc_model)
+
+    # Convert status enums to strings
+    response_dict = doc_model.__dict__.copy()
+    response_dict["status"] = self._get_document_overall_status(doc_model.extraction_status, doc_model.indexing_status)
+    return KBDocumentResponse.model_validate(response_dict)
 
   async def post_add_document_chunk(
     self,
@@ -1131,8 +1206,7 @@ class KnowledgeBaseService:
         "description": file.description,
         "file_type": file.source_metadata.get("file_type", ""),
         "size": file.source_metadata.get("size", 0),
-        "extraction_status": file.extraction_status,
-        "indexing_status": file.indexing_status,
+        "status": self._get_document_overall_status(file.extraction_status, file.indexing_status),
         "created_at": file.created_at.isoformat() if hasattr(file, "created_at") else None,
         "updated_at": file.updated_at.isoformat(),
         "download_url": None,

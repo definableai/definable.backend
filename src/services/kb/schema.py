@@ -247,15 +247,10 @@ class KBDocumentResponse(BaseModel):
   folder_id: Optional[UUID]
   source_metadata: Dict = Field(..., description="Source-specific metadata")
   content: Optional[str]
-  extraction_status: DocumentStatus
-  indexing_status: DocumentStatus
   error_message: Optional[str]
   extraction_completed_at: Optional[datetime]
   indexing_completed_at: Optional[datetime]
-  # Job tracking fields (optional, only present when operations are initiated)
-  upload_job_id: Optional[str] = None
-  process_job_id: Optional[str] = None
-  index_job_id: Optional[str] = None
+  status: str = Field(..., description="Overall document processing status: pending, uploading, extracting, indexing, completed, failed")
 
   class Config:
     from_attributes = True
