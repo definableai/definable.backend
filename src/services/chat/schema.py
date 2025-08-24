@@ -21,6 +21,7 @@ class MessageCreate(BaseModel):
   """Create message schema."""
 
   content: str
+  thinking: bool = False
   file_uploads: Optional[List[str]] = None
 
 class PromptData(BaseModel):

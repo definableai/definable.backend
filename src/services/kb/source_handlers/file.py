@@ -32,9 +32,11 @@ class FileSourceHandler(BaseSourceHandler):
     "html": "text/html",
     "htm": "text/html",
     "md": "text/markdown",
+    "txt": "text/plain",
+    "json": "application/json",
+    "csv": "text/csv",
     "asciidoc": "text/asciidoc",
     "adoc": "text/asciidoc",
-    "csv": "text/csv",
     # Image formats
     "jpg": "image/jpeg",
     "jpeg": "image/jpeg",
@@ -54,25 +56,30 @@ class FileSourceHandler(BaseSourceHandler):
 
   async def validate_metadata(self, metadata: Dict, **kwargs) -> bool:
     """Validate file metadata."""
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    logger.info(f"Validating file: {metadata.get('original_filename', 'unknown')}")
+
     try:
       file_metadata = FileMetadata(**metadata)
 
-      # Check file extension
+      # Check file type support
       if file_metadata.file_type not in self.ALLOWED_EXTENSIONS:
+        logger.error(f"Unsupported file type: {file_metadata.file_type}")
         raise ValueError(f"Unsupported file type: {file_metadata.file_type}")
 
       # Check file size
       if file_metadata.size > self.max_file_size:
+        logger.error(f"File too large: {file_metadata.size} bytes (max: {self.max_file_size})")
         raise ValueError(f"File too large. Maximum size is {self.max_file_size} bytes")
 
-      # Check MIME type
-      expected_mime = self.ALLOWED_EXTENSIONS[file_metadata.file_type]
-      if file_metadata.mime_type != expected_mime:
-        raise ValueError(f"Invalid MIME type. Expected {expected_mime}")
-
+      logger.info(f"File validation passed: {file_metadata.file_type}, {file_metadata.size} bytes")
       return True
 
     except Exception as e:
+      logger.error(f"File validation failed: {str(e)}")
       raise ValueError(f"Invalid file metadata: {str(e)}")
 
   async def preprocess(self, document: KBDocumentModel, **kwargs) -> None:
@@ -105,6 +112,18 @@ class FileSourceHandler(BaseSourceHandler):
       return content
 
     except Exception as e:
+      import logging
+      import traceback
+
+      logger = logging.getLogger(__name__)
+      logger.error("=== FILE EXTRACTION ERROR ===")
+      logger.error(f"Document ID: {document.id}")
+      logger.error(f"File type: {metadata.get('file_type')}")
+      logger.error(f"S3 key: {metadata.get('s3_key')}")
+      logger.error(f"Error type: {type(e).__name__}")
+      logger.error(f"Error message: {str(e)}")
+      logger.error(f"Traceback:\n{traceback.format_exc()}")
+      logger.error("=== END EXTRACTION ERROR ===")
       raise ValueError(f"Failed to extract content: {str(e)}")
 
     finally:

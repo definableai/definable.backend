@@ -12,7 +12,7 @@ from models import DocumentStatus
 class AllowedFileExtension(str, Enum):
   """Allowed file extensions for knowledge base documents."""
 
-  # Basic formats
+  # Document formats
   PDF = "pdf"
   DOCX = "docx"
   XLSX = "xlsx"
@@ -20,9 +20,11 @@ class AllowedFileExtension(str, Enum):
   HTML = "html"
   HTM = "htm"
   MD = "md"
+  TXT = "txt"
+  JSON = "json"
+  CSV = "csv"
   ASCIIDOC = "asciidoc"
   ADOC = "adoc"
-  CSV = "csv"
 
   # Image formats
   JPG = "jpg"
@@ -139,8 +141,8 @@ class ScrapeOptions(BaseModel):
   # waitFor: Optional[int] = Field(default=0, ge=0, description="Wait time in milliseconds")
   excludeTags: Optional[List[str]] = Field(default=[""], description="Tags to exclude")
   includeTags: Optional[List[str]] = Field(default=[""], description="Tags to include only")
-  onlyMainContent: bool = Field(description="Extract only main content")
-  formats: List[str] = Field(description="Formats to extract")  # Required field
+  onlyMainContent: bool = Field(default=True, description="Extract only main content")
+  formats: List[str] = Field(default=["markdown", "html"], description="Formats to extract")
 
   # don't allow extra fields
   # class Config:
@@ -156,7 +158,7 @@ class CrawlerOptions(BaseModel):
   excludePaths: Optional[List[str]] = Field(default=[], description="Paths to exclude")
   ignoreSitemap: bool = Field(default=False, description="Ignore sitemaps")
   allowBackwardLinks: bool = Field(default=False, description="Include all backlinks")
-  scrapeOptions: ScrapeOptions = Field(..., description="Scrape options")  # Required field
+  scrapeOptions: ScrapeOptions = Field(default_factory=ScrapeOptions, description="Scrape options")
 
   # class Config:
   #   extra = "forbid"
@@ -176,26 +178,40 @@ class URLDocumentData(DocumentBase):
   url: str = Field(..., description="Single URL to scrape")
   operation: Literal["scrape", "crawl", "map"] = Field(..., description="Operation to perform")
   folder_id: Optional[str] = Field(None, description="Folder ID")
-  settings: ScrapeOptions | CrawlerOptions | MapOptions = Field(..., description="Settings for the operation")
+  settings: Optional[ScrapeOptions | CrawlerOptions | MapOptions] = Field(None, description="Settings for the operation")
 
   @model_validator(mode="after")
   def validate_operation_settings(self) -> "URLDocumentData":
-    """Validate and convert settings based on operation."""
+    """Validate and convert settings based on operation, providing defaults if not specified."""
     try:
-      if self.operation == "scrape":
-        self.settings = ScrapeOptions.model_validate(self.settings)
-      elif self.operation == "crawl":
-        self.settings = CrawlerOptions.model_validate(self.settings)
-      elif self.operation == "map":
-        self.settings = MapOptions.model_validate(self.settings)
+      # If settings not provided, create default settings based on operation
+      if self.settings is None:
+        if self.operation == "scrape":
+          self.settings = ScrapeOptions()
+        elif self.operation == "crawl":
+          self.settings = CrawlerOptions(maxDepth=2, limit=10)
+        elif self.operation == "map":
+          self.settings = MapOptions()
+        else:
+          raise ValueError(f"Invalid operation: {self.operation}")
       else:
-        raise ValueError(f"Invalid operation: {self.operation}")
+        # Validate existing settings
+        if self.operation == "scrape":
+          self.settings = ScrapeOptions.model_validate(self.settings)
+        elif self.operation == "crawl":
+          self.settings = CrawlerOptions.model_validate(self.settings)
+        elif self.operation == "map":
+          self.settings = MapOptions.model_validate(self.settings)
+        else:
+          raise ValueError(f"Invalid operation: {self.operation}")
     except Exception as e:
       raise ValueError(f"Invalid settings for operation {self.operation}: {str(e)}")
     return self
 
   def get_metadata(self) -> Dict:
     """Generate metadata for URL document."""
+    # settings is guaranteed to be set after validation
+    assert self.settings is not None, "Settings should be set after validation"
     return {"url": self.url, "operation": self.operation, "settings": self.settings.model_dump()}
 
 

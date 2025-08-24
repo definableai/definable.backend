@@ -493,11 +493,22 @@ class ChatService:
             temperature=effective_temp,
             max_tokens=effective_max,
             top_p=effective_top_p,
+            thinking=getattr(message_data, 'thinking', False),
           ):
             # Handle streaming
-            buffer.append(token.content)
-            full_response += token.content
-            token_count += 1  # Simple token counting
+            if token.content is not None:
+              # Check if this is a reasoning step by checking token type or content type
+              if hasattr(token, 'type') and token.type == 'reasoning':
+                # This is a reasoning step - send separately so frontend can show/hide it
+                reasoning_data = {"type": "reasoning", "content": str(token.content)}
+                yield f"data: {json.dumps(reasoning_data)}\n\n"
+              elif "ReasoningStep" in str(type(token.content)):
+                reasoning_data = {"type": "reasoning", "content": str(token.content)}
+                yield f"data: {json.dumps(reasoning_data)}\n\n"
+              else:
+                buffer.append(token.content)
+                full_response += token.content
+                token_count += 1  # Simple token counting
 
             if len(buffer) >= self.chunk_size:
               d = {"message": "".join(buffer)}
