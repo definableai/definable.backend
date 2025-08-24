@@ -10,6 +10,7 @@ from agno.models.openai import OpenAIChat
 from agno.models.deepseek import DeepSeek
 
 from agno.storage.postgres import PostgresStorage
+from agno.tools.reasoning import ReasoningTools
 
 from config.settings import settings
 
@@ -51,6 +52,7 @@ class LLMFactory:
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
     top_p: Optional[float] = None,
+    thinking: bool = False,
 ) -> AsyncGenerator[RunResponse, None]:
     """Stream chat responses using Agno agent.
 
@@ -73,6 +75,11 @@ class LLMFactory:
         files.append(asset)
 
     model_class = self.get_model_class(provider)
+
+    tools = []
+    if thinking:
+      tools.append(ReasoningTools(add_instructions=True))
+
     # Create agent with storage for memory retention
     agent = Agent(
       model=model_class(
@@ -81,9 +88,11 @@ class LLMFactory:
         max_tokens=max_tokens,
         top_p=top_p,
       ), # type: ignore
+      tools=tools or None,
       storage=self.storage,
       markdown=True,
       stream=True,
+      stream_intermediate_steps=thinking,
       add_history_to_messages=True,
       session_id=str(chat_session_id),
       num_history_responses=memory_size,
