@@ -8,6 +8,7 @@ from fastapi.security import HTTPBearer
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config.settings import settings
 from database import get_db
 from libs.stytch.v1 import stytch_base
 from models import APIKeyModel, OrganizationMemberModel, PermissionModel, RoleModel, RolePermissionModel
@@ -140,6 +141,37 @@ class APIKeyAuth:
       raise
     except Exception as e:
       raise HTTPException(status_code=500, detail=f"API key authentication failed: {str(e)}")
+
+
+class InternalAuth:
+  """Internal service authentication for background tasks and internal endpoints."""
+
+  async def __call__(
+    self,
+    request: Request,
+  ) -> dict:
+    """Authenticate using internal token from x-internal-token header."""
+    try:
+      # Get internal token from header
+      internal_token = request.headers.get("x-internal-token")
+      if not internal_token:
+        raise HTTPException(status_code=401, detail="Missing internal token. Include 'x-internal-token' header.")
+
+      # Verify token matches configured internal token
+      if internal_token != settings.internal_token:
+        raise HTTPException(status_code=401, detail="Invalid internal token")
+
+      # Return authentication context for internal services
+      return {
+        "auth_type": "internal",
+        "service": "internal",
+        "authenticated": True,
+      }
+
+    except HTTPException:
+      raise
+    except Exception as e:
+      raise HTTPException(status_code=500, detail=f"Internal authentication failed: {str(e)}")
 
 
 class RBAC:
