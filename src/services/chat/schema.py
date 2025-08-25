@@ -25,6 +25,7 @@ class MessageCreate(BaseModel):
   file_uploads: Optional[List[str]] = None
   knowledge_base_ids: Optional[List[str]] = None
 
+
 class PromptData(BaseModel):
   """Prompt response data"""
 
@@ -35,6 +36,7 @@ class PromptData(BaseModel):
 
   class Config:
     from_attributes = True
+
 
 class MessageResponse(BaseModel):
   """Message response schema."""
@@ -144,12 +146,14 @@ class ChatFileUploadResponse(BaseModel):
   id: UUID
   url: HttpUrl
 
+
 class Model(str, Enum):
   CHAT = "chat"
   REASON = "reason"
 
+
 class TextInput(BaseModel):
   text: str
   num_prompts: int = 1
-  prompt_type: str = "task" # creative, question, continuation, task
+  prompt_type: str = "task"  # creative, question, continuation, task
   model: Model = Model.CHAT

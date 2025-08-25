@@ -31,6 +31,7 @@ class LLMUpdate(BaseModel):
   config: Optional[dict] = None
   props: Optional[dict] = None
 
+
 class LLMResponse(LLMBase):
   """LLM response schema."""
 
