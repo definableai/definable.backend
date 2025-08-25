@@ -1,5 +1,5 @@
 import asyncio
-from typing import AsyncGenerator, List, Optional, Sequence, Type, Union
+from typing import Any, AsyncGenerator, List, Optional, Sequence, Type, Union
 from uuid import UUID
 
 from agno.agent import Agent, RunResponse
@@ -81,7 +81,7 @@ class LLMFactory:
     effective_max_tokens = max_tokens
     if provider == "anthropic" and effective_max_tokens is None:
       effective_max_tokens = 1024
-    tools = []
+    tools: List[Any] = []
     if thinking:
       tools.append(ReasoningTools(add_instructions=True))
 
