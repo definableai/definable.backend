@@ -83,48 +83,176 @@ async def check_charges_table_exists(db: AsyncSession):
     raise
 
 
-def get_model_charge() -> List[Dict[str, str]]:
+def get_model_charge() -> List[Dict[str, str | int]]:
   """Returns charge rows derived from migration + new additions."""
   return [
-    {"name": "gpt-4o", "amount": 3, "service": "llm", "action": "generate", "unit": "credit", "measure": "token", "description": "GPT-4o model usage charge"},
-    {"name": "claude-3-opus", "amount": 5, "service": "llm", "action": "generate", "unit": "credit", "measure": "token", "description": "Claude 3 Opus model usage charge"},
-    {"name": "claude-3-sonnet", "amount": 3, "service": "llm", "action": "generate", "unit": "credit", "measure": "token", "description": "Claude 3 Sonnet model usage charge"},
-    {"name": "claude-3-haiku", "amount": 1, "service": "llm", "action": "generate", "unit": "credit", "measure": "token", "description": "Claude 3 Haiku model usage charge"},
-    {"name": "o1-small-text-indexing", "amount": 3, "service": "kb", "action": "index", "unit": "credit", "measure": "token", "description": "Text indexing with OpenAI Ada embedding model"},
-    {"name": "pdf-extraction", "amount": 5, "service": "kb", "action": "extract", "unit": "credit", "measure": "page", "description": "PDF text extraction per page"},
-    {"name": "gpt-4.5-preview", "amount": 7, "service": "llm", "action": "generate", "unit": "credit", "measure": "token", "description": "GPT-4.5 Preview model usage charge"},
-    {"name": "gpt-4.1", "amount": 6, "service": "llm", "action": "generate", "unit": "credit", "measure": "token", "description": "GPT-4.1 model usage charge"},
-    {"name": "gpt-4o-mini", "amount": 2, "service": "llm", "action": "generate", "unit": "credit", "measure": "token", "description": "GPT-4o Mini model usage charge"},
-    {"name": "gpt-3.5-turbo", "amount": 1, "service": "llm", "action": "generate", "unit": "credit", "measure": "token", "description": "GPT-3.5 Turbo model usage charge"},
-    {"name": "o4-mini", "amount": 2, "service": "llm", "action": "generate", "unit": "credit", "measure": "token", "description": "O4 Mini model usage charge"},
-    {"name": "o1-preview", "amount": 4, "service": "llm", "action": "generate", "unit": "credit", "measure": "token", "description": "O1 Preview model usage charge"},
-    {"name": "o1", "amount": 4, "service": "llm", "action": "generate", "unit": "credit", "measure": "token", "description": "O1 model usage charge"},
-    {"name": "claude-3.7-sonnet-latest", "amount": 6, "service": "llm", "action": "generate", "unit": "credit", "measure": "token", "description": "Claude 3.7 Sonnet model usage charge"},
-    {"name": "claude-3.5-sonnet-latest", "amount": 4, "service": "llm", "action": "generate", "unit": "credit", "measure": "token", "description": "Claude 3.5 Sonnet model usage charge"},
-    {"name": "deepseek-chat", "amount": 2, "service": "llm", "action": "generate", "unit": "credit", "measure": "token", "description": "DeepSeek Chat model usage charge"},
-    {"name": "deepseek-reason", "amount": 4, "service": "llm", "action": "generate", "unit": "credit", "measure": "token", "description": "DeepSeek Reason model usage charge"},
     {
-        "name": "o1-small-text-retrieval",
-        "amount": 3,
-        "service": "kb",
-        "action": "retrieval",
-        "unit": "credit",
-        "measure": "token",
-        "description": "Text retrieval with OpenAI Ada embedding model"
+      "name": "gpt-4o",
+      "amount": 3,
+      "service": "llm",
+      "action": "generate",
+      "unit": "credit",
+      "measure": "token",
+      "description": "GPT-4o model usage charge",
     },
     {
-        "name": "excel-ext",
-        "amount": 4,
-        "service": "kb",
-        "action": "extraction",
-        "unit": "credit",
-        "measure": "sheet",
-        "description": "Extract data from Excel spreadsheets"
-    }
+      "name": "claude-3-opus",
+      "amount": 5,
+      "service": "llm",
+      "action": "generate",
+      "unit": "credit",
+      "measure": "token",
+      "description": "Claude 3 Opus model usage charge",
+    },
+    {
+      "name": "claude-3-sonnet",
+      "amount": 3,
+      "service": "llm",
+      "action": "generate",
+      "unit": "credit",
+      "measure": "token",
+      "description": "Claude 3 Sonnet model usage charge",
+    },
+    {
+      "name": "claude-3-haiku",
+      "amount": 1,
+      "service": "llm",
+      "action": "generate",
+      "unit": "credit",
+      "measure": "token",
+      "description": "Claude 3 Haiku model usage charge",
+    },
+    {
+      "name": "o1-small-text-indexing",
+      "amount": 3,
+      "service": "kb",
+      "action": "index",
+      "unit": "credit",
+      "measure": "token",
+      "description": "Text indexing with OpenAI Ada embedding model",
+    },
+    {
+      "name": "pdf-extraction",
+      "amount": 5,
+      "service": "kb",
+      "action": "extract",
+      "unit": "credit",
+      "measure": "page",
+      "description": "PDF text extraction per page",
+    },
+    {
+      "name": "gpt-4.5-preview",
+      "amount": 7,
+      "service": "llm",
+      "action": "generate",
+      "unit": "credit",
+      "measure": "token",
+      "description": "GPT-4.5 Preview model usage charge",
+    },
+    {
+      "name": "gpt-4.1",
+      "amount": 6,
+      "service": "llm",
+      "action": "generate",
+      "unit": "credit",
+      "measure": "token",
+      "description": "GPT-4.1 model usage charge",
+    },
+    {
+      "name": "gpt-4o-mini",
+      "amount": 2,
+      "service": "llm",
+      "action": "generate",
+      "unit": "credit",
+      "measure": "token",
+      "description": "GPT-4o Mini model usage charge",
+    },
+    {
+      "name": "gpt-3.5-turbo",
+      "amount": 1,
+      "service": "llm",
+      "action": "generate",
+      "unit": "credit",
+      "measure": "token",
+      "description": "GPT-3.5 Turbo model usage charge",
+    },
+    {
+      "name": "o4-mini",
+      "amount": 2,
+      "service": "llm",
+      "action": "generate",
+      "unit": "credit",
+      "measure": "token",
+      "description": "O4 Mini model usage charge",
+    },
+    {
+      "name": "o1-preview",
+      "amount": 4,
+      "service": "llm",
+      "action": "generate",
+      "unit": "credit",
+      "measure": "token",
+      "description": "O1 Preview model usage charge",
+    },
+    {"name": "o1", "amount": 4, "service": "llm", "action": "generate", "unit": "credit", "measure": "token", "description": "O1 model usage charge"},
+    {
+      "name": "claude-3.7-sonnet-latest",
+      "amount": 6,
+      "service": "llm",
+      "action": "generate",
+      "unit": "credit",
+      "measure": "token",
+      "description": "Claude 3.7 Sonnet model usage charge",
+    },
+    {
+      "name": "claude-3.5-sonnet-latest",
+      "amount": 4,
+      "service": "llm",
+      "action": "generate",
+      "unit": "credit",
+      "measure": "token",
+      "description": "Claude 3.5 Sonnet model usage charge",
+    },
+    {
+      "name": "deepseek-chat",
+      "amount": 2,
+      "service": "llm",
+      "action": "generate",
+      "unit": "credit",
+      "measure": "token",
+      "description": "DeepSeek Chat model usage charge",
+    },
+    {
+      "name": "deepseek-reason",
+      "amount": 4,
+      "service": "llm",
+      "action": "generate",
+      "unit": "credit",
+      "measure": "token",
+      "description": "DeepSeek Reason model usage charge",
+    },
+    {
+      "name": "o1-small-text-retrieval",
+      "amount": 3,
+      "service": "kb",
+      "action": "retrieval",
+      "unit": "credit",
+      "measure": "token",
+      "description": "Text retrieval with OpenAI Ada embedding model",
+    },
+    {
+      "name": "excel-ext",
+      "amount": 4,
+      "service": "kb",
+      "action": "extraction",
+      "unit": "credit",
+      "measure": "sheet",
+      "description": "Extract data from Excel spreadsheets",
+    },
   ]
 
 
-async def update_llm_charges(db: AsyncSession, charges_data: List[Dict[str, str]]):
+async def update_llm_charges(db: AsyncSession, charges_data: List[Dict[str, str | int]]):
   """Update or insert charges data using the schema from ChargeModel."""
   table_name = ChargeModel.__tablename__
   try:
@@ -166,7 +294,6 @@ async def update_llm_charges(db: AsyncSession, charges_data: List[Dict[str, str]
     await db.rollback()
     logger.error(f"Error updating charges: {e}")
     raise
-
 
 
 async def run_script(force_rerun: bool = False):
@@ -224,7 +351,6 @@ async def rollback_script():
     except Exception as e:
       await log_script_execution(db, script_name, "failed", f"Rollback failed: {e}")
       raise
-
 
 
 @click.group()
