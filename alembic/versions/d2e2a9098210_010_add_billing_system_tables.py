@@ -26,7 +26,7 @@ def upgrade():
   # Create charges table
   op.create_table(
     "charges",
-    sa.Column("id", UUID(as_uuid=True), nullable=True),
+    sa.Column("id", UUID(as_uuid=True), nullable=False, server_default=sa.text("gen_random_uuid()")),
     sa.Column("name", sa.String(), primary_key=True),
     sa.Column("amount", sa.Integer(), nullable=False),
     sa.Column("unit", sa.String(), nullable=False, server_default="credit"),
@@ -151,17 +151,6 @@ def upgrade():
       },
     ],
   )
-
-  # Insert initial charges data
-  op.execute(f"""
-    INSERT INTO charges (id, name, amount, unit, measure, service, action, description) VALUES
-    ('{str(uuid4())}', 'pdf_extraction', 5, 'credit', 'page', 'KnowledgeBase', 'extraction', 'Extract text from PDF documents'),
-    ('{str(uuid4())}', 'excel_ext', 4, 'credit', 'sheet', 'KnowledgeBase', 'extraction', 'Extract data from Excel spreadsheets'),
-    ('{str(uuid4())}', 'o3-mini', 3, 'credit', 'token', 'Conversation', 'chat', 'Claude 3 Opus Mini model usage'),
-    ('{str(uuid4())}', 'gpt-4o', 3, 'credit', 'token', 'Conversation', 'chat', 'GPT-4o model usage'),
-    ('{str(uuid4())}', 'o1-small-text-indexing', 3, 'credit', 'token', 'KnowledgeBase', 'indexing', 'Claude Opus 1 Small Text indexing'),
-    ('{str(uuid4())}', 'o1-small-text-retrieval', 3, 'credit', 'token', 'KnowledgeBase', 'retrieval', 'Claude Opus 1 Small Text retrieval')
-    """)
 
   # Create indexes for better performance
   op.create_index("ix_transactions_type", "transactions", ["type"])
