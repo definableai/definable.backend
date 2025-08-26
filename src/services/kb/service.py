@@ -593,13 +593,56 @@ class KnowledgeBaseService:
       metadata["billing_transaction_id"] = str(charge.transaction_id)
       self.logger.debug(f"Added billing transaction ID to metadata: {charge.transaction_id}")
 
+      # Always create a new folder for organizing URL processing documents
+      self.logger.info("Creating folder for URL processing documents")
+      from datetime import datetime
+
+      # Use title as folder name, add timestamp only if there's a conflict
+      folder_name = document_data.title or f"URL Content ({document_data.operation.title()})"
+
+      # Check if folder with this name already exists
+      existing_folder_query = select(KBFolder).where(
+        KBFolder.kb_id == kb_id,
+        KBFolder.name == folder_name,
+        KBFolder.parent_id == folder_id,  # folder_id is the parent from request data
+      )
+      existing_result = await session.execute(existing_folder_query)
+      existing_folder = existing_result.scalar_one_or_none()
+
+      # If folder exists, add timestamp to make it unique
+      if existing_folder:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        folder_name = f"{folder_name}_{timestamp}"
+        self.logger.info(f"Folder name conflict detected, using unique name: {folder_name}")
+
+      # Create new folder for URL processing
+      new_folder = KBFolder(
+        name=folder_name,
+        kb_id=kb_id,
+        parent_id=folder_id,  # Use the parent folder from request data (can be None for root)
+        folder_info={
+          "created_by": f"{document_data.operation}_operation",
+          "source_url": document_data.url,
+          "created_for": "url_processing",
+          "created_at": datetime.now().isoformat(),
+          "parent_folder_id": str(folder_id) if folder_id else None,
+          "original_title": document_data.title,
+        },
+      )
+
+      session.add(new_folder)
+      await session.commit()
+      await session.refresh(new_folder)
+      url_folder_id = new_folder.id
+      self.logger.info(f"Created new folder for URL processing: {new_folder.name} (ID: {new_folder.id}) under parent: {folder_id}")
+
       # Create parent document to track crawl job
       self.logger.info("Creating parent document for URL processing")
       parent_doc = KBDocumentModel(
         title=document_data.title,
         description=document_data.description,
         kb_id=kb_id,
-        folder_id=folder_id,  # Use converted UUID
+        folder_id=url_folder_id,  # Use the created/existing URL folder
         source_type_id=2,
         source_metadata=metadata,
         extraction_status=DocumentStatus.PENDING,
@@ -609,6 +652,22 @@ class KnowledgeBaseService:
       await session.commit()
       await session.refresh(parent_doc)
       self.logger.info(f"Parent document created successfully with ID: {parent_doc.id}")
+
+      # Send initial WebSocket notification for URL processing start
+      await self.ws_manager.broadcast(
+        org_id,
+        {
+          "id": str(parent_doc.id),
+          "type": "url_processing_started",
+          "operation": document_data.operation,
+          "url": document_data.url,
+          "title": document_data.title,
+          "status": "pending",
+          "folder_id": str(url_folder_id),
+        },
+        "kb",
+        "write",
+      )
 
       # Create jobs for URL processing and indexing
       async with async_session() as task_session:
@@ -622,8 +681,10 @@ class KnowledgeBaseService:
             "source_type_name": source_type_model.name,
             "source_type_config": source_type_model.config_schema,
             "doc_id": str(parent_doc.id),
+            "kb_id": str(kb_id),
             "charge_id": str(charge.transaction_id),
             "complete_charge": False,
+            "folder_id": str(url_folder_id),
           },
         )
         task_session.add(process_job)
@@ -635,7 +696,13 @@ class KnowledgeBaseService:
           status=JobStatus.PENDING,
           created_by=UUID(user["id"]),
           parent_job_id=process_job.id,
-          context={"doc_ids": [str(parent_doc.id)], "kb_id": str(kb_id), "initial_charge_id": str(charge.transaction_id), "user_id": str(user["id"])},
+          context={
+            "doc_ids": [str(parent_doc.id)],
+            "kb_id": str(kb_id),
+            "initial_charge_id": str(charge.transaction_id),
+            "user_id": str(user["id"]),
+            "folder_id": str(url_folder_id),
+          },
         )
         task_session.add(index_job)
         await task_session.commit()

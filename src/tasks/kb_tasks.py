@@ -3,7 +3,7 @@
 import platform
 import sys
 import time
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 import httpx
@@ -13,7 +13,95 @@ from common.logger import logger
 from common.q import task
 from config.settings import settings
 from database import sync_session
-from models.job_model import JobModel, JobStatus
+from models import JobModel, JobStatus
+
+
+def _safe_status_value(status_field):
+  """Safely extract status value, handling both enum and int types."""
+  if not status_field:
+    return None
+  if hasattr(status_field, "value"):
+    return status_field.value
+  return status_field  # Assume it's already an int/string
+
+
+def get_file_details_for_websocket(doc_model) -> Dict[str, Any]:
+  """Extract file details from document model for WebSocket updates (excluding content).
+
+  Args:
+      doc_model: KBDocumentModel instance
+
+  Returns:
+      Dict containing file metadata for WebSocket transmission
+  """
+  if not doc_model:
+    return {}
+
+  try:
+    # Determine overall status - prioritize extraction status, fallback to indexing status
+    status = _safe_status_value(doc_model.extraction_status) or _safe_status_value(doc_model.indexing_status)
+    if status == 2:  # COMPLETED = 2
+      status = "completed"
+    elif status == 1:  # PROCESSING = 1
+      status = "processing"
+    elif status == 3:  # FAILED = 3
+      status = "failed"
+    elif status == 0:  # PENDING = 0
+      status = "pending"
+    else:
+      status = "pending"  # Default fallback
+
+    # Determine file_type from source metadata or source type
+    file_type = ""
+    if doc_model.source_metadata:
+      # First try to get file_type from metadata
+      file_type = doc_model.source_metadata.get("file_type", "")
+
+      # If not found, determine based on source type or operation
+      if not file_type:
+        if doc_model.source_metadata.get("operation") in ["scrape", "crawl", "map"]:
+          file_type = "webpage"
+        elif doc_model.source_metadata.get("url"):
+          file_type = "webpage"
+        elif doc_model.source_metadata.get("content_type"):
+          content_type = doc_model.source_metadata.get("content_type", "")
+          # Extract file type from content type (e.g., "application/pdf" -> "pdf")
+          if "/" in content_type:
+            file_type = content_type.split("/")[-1].lower()
+        elif doc_model.source_metadata.get("s3_key"):
+          # Extract from s3_key file extension
+          s3_key = doc_model.source_metadata.get("s3_key", "")
+          if "." in s3_key:
+            file_type = s3_key.split(".")[-1].lower()
+
+    # Use "markdown" as fallback if no file_type could be determined
+    if not file_type:
+      file_type = "markdown"
+
+    return {
+      "id": str(doc_model.id),
+      "title": doc_model.title or "",
+      "description": doc_model.description or "",
+      "file_type": file_type,
+      "size": len(doc_model.content) if doc_model.content else 0,
+      "status": status,
+      "created_at": doc_model.created_at.isoformat() if doc_model.created_at else None,
+      "updated_at": doc_model.updated_at.isoformat() if doc_model.updated_at else None,
+      "download_url": None,
+    }
+  except Exception as e:
+    logger.error(f"Failed to extract file details for WebSocket: {str(e)}")
+    return {
+      "id": str(doc_model.id) if doc_model and hasattr(doc_model, "id") else "unknown",
+      "title": "",
+      "description": "",
+      "file_type": "",
+      "size": 0,
+      "status": "pending",
+      "created_at": None,
+      "updated_at": None,
+      "download_url": None,
+    }
 
 
 def send_job_update(
@@ -25,6 +113,8 @@ def send_job_update(
   kb_id: Optional[UUID] = None,
   file_id: Optional[UUID] = None,
   timeout: int = 10,
+  url_details: Optional[Dict[str, Any]] = None,
+  file_details: Optional[Dict[str, Any]] = None,
 ) -> bool:
   """Send job status update via HTTP to the job update endpoint.
 
@@ -37,6 +127,8 @@ def send_job_update(
       kb_id: Optional Knowledge Base UUID
       file_id: Optional File/Document UUID
       timeout: Request timeout in seconds
+      url_details: Optional URL processing details (discovered_urls, processed_urls, etc.)
+      file_details: Optional file/document details (metadata, status, etc. - excluding content)
 
   Returns:
       bool: True if update was sent successfully, False otherwise
@@ -73,6 +165,8 @@ def send_job_update(
         "progress": progress,
         "kbId": str(kb_id) if kb_id else None,
         "fileId": str(file_id) if file_id else None,
+        **(url_details or {}),  # Include URL processing details if provided
+        **({"file_details": file_details} if file_details else {}),  # Include file details if provided
       },
     }
 
@@ -112,44 +206,7 @@ def send_job_update(
     return False
 
 
-def create_crawl_folder_sync(parent_doc, session, url: str):
-  """Create or get folder for organizing crawled documents (sync version)."""
-  try:
-    from models import KBFolder
-
-    # Use provided folder_id or create a new folder
-    if parent_doc.folder_id:
-      return parent_doc.folder_id
-
-    # Create folder with parent document title
-    folder_name = parent_doc.title or "Crawled Content"
-
-    # Check if folder already exists
-    existing_folder_query = select(KBFolder).where(KBFolder.kb_id == parent_doc.kb_id, KBFolder.name == folder_name, KBFolder.parent_id.is_(None))
-    result = session.execute(existing_folder_query)
-    existing_folder = result.scalar_one_or_none()
-
-    if existing_folder:
-      return existing_folder.id
-
-    # Create new folder
-    new_folder = KBFolder(
-      name=folder_name,
-      kb_id=parent_doc.kb_id,
-      parent_id=None,
-      folder_info={"created_by": "crawl_operation", "source_url": url, "parent_doc_id": str(parent_doc.id)},
-    )
-
-    session.add(new_folder)
-    session.commit()
-    session.refresh(new_folder)
-
-    logger.info(f"Created crawl folder: {new_folder.name} (ID: {new_folder.id})")
-    return new_folder.id
-
-  except Exception as e:
-    logger.error(f"Failed to create crawl folder: {str(e)}")
-    return parent_doc.folder_id  # Fallback to parent folder
+# NOTE: create_url_folder_sync function removed as folder creation is now handled by the API
 
 
 def create_child_document_sync(parent_doc, page_url: str, content: str, folder_id, session, index: int):
@@ -459,12 +516,38 @@ def process_document_task(
 
         except Exception as e:
           logger.error(f"Failed to extract content using DoclingFileLoader: {str(e)}")
-          content = doc.content or f"Content extraction failed: {str(e)}"
-      elif source_type_name == "url":
-        # Extract content using URL source handler with Firecrawl
-        try:
-          import asyncio
+          # Update document status to failed
+          doc.extraction_status = DocumentStatus.FAILED
+          doc.error_message = f"Content extraction failed: {str(e)}"
+          session.commit()
 
+          # Update job status to failed
+          if job:
+            job.status = JobStatus.FAILED
+            job.message = f"Document processing error: Content extraction failed - {str(e)}"
+            session.commit()
+
+            # Update job progress to trigger failure status update
+            update_job_progress(
+              job_id=UUID(job_id),
+              progress=0.0,
+              message=f"Document processing error: Content extraction failed - {str(e)}",
+              session=session,
+              metadata={
+                "doc_id": doc_id,
+                "task_type": "document_processing",
+                "kb_id": job.context.get("kb_id") if job and job.context else None,
+                "error_type": "content_extraction_failed",
+              },
+              org_id=UUID(org_id),
+              send_update=True,
+            )
+
+          # Return failure result to terminate the workflow
+          return {"success": False, "error": f"Content extraction failed: {str(e)}"}
+      elif source_type_name == "url":
+        # Extract content using dedicated URL processing task
+        try:
           # Get URL from document metadata
           url = doc.source_metadata.get("url")
           operation = doc.source_metadata.get("operation", "scrape")
@@ -472,113 +555,24 @@ def process_document_task(
 
           logger.info(f"Extracting content from URL: {url} using operation: {operation}")
 
-          # Use appropriate crawler for URL extraction
-          async def extract_url_content():
-            from libs.firecrawl.v2 import firecrawl
-
-            if operation == "scrape":
-              content = await firecrawl.scrape_url(url=url, settings=settings)
-              logger.info(f"Successfully scraped {len(content)} characters from {url}")
-              return content
-            elif operation == "crawl":
-              # Comprehensive crawl: discover URLs + scrape each + create documents + organize in folders
-              logger.info(f"Starting comprehensive crawl of {url}")
-
-              # Get crawler type from document metadata
-              crawler_type = doc.source_metadata.get("crawler", "premium")
-
-              # Windows Store Python subprocess limitation detection and fallback
-              is_windows_subprocess_limited = platform.system() == "Windows" and "WindowsApps" in sys.executable
-
-              # Perform crawl operation with appropriate crawler
-              results = None
-              crawler_used = crawler_type
-
-              try:
-                if crawler_type == "base":
-                  from libs.crawl4ai.v2 import crawl4ai
-
-                  results = await crawl4ai.crawl(url=url, params=settings)
-                else:  # premium (firecrawl)
-                  if is_windows_subprocess_limited:
-                    logger.warning("Windows Store Python detected - using crawl4ai instead of firecrawl to avoid subprocess limitations")
-                    from libs.crawl4ai.v2 import crawl4ai
-
-                    results = await crawl4ai.crawl(url=url, params=settings)
-                    crawler_used = "base"
-                  else:
-                    results = await firecrawl.crawl(url=url, params=settings)
-
-              except (NotImplementedError, OSError) as subprocess_error:
-                # Handle Windows subprocess limitation by falling back to crawl4ai
-                if "subprocess" in str(subprocess_error).lower() or isinstance(subprocess_error, NotImplementedError):
-                  logger.warning(f"Subprocess error detected (likely Windows Store Python limitation): {subprocess_error}")
-                  logger.info("Falling back to crawl4ai for crawl operation")
-                  try:
-                    from libs.crawl4ai.v2 import crawl4ai
-
-                    results = await crawl4ai.crawl(url=url, params=settings)
-                    crawler_used = "base"
-                  except Exception as fallback_error:
-                    raise ValueError(f"Both primary crawler and fallback failed. Primary: {subprocess_error}, Fallback: {fallback_error}")
-                else:
-                  raise subprocess_error
-
-              if not results or not results.get("success"):
-                raise ValueError(f"Crawl operation failed: {results.get('error', 'Unknown error') if results else 'No results returned'}")
-
-              scraped_pages = results.get("data", [])
-              if not scraped_pages:
-                raise ValueError("No pages were crawled")
-
-              logger.info(f"Successfully crawled {len(scraped_pages)} pages using {crawler_used} crawler")
-
-              # Create or get folder for organizing crawled documents (sync)
-              folder_id = create_crawl_folder_sync(doc, session, url)
-
-              # Process each crawled page
-              main_content = ""
-              child_documents: List[dict] = []
-
-              for idx, page_data in enumerate(scraped_pages):
-                page_url = page_data.get("metadata", {}).get("url", f"{url}/page_{idx}")
-                page_content = page_data.get("markdown", "")
-
-                if not page_content.strip():
-                  logger.warning(f"Skipping empty content from {page_url}")
-                  continue
-
-                # Check if this is the main page
-                if page_url == url or page_url.rstrip("/") == url.rstrip("/"):
-                  main_content = page_content
-                  logger.info(f"Found main page content: {len(page_content)} characters")
-                else:
-                  # Create child document for this crawled page
-                  child_doc = create_child_document_sync(
-                    parent_doc=doc, page_url=page_url, content=page_content, folder_id=folder_id, session=session, index=len(child_documents)
-                  )
-                  if child_doc:
-                    child_documents.append(child_doc)
-                    logger.info(f"Created child document {child_doc.id} for {page_url}")
-
-              logger.info(f"Crawl completed: main content ({len(main_content)} chars), {len(child_documents)} child documents")
-
-              # Return main content (this will be stored in the parent document)
-              return main_content or f"Crawled {len(scraped_pages)} pages from {url}"
-            elif operation == "map":
-              # For map, combine all mapped URLs content
-              results = firecrawl.map_url(url=url, settings=settings)
-              content = "\n\n".join(r.get("content", "") for r in results)
-              logger.info(f"Successfully mapped {len(results)} URLs, combined content: {len(content)} characters")
-              return content
-            else:
-              raise ValueError(f"Unsupported URL operation: {operation}")
+          # Use the dedicated URL processing task function directly
+          import asyncio
 
           # Run async URL extraction in sync context
           loop = asyncio.new_event_loop()
           asyncio.set_event_loop(loop)
           try:
-            content = loop.run_until_complete(extract_url_content())
+            # Call the URL processing function directly
+            if operation == "scrape":
+              result = loop.run_until_complete(_process_url_scrape(url, settings, org_id, job_id, doc_id, str(doc.kb_id)))
+            elif operation == "crawl":
+              result = loop.run_until_complete(_process_url_crawl(url, settings, org_id, job_id, doc_id, str(doc.kb_id), user_id))
+            elif operation == "map":
+              result = loop.run_until_complete(_process_url_map(url, settings, org_id, job_id, doc_id, str(doc.kb_id)))
+            else:
+              raise ValueError(f"Unsupported URL operation: {operation}")
+
+            content = result.get("content", "")
             if not content or not content.strip():
               content = f"No content could be extracted from URL: {url}"
             logger.info(f"URL content extraction completed, length: {len(content)} characters")
@@ -586,8 +580,20 @@ def process_document_task(
             loop.close()
 
         except Exception as e:
-          logger.error(f"Failed to extract content from URL using Firecrawl: {str(e)}")
-          content = doc.content or f"URL content extraction failed: {str(e)}"
+          logger.error(f"Failed to extract content from URL: {str(e)}")
+          error_details = str(e)
+
+          # Check if it's a specific API error that users should know about
+          if any(code in error_details.lower() for code in ["502", "503", "504", "timeout"]):
+            content = f"URL processing temporarily failed due to API issues. The service may be experiencing high load. Error: {error_details[:200]}"
+          elif "both" in error_details.lower() and "failed" in error_details.lower():
+            content = f"URL processing failed - both primary and fallback crawlers encountered issues. Error: {error_details[:200]}"
+          else:
+            content = f"URL content extraction failed: {error_details[:200]}"
+
+          # If doc already has some content, append the error info instead of replacing
+          if doc.content and len(doc.content.strip()) > 0:
+            content = f"{doc.content}\n\n--- Processing Error ---\n{content}"
       else:
         content = doc.content or "Content extracted"
 
@@ -652,32 +658,106 @@ def process_document_task(
       if job:
         kb_id = job.context.get("kb_id")
         if kb_id:
-          index_job = JobModel(
-            name="Document Indexing",
-            description="Index document after processing",
-            status=JobStatus.PENDING,
-            created_by=job.created_by,
-            parent_job_id=job.id,
-            context={
-              "doc_ids": [str(doc_id)],
-              "kb_id": kb_id,
-              "user_id": str(user_id),
-              "initial_charge_id": charge_id,
-            },
-          )
-          session.add(index_job)
-          session.commit()
-          session.refresh(index_job)
+          if source_type_name == "url":
+            # For URL documents, look for existing child indexing job (created in API)
+            logger.info(f"Looking for existing child indexing job with parent_job_id: {job_id}")
 
-          logger.info(f"Creating and triggering index job: {index_job.id}")
-          submit_index_documents_task(
-            job_id=index_job.id,
-            doc_ids=[UUID(doc_id)],
-            org_id=UUID(org_id),
-            user_id=UUID(user_id),
-            kb_id=UUID(kb_id),
-            initial_charge_id=charge_id,
-          )
+            # Query for child jobs
+            parent_job_uuid = UUID(job_id)
+            child_jobs_query = select(JobModel).where(JobModel.parent_job_id == parent_job_uuid)
+            child_jobs_result = session.execute(child_jobs_query)
+            child_jobs = child_jobs_result.scalars().all()
+
+            logger.info(f"Found {len(child_jobs)} child jobs")
+
+            indexing_job_found = False
+            for child_job in child_jobs:
+              logger.info(f"Child job {child_job.id} context: {child_job.context}")
+              if child_job.context and "doc_ids" in child_job.context:
+                # This is an indexing job
+                logger.info(f"Triggering existing child indexing job: {child_job.id}")
+                try:
+                  task_id = submit_index_documents_task(
+                    job_id=child_job.id,
+                    doc_ids=[UUID(doc_id) for doc_id in child_job.context["doc_ids"]],
+                    org_id=UUID(org_id),
+                    user_id=UUID(child_job.context.get("user_id", user_id)),
+                    kb_id=UUID(child_job.context.get("kb_id", kb_id)),
+                    initial_charge_id=child_job.context.get("initial_charge_id", charge_id),
+                  )
+                  logger.info(f"Successfully submitted index task {task_id} for existing child job {child_job.id}")
+                  indexing_job_found = True
+                  break
+                except Exception as e:
+                  logger.error(
+                    f"Failed to submit index task for child job {child_job.id}: {str(e)}",
+                    extra={
+                      "child_job_id": str(child_job.id),
+                      "job_id": str(job_id),
+                      "org_id": str(org_id),
+                      "doc_id": str(doc_id),
+                      "error": str(e),
+                    },
+                  )
+
+            if not indexing_job_found:
+              logger.warning("No existing indexing job found for URL document, creating new one as fallback")
+              # Fallback: create new indexing job if none found
+              index_job = JobModel(
+                name="Document Indexing",
+                description="Index document after processing",
+                status=JobStatus.PENDING,
+                created_by=job.created_by,
+                parent_job_id=job.id,
+                context={
+                  "doc_ids": [str(doc_id)],
+                  "kb_id": kb_id,
+                  "user_id": str(user_id),
+                  "initial_charge_id": charge_id,
+                },
+              )
+              session.add(index_job)
+              session.commit()
+              session.refresh(index_job)
+
+              logger.info(f"Created fallback indexing job: {index_job.id}")
+              submit_index_documents_task(
+                job_id=index_job.id,
+                doc_ids=[UUID(doc_id)],
+                org_id=UUID(org_id),
+                user_id=UUID(user_id),
+                kb_id=UUID(kb_id),
+                initial_charge_id=charge_id,
+              )
+
+          else:
+            # For file documents, create new indexing job (original behavior)
+            index_job = JobModel(
+              name="Document Indexing",
+              description="Index document after processing",
+              status=JobStatus.PENDING,
+              created_by=job.created_by,
+              parent_job_id=job.id,
+              context={
+                "doc_ids": [str(doc_id)],
+                "kb_id": kb_id,
+                "user_id": str(user_id),
+                "initial_charge_id": charge_id,
+              },
+            )
+            session.add(index_job)
+            session.commit()
+            session.refresh(index_job)
+
+            logger.info(f"Creating and triggering index job: {index_job.id}")
+            submit_index_documents_task(
+              job_id=index_job.id,
+              doc_ids=[UUID(doc_id)],
+              org_id=UUID(org_id),
+              user_id=UUID(user_id),
+              kb_id=UUID(kb_id),
+              initial_charge_id=charge_id,
+            )
 
       return {
         "success": True,
@@ -1111,7 +1191,13 @@ def index_documents_task(
         progress=100.0,
         message=f"Document indexing completed. Indexed {indexed_count}/{total_docs} documents",
         session=session,
-        metadata={"kb_id": kb_id, "indexed_count": indexed_count, "total_docs": total_docs, "task_type": "document_indexing", "doc_id": doc_ids[0] if doc_ids else None},  # noqa: E501
+        metadata={
+          "kb_id": kb_id,
+          "indexed_count": indexed_count,
+          "total_docs": total_docs,
+          "task_type": "document_indexing",
+          "doc_id": doc_ids[0] if doc_ids else None,
+        },  # noqa: E501
         org_id=UUID(org_id),
         send_update=True,
       )
@@ -1463,3 +1549,1130 @@ def submit_upload_file_task(
     charge_id=charge_id,
   )
   return task_result.id
+
+
+@task(bind=True)
+def process_url_task(
+  self,
+  url: str,
+  operation: str,
+  settings: Dict[str, Any],
+  org_id: str,
+  job_id: str,
+  doc_id: str,
+  kb_id: str,
+  user_id: str,
+) -> Dict[str, Any]:
+  """
+  Process URL with comprehensive WebSocket progress updates.
+
+  Handles scrape, crawl, and map operations with real-time progress notifications.
+  """
+  logger.info(f"Starting URL processing task: {operation} for {url}")
+
+  try:
+    # Send initial progress update
+    send_job_update(
+      org_id=UUID(org_id),
+      job_id=UUID(job_id),
+      status="processing",
+      message=f"Starting {operation} operation for {url}",
+      progress=5.0,
+      kb_id=UUID(kb_id),
+      file_id=UUID(doc_id),
+    )
+
+    import asyncio
+
+    # Run async operations in sync context
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+      if operation == "scrape":
+        result = loop.run_until_complete(_process_url_scrape(url, settings, org_id, job_id, doc_id, kb_id))
+      elif operation == "crawl":
+        result = loop.run_until_complete(_process_url_crawl(url, settings, org_id, job_id, doc_id, kb_id, user_id))
+      elif operation == "map":
+        result = loop.run_until_complete(_process_url_map(url, settings, org_id, job_id, doc_id, kb_id))
+      else:
+        raise ValueError(f"Unsupported URL operation: {operation}")
+      return result
+    finally:
+      loop.close()
+
+  except Exception as e:
+    logger.error(f"URL processing failed: {str(e)}")
+    send_job_update(
+      org_id=UUID(org_id),
+      job_id=UUID(job_id),
+      status="failed",
+      message=f"URL processing failed: {str(e)}",
+      progress=0.0,
+      kb_id=UUID(kb_id),
+      file_id=UUID(doc_id),
+    )
+    raise
+
+
+async def _process_url_scrape(
+  url: str,
+  settings: Dict[str, Any],
+  org_id: str,
+  job_id: str,
+  doc_id: str,
+  kb_id: str,
+) -> Dict[str, Any]:
+  """Process single URL scraping with dynamic progress updates."""
+
+  total_urls = 1  # Only 1 URL for scrape operation
+
+  # Get document details for WebSocket updates
+  with sync_session() as session:
+    from models import KBDocumentModel
+
+    doc = session.get(KBDocumentModel, UUID(doc_id))
+    if not doc:
+      raise ValueError(f"Document {doc_id} not found")
+
+    # Use folder_id from document (set by API) - don't create new folder
+    folder_id = doc.folder_id
+    logger.info(f"Using folder {folder_id} for scrape operation (set by API)")
+
+    doc_details = get_file_details_for_websocket(doc)
+
+  # Send initial URL discovery update (0-20% range)
+  send_job_update(
+    org_id=UUID(org_id),
+    job_id=UUID(job_id),
+    status="processing",
+    message=f"Discovered {total_urls} URL to scrape: {url}",
+    progress=10.0,
+    kb_id=UUID(kb_id),
+    file_id=UUID(doc_id),
+    url_details={
+      "operation": "scrape",
+      "discovered_urls": total_urls,
+      "processed_urls": 0,
+      "current_url": url,
+      "progress_stage": "discovered",
+      "folder_id": str(folder_id),
+    },
+    file_details=doc_details,
+  )
+
+  # Send scraping progress update (20-70% range)
+  send_job_update(
+    org_id=UUID(org_id),
+    job_id=UUID(job_id),
+    status="processing",
+    message=f"Scraping content from {url}",
+    progress=30.0,
+    kb_id=UUID(kb_id),
+    file_id=UUID(doc_id),
+    url_details={
+      "operation": "scrape",
+      "discovered_urls": total_urls,
+      "processed_urls": 0,
+      "current_url": url,
+      "status": "scraping",
+      "progress_stage": "processing",
+      "folder_id": str(folder_id),
+    },
+    file_details=doc_details,
+  )
+
+  from libs.firecrawl.v2 import firecrawl
+
+  # Implement retry logic for scrape operation
+  max_retries = 2
+  retry_count = 0
+  content = None
+
+  while retry_count <= max_retries:
+    try:
+      content = await firecrawl.scrape_url(url=url, settings=settings)
+      break  # Success, exit retry loop
+    except Exception as api_error:
+      error_msg = str(api_error).lower()
+      is_retryable_error = any(code in error_msg for code in ["502", "503", "504", "timeout", "connection", "network"])
+
+      if is_retryable_error and retry_count < max_retries:
+        retry_count += 1
+        wait_time = min(2**retry_count, 10)  # Exponential backoff, max 10 seconds
+        logger.warning(f"Retryable scrape error (attempt {retry_count}/{max_retries + 1}): {api_error}. Retrying in {wait_time} seconds...")
+
+        send_job_update(
+          org_id=UUID(org_id),
+          job_id=UUID(job_id),
+          status="processing",
+          message=f"Scrape error detected, retrying in {wait_time}s (attempt {retry_count + 1}/{max_retries + 1})",
+          progress=30.0,
+          kb_id=UUID(kb_id),
+          file_id=UUID(doc_id),
+          url_details={
+            "operation": "scrape",
+            "discovered_urls": total_urls,
+            "attempt": retry_count + 1,
+            "error": str(api_error)[:100],
+            "progress_stage": "retrying",
+            "folder_id": str(folder_id),
+          },
+          file_details=doc_details,
+        )
+
+        # Wait before retry
+        import asyncio
+
+        await asyncio.sleep(wait_time)
+        continue
+      if is_retryable_error and retry_count >= max_retries:
+        # Max retries exceeded, try fallback crawler
+        logger.error("Max retries exceeded for scrape, attempting fallback to crawl4ai")
+        send_job_update(
+          org_id=UUID(org_id),
+          job_id=UUID(job_id),
+          status="processing",
+          message=f"Firecrawl scrape failed after {max_retries + 1} attempts, trying crawl4ai fallback",
+          progress=30.0,
+          kb_id=UUID(kb_id),
+          file_id=UUID(doc_id),
+          url_details={
+            "operation": "scrape",
+            "discovered_urls": total_urls,
+            "crawler_type": "api_fallback",
+            "original_error": str(api_error)[:100],
+            "progress_stage": "fallback",
+            "folder_id": str(folder_id),
+          },
+          file_details=doc_details,
+        )
+
+        try:
+          from libs.crawl4ai.v2 import crawl4ai
+
+          # Use crawl4ai for single URL scraping
+          crawl_result = await crawl4ai.crawl(url=url, params={**settings, "limit": 1})
+          if crawl_result.get("success") and crawl_result.get("data"):
+            first_page = crawl_result["data"][0]
+            content = first_page.get("markdown", "") or first_page.get("content", "")
+            logger.info("Successfully fell back to crawl4ai for scraping after Firecrawl API failures")
+          else:
+            content = ""
+          break  # Exit retry loop
+        except Exception as fallback_error:
+          logger.error(f"Fallback scraper also failed: {fallback_error}")
+          # Use minimal content as final fallback
+          content = f"Content extraction failed after multiple attempts. Original error: {str(api_error)[:100]}"
+          break
+      else:
+        # Non-retryable error, raise immediately
+        raise api_error
+
+  if not content:
+    content = f"No content could be extracted from URL: {url}"
+
+  # Create document entry for the scraped URL (already exists as parent doc)
+  with sync_session() as session:
+    from models import KBDocumentModel
+
+    # Update the parent document with scraped content
+    doc = session.get(KBDocumentModel, UUID(doc_id))
+    if doc:
+      # Update metadata with scraping details
+      if doc.source_metadata:
+        doc.source_metadata.update({
+          "scraped_content_size": len(content),
+          "scraped_characters": len(content),
+          "scraped_words": len(content.split()) if content else 0,
+          "scraping_completed": True,
+        })
+      session.commit()
+      logger.info(f"Updated document {doc_id} with scraped content metadata")
+
+      # Update document details after scraping
+      doc_details = get_file_details_for_websocket(doc)
+
+  # Send completion update with detailed URL processing info (70-100% range)
+  progress = 90.0  # Single URL completion at 90%
+
+  # Prepare all files for final summary (just the parent document for scrape)
+  all_files = [doc_details]
+
+  send_job_update(
+    org_id=UUID(org_id),
+    job_id=UUID(job_id),
+    status="processing",
+    message=f"Successfully scraped {len(content)} characters from 1 URL",
+    progress=progress,
+    kb_id=UUID(kb_id),
+    file_id=UUID(doc_id),
+    url_details={
+      "operation": "scrape",
+      "discovered_urls": total_urls,
+      "processed_urls": 1,
+      "scraped_content_size": len(content),
+      "completed_urls": [{"url": url, "content_size": len(content), "doc_id": doc_id}],
+      "status": "completed",
+      "progress_stage": "completed",
+      "folder_id": str(folder_id),
+      "created_files": all_files,
+    },
+    file_details=doc_details,
+  )
+
+  logger.info(f"Successfully scraped {len(content)} characters from {url}")
+  return {"success": True, "content": content, "operation": "scrape", "urls_processed": 1}
+
+
+async def _process_url_crawl(
+  url: str,
+  settings: Dict[str, Any],
+  org_id: str,
+  job_id: str,
+  doc_id: str,
+  kb_id: str,
+  user_id: str,
+) -> Dict[str, Any]:
+  """Process URL crawling with comprehensive progress updates."""
+  logger.info(f"Starting comprehensive crawl of {url}")
+
+  # Get crawler type from settings
+  crawler_type = settings.get("crawler", "premium")
+
+  # Get document details for WebSocket updates
+  with sync_session() as session:
+    from models import KBDocumentModel
+
+    doc = session.get(KBDocumentModel, UUID(doc_id))
+    doc_details = get_file_details_for_websocket(doc)
+
+  # Get the folder_id from document (set by API)
+  folder_id = None
+  with sync_session() as session:
+    from models import KBDocumentModel
+
+    doc = session.get(KBDocumentModel, UUID(doc_id))
+    folder_id = doc.folder_id if doc else None
+    logger.info(f"Using folder {folder_id} for crawl operation (set by API)")
+
+  send_job_update(
+    org_id=UUID(org_id),
+    job_id=UUID(job_id),
+    status="processing",
+    message=f"Initializing {crawler_type} crawler for {url}",
+    progress=10.0,
+    kb_id=UUID(kb_id),
+    file_id=UUID(doc_id),
+    url_details={
+      "operation": "crawl",
+      "source_url": url,
+      "crawler_type": crawler_type,
+      "progress_stage": "initializing",
+      "folder_id": str(folder_id),
+    },
+    file_details=doc_details,
+  )
+
+  # Windows Store Python subprocess limitation detection and fallback
+  is_windows_subprocess_limited = platform.system() == "Windows" and "WindowsApps" in sys.executable
+
+  # Perform crawl operation with appropriate crawler and retry logic
+  results = None
+  crawler_used = crawler_type
+  max_retries = 2
+  retry_count = 0
+
+  while retry_count <= max_retries:
+    try:
+      if crawler_type == "base":
+        from libs.crawl4ai.v2 import crawl4ai
+
+        send_job_update(
+          org_id=UUID(org_id),
+          job_id=UUID(job_id),
+          status="processing",
+          message=f"Starting crawl4ai crawl of {url}" + (f" (attempt {retry_count + 1})" if retry_count > 0 else ""),
+          progress=15.0,
+          kb_id=UUID(kb_id),
+          file_id=UUID(doc_id),
+          url_details={
+            "operation": "crawl",
+            "crawler_type": "crawl4ai",
+            "attempt": retry_count + 1,
+            "progress_stage": "crawling",
+            "folder_id": str(folder_id),
+          },
+        )
+        results = await crawl4ai.crawl(url=url, params=settings)
+        break  # Success, exit retry loop
+      else:  # premium (firecrawl)
+        if is_windows_subprocess_limited:
+          logger.warning("Windows Store Python detected - using crawl4ai instead of firecrawl")
+          from libs.crawl4ai.v2 import crawl4ai
+
+          send_job_update(
+            org_id=UUID(org_id),
+            job_id=UUID(job_id),
+            status="processing",
+            message=f"Using crawl4ai fallback for {url}" + (f" (attempt {retry_count + 1})" if retry_count > 0 else ""),
+            progress=15.0,
+            kb_id=UUID(kb_id),
+            file_id=UUID(doc_id),
+            url_details={
+              "operation": "crawl",
+              "crawler_type": "crawl4ai_fallback",
+              "attempt": retry_count + 1,
+              "progress_stage": "crawling",
+              "folder_id": str(folder_id),
+            },
+          )
+          results = await crawl4ai.crawl(url=url, params=settings)
+          crawler_used = "base"
+          break  # Success, exit retry loop
+        else:
+          from libs.firecrawl.v2 import firecrawl
+
+          send_job_update(
+            org_id=UUID(org_id),
+            job_id=UUID(job_id),
+            status="processing",
+            message=f"Starting Firecrawl crawl of {url}" + (f" (attempt {retry_count + 1})" if retry_count > 0 else ""),
+            progress=15.0,
+            kb_id=UUID(kb_id),
+            file_id=UUID(doc_id),
+            url_details={
+              "operation": "crawl",
+              "crawler_type": "firecrawl",
+              "attempt": retry_count + 1,
+              "progress_stage": "crawling",
+              "folder_id": str(folder_id),
+            },
+          )
+          results = await firecrawl.crawl(url=url, params=settings)
+          break  # Success, exit retry loop
+
+    except (NotImplementedError, OSError) as subprocess_error:
+      if "subprocess" in str(subprocess_error).lower() or isinstance(subprocess_error, NotImplementedError):
+        logger.warning(f"Subprocess error detected: {subprocess_error}")
+        send_job_update(
+          org_id=UUID(org_id),
+          job_id=UUID(job_id),
+          status="processing",
+          message="Fallback to crawl4ai due to system limitations",
+          progress=15.0,
+          kb_id=UUID(kb_id),
+          file_id=UUID(doc_id),
+          url_details={"operation": "crawl", "crawler_type": "system_fallback", "progress_stage": "fallback", "folder_id": str(folder_id)},
+        )
+        try:
+          from libs.crawl4ai.v2 import crawl4ai
+
+          results = await crawl4ai.crawl(url=url, params=settings)
+          crawler_used = "base"
+          break  # Success, exit retry loop
+        except Exception as fallback_error:
+          raise ValueError(f"Both primary crawler and fallback failed. Primary: {subprocess_error}, Fallback: {fallback_error}")
+      else:
+        raise subprocess_error
+    except Exception as api_error:
+      error_msg = str(api_error).lower()
+      is_retryable_error = any(code in error_msg for code in ["502", "503", "504", "timeout", "connection", "network"])
+
+      if is_retryable_error and retry_count < max_retries:
+        retry_count += 1
+        wait_time = min(2**retry_count, 10)  # Exponential backoff, max 10 seconds
+        logger.warning(f"Retryable error detected (attempt {retry_count}/{max_retries + 1}): {api_error}. Retrying in {wait_time} seconds...")
+
+        send_job_update(
+          org_id=UUID(org_id),
+          job_id=UUID(job_id),
+          status="processing",
+          message=f"API error detected, retrying in {wait_time}s (attempt {retry_count + 1}/{max_retries + 1})",
+          progress=15.0,
+          kb_id=UUID(kb_id),
+          file_id=UUID(doc_id),
+          url_details={
+            "operation": "crawl",
+            "crawler_type": crawler_used,
+            "attempt": retry_count + 1,
+            "error": str(api_error)[:100],
+            "progress_stage": "retrying",
+            "folder_id": str(folder_id),
+          },
+        )
+
+        # Wait before retry
+        import asyncio
+
+        await asyncio.sleep(wait_time)
+        continue
+      if is_retryable_error and retry_count >= max_retries:
+        # Max retries exceeded, try fallback crawler
+        logger.error(f"Max retries exceeded for {crawler_type}, attempting fallback to crawl4ai")
+        send_job_update(
+          org_id=UUID(org_id),
+          job_id=UUID(job_id),
+          status="processing",
+          message=f"Firecrawl failed after {max_retries + 1} attempts, trying crawl4ai fallback",
+          progress=15.0,
+          kb_id=UUID(kb_id),
+          file_id=UUID(doc_id),
+          url_details={
+            "operation": "crawl",
+            "crawler_type": "api_fallback",
+            "original_error": str(api_error)[:100],
+            "progress_stage": "fallback",
+            "folder_id": str(folder_id),
+          },
+        )
+
+        try:
+          from libs.crawl4ai.v2 import crawl4ai
+
+          results = await crawl4ai.crawl(url=url, params=settings)
+          crawler_used = "base"
+          logger.info("Successfully fell back to crawl4ai after Firecrawl API failures")
+          break  # Success with fallback
+        except Exception as fallback_error:
+          logger.error(f"Fallback crawler also failed: {fallback_error}")
+          error_msg = (
+            f"Both Firecrawl API (after {max_retries + 1} attempts) and fallback crawl4ai failed. Firecrawl: {api_error}, Fallback: {fallback_error}"
+          )
+          raise ValueError(error_msg)
+      else:
+        # Non-retryable error, raise immediately
+        raise api_error
+
+  if not results or not results.get("success"):
+    raise ValueError(f"Crawl operation failed: {results.get('error', 'Unknown error') if results else 'No results returned'}")
+
+  scraped_pages = results.get("data", [])
+  if not scraped_pages:
+    raise ValueError("No pages were crawled")
+
+  logger.info(f"Successfully crawled {len(scraped_pages)} pages using {crawler_used} crawler")
+
+  # Send detailed URLs discovered notification
+  discovered_urls = [page_data.get("metadata", {}).get("url", f"{url}/page_{idx}") for idx, page_data in enumerate(scraped_pages)]
+  total_urls = len(scraped_pages)
+
+  send_job_update(
+    org_id=UUID(org_id),
+    job_id=UUID(job_id),
+    status="processing",
+    message=f"Discovered {total_urls} URLs to process from crawl operation",
+    progress=25.0,  # URLs discovered at 25%
+    kb_id=UUID(kb_id),
+    file_id=UUID(doc_id),
+    url_details={
+      "operation": "crawl",
+      "discovered_urls": total_urls,
+      "processed_urls": 0,
+      "crawler_used": crawler_used,
+      "discovered_url_list": discovered_urls[:10],  # First 10 URLs for preview
+      "status": "discovered",
+      "progress_stage": "urls_discovered",
+      "folder_id": str(folder_id),
+    },
+    file_details=doc_details,
+  )
+
+  # Process each crawled page using the folder_id from API
+  with sync_session() as session:
+    doc = session.get(KBDocumentModel, UUID(doc_id))
+    if not doc:
+      raise ValueError(f"Document {doc_id} not found")
+    main_content = ""
+    child_documents: List[dict] = []
+    processed_urls = []
+
+    for idx, page_data in enumerate(scraped_pages):
+      page_url = page_data.get("metadata", {}).get("url", f"{url}/page_{idx}")
+      page_content = page_data.get("markdown", "")
+
+      if not page_content.strip():
+        logger.warning(f"Skipping empty content from {page_url}")
+        # Still track as processed even if empty
+        processed_urls.append({"url": page_url, "status": "skipped", "reason": "empty_content"})
+
+        # Send progress update for skipped URL
+        progress = 25.0 + ((len(processed_urls) / total_urls) * 60.0)
+        send_job_update(
+          org_id=UUID(org_id),
+          job_id=UUID(job_id),
+          status="processing",
+          message=f"Skipped URL {len(processed_urls)}/{total_urls}: {page_url} (empty content)",
+          progress=progress,
+          kb_id=UUID(kb_id),
+          file_id=UUID(doc_id),
+          url_details={
+            "operation": "crawl",
+            "discovered_urls": total_urls,
+            "processed_urls": len(processed_urls),
+            "current_url": page_url,
+            "status": "skipping_empty_url",
+            "progress_stage": "processing_urls",
+            "completion_percentage": round((len(processed_urls) / total_urls) * 100, 1),
+            "folder_id": str(folder_id),
+          },
+        )
+        continue
+
+      # Check if this is the main page
+      if page_url == url or page_url.rstrip("/") == url.rstrip("/"):
+        main_content = page_content
+        logger.info(f"Found main page content: {len(page_content)} characters")
+        processed_urls.append({"url": page_url, "status": "main_page", "content_size": len(page_content), "doc_id": doc_id})
+
+        # Send progress update for main page
+        progress = 25.0 + ((len(processed_urls) / total_urls) * 60.0)
+        send_job_update(
+          org_id=UUID(org_id),
+          job_id=UUID(job_id),
+          status="processing",
+          message=f"Processed main page {len(processed_urls)}/{total_urls}: {page_url}",
+          progress=progress,
+          kb_id=UUID(kb_id),
+          file_id=UUID(doc_id),
+          url_details={
+            "operation": "crawl",
+            "discovered_urls": total_urls,
+            "processed_urls": len(processed_urls),
+            "current_url": page_url,
+            "content_size": len(page_content),
+            "status": "processing_main_page",
+            "progress_stage": "processing_urls",
+            "completion_percentage": round((len(processed_urls) / total_urls) * 100, 1),
+            "folder_id": str(folder_id),
+          },
+        )
+      else:
+        # Create child document for this crawled page
+        child_doc = create_child_document_sync(
+          parent_doc=doc, page_url=page_url, content=page_content, folder_id=folder_id, session=session, index=len(child_documents)
+        )
+
+        if child_doc:
+          child_documents.append(child_doc)
+          processed_urls.append({"url": page_url, "status": "document_created", "content_size": len(page_content), "doc_id": str(child_doc.id)})
+          logger.info(f"Created child document {child_doc.id} for {page_url}")
+
+          # Send detailed progress update for each document created
+          # Dynamic progress: 25% (discovery) + 60% * (processed_urls / total_urls) = 25-85% range
+          progress = 25.0 + ((len(processed_urls) / total_urls) * 60.0)
+
+          # Get child document details for WebSocket
+          child_doc_details = get_file_details_for_websocket(child_doc)
+
+          send_job_update(
+            org_id=UUID(org_id),
+            job_id=UUID(job_id),
+            status="processing",
+            message=f"Created document {len(child_documents)}/{total_urls}: {child_doc.title} from {page_url}",
+            progress=progress,
+            kb_id=UUID(kb_id),
+            file_id=child_doc.id,
+            url_details={
+              "operation": "crawl",
+              "discovered_urls": total_urls,
+              "processed_urls": len(processed_urls),
+              "created_documents": len(child_documents),
+              "current_url": page_url,
+              "current_doc_id": str(child_doc.id),
+              "content_size": len(page_content),
+              "status": "creating_documents",
+              "progress_stage": "processing_urls",
+              "completion_percentage": round((len(processed_urls) / total_urls) * 100, 1),
+              "folder_id": str(folder_id),
+            },
+            file_details=child_doc_details,
+          )
+        else:
+          processed_urls.append({"url": page_url, "status": "failed", "reason": "document_creation_failed"})
+
+          # Send progress update for failed document creation
+          progress = 25.0 + ((len(processed_urls) / total_urls) * 60.0)
+    send_job_update(
+      org_id=UUID(org_id),
+      job_id=UUID(job_id),
+      status="processing",
+      message=f"Failed to create document {len(processed_urls)}/{total_urls}: {page_url}",
+      progress=progress,
+      kb_id=UUID(kb_id),
+      file_id=UUID(doc_id),
+      url_details={
+        "operation": "crawl",
+        "discovered_urls": total_urls,
+        "processed_urls": len(processed_urls),
+        "current_url": page_url,
+        "status": "document_creation_failed",
+        "progress_stage": "processing_urls",
+        "completion_percentage": round((len(processed_urls) / total_urls) * 100, 1),
+        "folder_id": str(folder_id),
+      },
+    )
+
+    # Collect all files (parent + children) for final summary
+    all_files = [doc_details]
+    for child_doc in child_documents:
+      child_doc_details = get_file_details_for_websocket(child_doc)
+      all_files.append(child_doc_details)
+
+    # Send completion notification with detailed URL processing summary (85-95% range)
+    send_job_update(
+      org_id=UUID(org_id),
+      job_id=UUID(job_id),
+      status="processing",
+      message=f"Crawl completed: Created {len(child_documents)} documents from {total_urls} discovered URLs",
+      progress=90.0,  # Completion at 90%
+      kb_id=UUID(kb_id),
+      file_id=UUID(doc_id),
+      url_details={
+        "operation": "crawl",
+        "discovered_urls": total_urls,
+        "processed_urls": len(processed_urls),
+        "created_documents": len(child_documents),
+        "main_content_size": len(main_content) if main_content else 0,
+        "completed_urls": processed_urls,
+        "crawler_used": crawler_used,
+        "status": "completed",
+        "progress_stage": "completed",
+        "completion_percentage": 100.0,
+        "folder_id": str(folder_id),
+        "created_files": all_files,
+      },
+      file_details=doc_details,
+    )
+
+    logger.info(f"Crawl completed: main content ({len(main_content)} chars), {len(child_documents)} child documents")
+
+    return {
+      "success": True,
+      "content": main_content or f"Crawled {len(scraped_pages)} pages from {url}",
+      "operation": "crawl",
+      "child_documents": len(child_documents),
+      "total_pages": len(scraped_pages),
+      "urls_processed": len(processed_urls),
+      "processed_urls": processed_urls,
+    }
+
+
+async def _process_url_map(
+  url: str,
+  settings: Dict[str, Any],
+  org_id: str,
+  job_id: str,
+  doc_id: str,
+  kb_id: str,
+) -> Dict[str, Any]:
+  """Process URL mapping with individual document creation for each discovered URL."""
+
+  # Get document details for WebSocket updates
+  with sync_session() as session:
+    from models import KBDocumentModel
+
+    doc = session.get(KBDocumentModel, UUID(doc_id))
+    doc_details = get_file_details_for_websocket(doc)
+
+  # Get the folder_id from document (set by API)
+  folder_id = None
+  with sync_session() as session:
+    from models import KBDocumentModel
+
+    doc = session.get(KBDocumentModel, UUID(doc_id))
+    folder_id = doc.folder_id if doc else None
+    logger.info(f"Using folder {folder_id} for map operation (set by API)")
+
+  # Send initial mapping progress update
+  send_job_update(
+    org_id=UUID(org_id),
+    job_id=UUID(job_id),
+    status="processing",
+    message=f"Starting URL mapping discovery from {url}",
+    progress=10.0,
+    kb_id=UUID(kb_id),
+    file_id=UUID(doc_id),
+    url_details={"operation": "map", "source_url": url, "status": "discovering", "folder_id": str(folder_id)},
+    file_details=doc_details,
+  )
+
+  from libs.firecrawl.v2 import firecrawl
+
+  # Discover URLs using mapping with retry logic
+  max_retries = 2
+  retry_count = 0
+  results = None
+
+  while retry_count <= max_retries:
+    try:
+      results = firecrawl.map_url(url=url, settings=settings)
+      break  # Success, exit retry loop
+    except Exception as api_error:
+      error_msg = str(api_error).lower()
+      is_retryable_error = any(code in error_msg for code in ["502", "503", "504", "timeout", "connection", "network"])
+
+      if is_retryable_error and retry_count < max_retries:
+        retry_count += 1
+        wait_time = min(2**retry_count, 10)  # Exponential backoff, max 10 seconds
+        logger.warning(f"Retryable map error (attempt {retry_count}/{max_retries + 1}): {api_error}. Retrying in {wait_time} seconds...")
+
+        send_job_update(
+          org_id=UUID(org_id),
+          job_id=UUID(job_id),
+          status="processing",
+          message=f"Map error detected, retrying in {wait_time}s (attempt {retry_count + 1}/{max_retries + 1})",
+          progress=10.0,
+          kb_id=UUID(kb_id),
+          file_id=UUID(doc_id),
+          url_details={
+            "operation": "map",
+            "source_url": url,
+            "attempt": retry_count + 1,
+            "error": str(api_error)[:100],
+            "progress_stage": "retrying",
+            "folder_id": str(folder_id),
+          },
+        )
+
+        # Wait before retry
+        import asyncio
+
+        await asyncio.sleep(wait_time)
+        continue
+      if is_retryable_error and retry_count >= max_retries:
+        # Max retries exceeded, return basic URL list as fallback
+        logger.error("Max retries exceeded for map operation, using basic fallback")
+        send_job_update(
+          org_id=UUID(org_id),
+          job_id=UUID(job_id),
+          status="processing",
+          message=f"Map operation failed after {max_retries + 1} attempts, using basic URL fallback",
+          progress=15.0,
+          kb_id=UUID(kb_id),
+          file_id=UUID(doc_id),
+          url_details={
+            "operation": "map",
+            "source_url": url,
+            "crawler_type": "basic_fallback",
+            "original_error": str(api_error)[:100],
+            "progress_stage": "fallback",
+            "folder_id": str(folder_id),
+          },
+        )
+
+        # Use basic URL as fallback (just process the source URL itself)
+        results = [{"url": url, "title": "Source URL"}]
+        logger.info("Using basic URL fallback for mapping after API failures")
+        break
+      else:
+        # Non-retryable error, raise immediately
+        raise api_error
+
+  if not results:
+    results = [{"url": url, "title": "Source URL"}]  # Fallback to at least process the source URL
+
+  discovered_urls = [r.get("url", "") for r in results if r.get("url")]
+
+  # Send URL discovery notification
+  total_urls = len(discovered_urls)
+  send_job_update(
+    org_id=UUID(org_id),
+    job_id=UUID(job_id),
+    status="processing",
+    message=f"Discovered {total_urls} URLs from mapping operation",
+    progress=20.0,  # Discovery completed at 20%
+    kb_id=UUID(kb_id),
+    file_id=UUID(doc_id),
+    url_details={
+      "operation": "map",
+      "discovered_urls": total_urls,
+      "processed_urls": 0,
+      "source_url": url,
+      "discovered_url_list": discovered_urls[:10],  # First 10 URLs for preview
+      "status": "discovered",
+      "progress_stage": "urls_discovered",
+      "folder_id": str(folder_id),
+    },
+    file_details=doc_details,
+  )
+
+  # Process each discovered URL by scraping its content and creating individual documents
+  # Using the folder_id from API (already set in document)
+  with sync_session() as session:
+    from models import KBDocumentModel
+
+    doc = session.get(KBDocumentModel, UUID(doc_id))
+    if not doc:
+      raise ValueError(f"Document {doc_id} not found")
+    main_content = ""
+    child_documents = []
+    processed_urls = []
+    combined_content_parts = []
+
+    for idx, url_result in enumerate(results):
+      mapped_url = url_result.get("url", "")
+      url_title = url_result.get("title", "")
+
+      if not mapped_url:
+        logger.warning(f"Skipping result {idx} - no URL found")
+        continue
+
+      try:
+        # Scrape content from each discovered URL with retry logic
+        logger.info(f"Scraping content from discovered URL: {mapped_url}")
+
+        # Use firecrawl to scrape the individual URL with retry logic
+        scraped_content = None
+        scrape_retries = 1  # Fewer retries for individual URLs in batch
+        scrape_retry_count = 0
+
+        while scrape_retry_count <= scrape_retries:
+          try:
+            scraped_content = await firecrawl.scrape_url(url=mapped_url, settings={})
+            break  # Success, exit retry loop
+          except Exception as scrape_error:
+            error_msg = str(scrape_error).lower()
+            is_retryable_error = any(code in error_msg for code in ["502", "503", "504", "timeout", "connection"])
+
+            if is_retryable_error and scrape_retry_count < scrape_retries:
+              scrape_retry_count += 1
+              wait_time = min(2**scrape_retry_count, 5)  # Shorter wait for batch processing
+              logger.warning(f"Retryable error scraping {mapped_url} (attempt {scrape_retry_count + 1}): {scrape_error}")
+
+              # Wait before retry
+              import asyncio
+
+              await asyncio.sleep(wait_time)
+              continue
+            if is_retryable_error:
+              # Try fallback crawler for this specific URL
+              logger.info(f"Trying fallback crawler for {mapped_url}")
+              try:
+                from libs.crawl4ai.v2 import crawl4ai
+
+                crawl_result = await crawl4ai.crawl(url=mapped_url, params={"limit": 1})
+                if crawl_result.get("success") and crawl_result.get("data"):
+                  first_page = crawl_result["data"][0]
+                  scraped_content = first_page.get("markdown", "") or first_page.get("content", "")
+                  logger.info(f"Successfully used fallback crawler for {mapped_url}")
+                else:
+                  scraped_content = ""
+              except Exception:
+                scraped_content = ""
+              break
+            else:
+              # Non-retryable error or max retries reached
+              logger.error(f"Failed to scrape {mapped_url}: {scrape_error}")
+              scraped_content = ""
+              break
+
+        if scraped_content is None:
+          scraped_content = ""
+
+        if not scraped_content or not scraped_content.strip():
+          logger.warning(f"No content scraped from {mapped_url}")
+          processed_urls.append({"url": mapped_url, "status": "empty", "reason": "no_content"})
+
+          # Send progress update for empty URL
+          progress = 20.0 + ((len(processed_urls) / total_urls) * 65.0) if total_urls > 0 else 20.0
+          send_job_update(
+            org_id=UUID(org_id),
+            job_id=UUID(job_id),
+            status="processing",
+            message=f"Skipped URL {len(processed_urls)}/{total_urls}: {mapped_url} (no content)",
+            progress=progress,
+            kb_id=UUID(kb_id),
+            file_id=UUID(doc_id),
+            url_details={
+              "operation": "map",
+              "discovered_urls": total_urls,
+              "processed_urls": len(processed_urls),
+              "current_url": mapped_url,
+              "status": "skipping_empty_url",
+              "progress_stage": "processing_urls",
+              "completion_percentage": round((len(processed_urls) / total_urls) * 100, 1) if total_urls > 0 else 0,
+              "folder_id": str(folder_id),
+            },
+          )
+          continue
+
+        # Check if this is the main/source URL
+        if mapped_url == url or mapped_url.rstrip("/") == url.rstrip("/"):
+          main_content = scraped_content
+          processed_urls.append({"url": mapped_url, "status": "main_page", "content_size": len(scraped_content), "doc_id": doc_id})
+          logger.info(f"Found main page content: {len(scraped_content)} characters")
+
+          # Send progress update for main page
+          progress = 20.0 + ((len(processed_urls) / total_urls) * 65.0) if total_urls > 0 else 20.0
+          send_job_update(
+            org_id=UUID(org_id),
+            job_id=UUID(job_id),
+            status="processing",
+            message=f"Processed main page {len(processed_urls)}/{total_urls}: {mapped_url}",
+            progress=progress,
+            kb_id=UUID(kb_id),
+            file_id=UUID(doc_id),
+            url_details={
+              "operation": "map",
+              "discovered_urls": total_urls,
+              "processed_urls": len(processed_urls),
+              "current_url": mapped_url,
+              "content_size": len(scraped_content),
+              "status": "processing_main_page",
+              "progress_stage": "processing_urls",
+              "completion_percentage": round((len(processed_urls) / total_urls) * 100, 1) if total_urls > 0 else 0,
+              "folder_id": str(folder_id),
+            },
+          )
+        else:
+          # Create child document for each mapped URL
+          child_doc = create_child_document_sync(
+            parent_doc=doc, page_url=mapped_url, content=scraped_content, folder_id=folder_id, session=session, index=len(child_documents)
+          )
+
+          if child_doc:
+            # Update child document title with URL title if available
+            if url_title:
+              child_doc.title = url_title[:100]  # Limit title length
+              session.add(child_doc)
+              session.commit()
+
+            child_documents.append(child_doc)
+            processed_urls.append({
+              "url": mapped_url,
+              "status": "document_created",
+              "content_size": len(scraped_content),
+              "doc_id": str(child_doc.id),
+              "title": url_title,
+            })
+            logger.info(f"Created child document {child_doc.id} for mapped URL: {mapped_url}")
+
+            # Send progress update for each document created
+            # Dynamic progress: 20% (discovery) + 65% * (processed_urls / total_urls) = 20-85% range
+            progress = 20.0 + ((len(processed_urls) / total_urls) * 65.0) if total_urls > 0 else 20.0
+
+            # Get child document details for WebSocket
+            child_doc_details = get_file_details_for_websocket(child_doc)
+
+            send_job_update(
+              org_id=UUID(org_id),
+              job_id=UUID(job_id),
+              status="processing",
+              message=f"Created document {len(child_documents)}/{total_urls}: {child_doc.title} from {mapped_url}",
+              progress=progress,
+              kb_id=UUID(kb_id),
+              file_id=child_doc.id,
+              url_details={
+                "operation": "map",
+                "discovered_urls": total_urls,
+                "processed_urls": len(processed_urls),
+                "created_documents": len(child_documents),
+                "current_url": mapped_url,
+                "current_doc_id": str(child_doc.id),
+                "content_size": len(scraped_content),
+                "status": "creating_documents",
+                "progress_stage": "processing_urls",
+                "completion_percentage": round((len(processed_urls) / total_urls) * 100, 1) if total_urls > 0 else 0,
+                "folder_id": str(folder_id),
+              },
+              file_details=child_doc_details,
+            )
+          else:
+            processed_urls.append({"url": mapped_url, "status": "failed", "reason": "document_creation_failed"})
+
+            # Send progress update for failed document creation
+            progress = 20.0 + ((len(processed_urls) / total_urls) * 65.0) if total_urls > 0 else 20.0
+            send_job_update(
+              org_id=UUID(org_id),
+              job_id=UUID(job_id),
+              status="processing",
+              message=f"Failed to create document {len(processed_urls)}/{total_urls}: {mapped_url}",
+              progress=progress,
+              kb_id=UUID(kb_id),
+              file_id=UUID(doc_id),
+              url_details={
+                "operation": "map",
+                "discovered_urls": total_urls,
+                "processed_urls": len(processed_urls),
+                "current_url": mapped_url,
+                "status": "document_creation_failed",
+                "progress_stage": "processing_urls",
+                "completion_percentage": round((len(processed_urls) / total_urls) * 100, 1) if total_urls > 0 else 0,
+                "folder_id": str(folder_id),
+              },
+            )
+
+        # Also add to combined content for the parent document
+        combined_content_parts.append(f"## {url_title or mapped_url}\n{scraped_content}")
+
+      except Exception as e:
+        logger.error(f"Failed to process mapped URL {mapped_url}: {str(e)}")
+        processed_urls.append({"url": mapped_url, "status": "failed", "reason": str(e)})
+
+        # Send progress update for exception during processing
+        progress = 20.0 + ((len(processed_urls) / total_urls) * 65.0) if total_urls > 0 else 20.0
+        send_job_update(
+          org_id=UUID(org_id),
+          job_id=UUID(job_id),
+          status="processing",
+          message=f"Error processing URL {len(processed_urls)}/{total_urls}: {mapped_url}",
+          progress=progress,
+          kb_id=UUID(kb_id),
+          file_id=UUID(doc_id),
+          url_details={
+            "operation": "map",
+            "discovered_urls": total_urls,
+            "processed_urls": len(processed_urls),
+            "current_url": mapped_url,
+            "status": "processing_error",
+            "error": str(e),
+            "progress_stage": "processing_urls",
+            "completion_percentage": round((len(processed_urls) / total_urls) * 100, 1) if total_urls > 0 else 0,
+            "folder_id": str(folder_id),
+          },
+        )
+
+  # Create combined content for the parent document if no main content was found
+  if not main_content and combined_content_parts:
+    main_content = "\n\n".join(combined_content_parts)
+
+  # Collect all files (parent + children) for final summary
+  all_files = [doc_details]
+  for child_doc in child_documents:
+    child_doc_details = get_file_details_for_websocket(child_doc)
+    all_files.append(child_doc_details)
+
+  # Send completion notification (85-95% range)
+  send_job_update(
+    org_id=UUID(org_id),
+    job_id=UUID(job_id),
+    status="processing",
+    message=f"Map operation completed: Created {len(child_documents)} documents from {total_urls} discovered URLs",
+    progress=90.0,  # Completion at 90%
+    kb_id=UUID(kb_id),
+    file_id=UUID(doc_id),
+    url_details={
+      "operation": "map",
+      "discovered_urls": total_urls,
+      "processed_urls": len(processed_urls),
+      "created_documents": len(child_documents),
+      "main_content_size": len(main_content) if main_content else 0,
+      "completed_urls": processed_urls,
+      "status": "completed",
+      "progress_stage": "completed",
+      "completion_percentage": 100.0,
+      "folder_id": str(folder_id),
+      "created_files": all_files,
+    },
+    file_details=doc_details,
+  )
+
+  logger.info(f"Successfully mapped and processed {total_urls} URLs, created {len(child_documents)} child documents")
+  return {
+    "success": True,
+    "content": main_content or f"Mapped {total_urls} URLs from {url}",
+    "operation": "map",
+    "urls_mapped": total_urls,
+    "child_documents": len(child_documents),
+    "processed_urls": processed_urls,
+  }
