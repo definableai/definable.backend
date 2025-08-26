@@ -54,29 +54,34 @@ def get_file_details_for_websocket(doc_model) -> Dict[str, Any]:
     # Determine file_type from source metadata or source type
     file_type = ""
     if doc_model.source_metadata:
-      # First try to get file_type from metadata
-      file_type = doc_model.source_metadata.get("file_type", "")
+      # For URL-based documents, always use "webpage"
+      if doc_model.source_metadata.get("operation") in ["scrape", "crawl", "map"] or doc_model.source_metadata.get("url"):
+        file_type = "webpage"
+      else:
+        # First try to get file_type from metadata for non-URL documents
+        file_type = doc_model.source_metadata.get("file_type", "")
 
-      # If not found, determine based on source type or operation
-      if not file_type:
-        if doc_model.source_metadata.get("operation") in ["scrape", "crawl", "map"]:
-          file_type = "webpage"
-        elif doc_model.source_metadata.get("url"):
-          file_type = "webpage"
-        elif doc_model.source_metadata.get("content_type"):
-          content_type = doc_model.source_metadata.get("content_type", "")
-          # Extract file type from content type (e.g., "application/pdf" -> "pdf")
-          if "/" in content_type:
-            file_type = content_type.split("/")[-1].lower()
-        elif doc_model.source_metadata.get("s3_key"):
-          # Extract from s3_key file extension
-          s3_key = doc_model.source_metadata.get("s3_key", "")
-          if "." in s3_key:
-            file_type = s3_key.split(".")[-1].lower()
+        # If not found, determine based on content type or s3_key
+        if not file_type:
+          if doc_model.source_metadata.get("content_type"):
+            content_type = doc_model.source_metadata.get("content_type", "")
+            # Extract file type from content type (e.g., "application/pdf" -> "pdf")
+            if "/" in content_type:
+              file_type = content_type.split("/")[-1].lower()
+          elif doc_model.source_metadata.get("s3_key"):
+            # Extract from s3_key file extension
+            s3_key = doc_model.source_metadata.get("s3_key", "")
+            if "." in s3_key:
+              file_type = s3_key.split(".")[-1].lower()
 
     # Use "markdown" as fallback if no file_type could be determined
     if not file_type:
       file_type = "markdown"
+
+    # Extract URL for URL-based documents
+    url = None
+    if doc_model.source_metadata and file_type == "webpage":
+      url = doc_model.source_metadata.get("url")
 
     return {
       "id": str(doc_model.id),
@@ -88,6 +93,7 @@ def get_file_details_for_websocket(doc_model) -> Dict[str, Any]:
       "created_at": doc_model.created_at.isoformat() if doc_model.created_at else None,
       "updated_at": doc_model.updated_at.isoformat() if doc_model.updated_at else None,
       "download_url": None,
+      "url": url,  # Include URL for webpage documents
     }
   except Exception as e:
     logger.error(f"Failed to extract file details for WebSocket: {str(e)}")
@@ -101,6 +107,7 @@ def get_file_details_for_websocket(doc_model) -> Dict[str, Any]:
       "created_at": None,
       "updated_at": None,
       "download_url": None,
+      "url": None,
     }
 
 
@@ -236,6 +243,7 @@ def create_child_document_sync(parent_doc, page_url: str, content: str, folder_i
       "size_characters": len(content),
       "size_words": len(content.split()),
       "size_lines": len(content.splitlines()),
+      "file_type": "webpage",  # Always set file_type as webpage for URL documents
     })
 
     # Create child document
@@ -603,6 +611,13 @@ def process_document_task(
       doc.content = content
       doc.extraction_status = DocumentStatus.COMPLETED
       doc.extraction_completed_at = datetime.now()
+
+      # Ensure URL documents have correct file_type in metadata
+      if source_type_name == "url":
+        if not doc.source_metadata:
+          doc.source_metadata = {}
+        doc.source_metadata["file_type"] = "webpage"
+
       session.commit()
 
       # Update job progress (send update for significant progress change)
@@ -1018,12 +1033,20 @@ def index_documents_task(
                 # Create Document objects with metadata
                 chunks = []
                 for chunk_idx, chunk_text in enumerate(text_chunks):
+                  # Determine source type from document metadata
+                  source_type = "file"  # Default
+                  if doc_model.source_metadata and (
+                    doc_model.source_metadata.get("operation") in ["scrape", "crawl", "map"] or doc_model.source_metadata.get("url")
+                  ):
+                    source_type = "url"
+
                   chunk_metadata = {
                     "doc_id": str(doc_model.id),
                     "kb_id": str(kb_id),
                     "chunk_id": chunk_idx,
                     "title": doc_model.title,
-                    "source_type": "file",
+                    "source_type": source_type,
+                    "file_type": "webpage" if source_type == "url" else doc_model.source_metadata.get("file_type", "file"),
                     **doc_model.source_metadata,
                   }
 
@@ -1048,13 +1071,21 @@ def index_documents_task(
                   chunk_list = []
                   count = 0
                   async for chunk_doc in loader.load():  # DoclingFileLoader returns AsyncIterator
+                    # Determine source type from document metadata
+                    source_type = "file"  # Default
+                    if doc_model.source_metadata and (
+                      doc_model.source_metadata.get("operation") in ["scrape", "crawl", "map"] or doc_model.source_metadata.get("url")
+                    ):
+                      source_type = "url"
+
                     # Create proper metadata for each chunk
                     chunk_metadata = {
                       "doc_id": str(doc_model.id),
                       "kb_id": str(kb_id),
                       "chunk_id": count,
                       "title": doc_model.title,
-                      "source_type": "file",
+                      "source_type": source_type,
+                      "file_type": "webpage" if source_type == "url" else doc_model.source_metadata.get("file_type", "file"),
                       **doc_model.source_metadata,
                     }
 
@@ -1779,13 +1810,15 @@ async def _process_url_scrape(
     doc = session.get(KBDocumentModel, UUID(doc_id))
     if doc:
       # Update metadata with scraping details
-      if doc.source_metadata:
-        doc.source_metadata.update({
-          "scraped_content_size": len(content),
-          "scraped_characters": len(content),
-          "scraped_words": len(content.split()) if content else 0,
-          "scraping_completed": True,
-        })
+      if not doc.source_metadata:
+        doc.source_metadata = {}
+      doc.source_metadata.update({
+        "scraped_content_size": len(content),
+        "scraped_characters": len(content),
+        "scraped_words": len(content.split()) if content else 0,
+        "scraping_completed": True,
+        "file_type": "webpage",  # Always set file_type as webpage for URL documents
+      })
       session.commit()
       logger.info(f"Updated document {doc_id} with scraped content metadata")
 
@@ -2082,6 +2115,15 @@ async def _process_url_crawl(
     doc = session.get(KBDocumentModel, UUID(doc_id))
     if not doc:
       raise ValueError(f"Document {doc_id} not found")
+
+    # Ensure parent document has correct file_type in metadata
+    if not doc.source_metadata:
+      doc.source_metadata = {}
+    doc.source_metadata["file_type"] = "webpage"
+    session.add(doc)
+    session.commit()
+    logger.info(f"Updated parent document {doc_id} with file_type: webpage")
+
     main_content = ""
     child_documents: List[dict] = []
     processed_urls = []
@@ -2404,6 +2446,15 @@ async def _process_url_map(
     doc = session.get(KBDocumentModel, UUID(doc_id))
     if not doc:
       raise ValueError(f"Document {doc_id} not found")
+
+    # Ensure parent document has correct file_type in metadata
+    if not doc.source_metadata:
+      doc.source_metadata = {}
+    doc.source_metadata["file_type"] = "webpage"
+    session.add(doc)
+    session.commit()
+    logger.info(f"Updated parent document {doc_id} with file_type: webpage")
+
     main_content = ""
     child_documents = []
     processed_urls = []
