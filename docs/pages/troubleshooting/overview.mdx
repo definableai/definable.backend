@@ -1,38 +1,30 @@
 ---
 title: 'Overview'
-description: 'Solutions for common issues when working with the Zyeta backend'
+description: 'Solutions for common issues when working with the Definable backend'
 ---
 
-This guide provides solutions for common issues you may encounter when setting up, developing, or deploying the Zyeta backend.
+This guide provides solutions for common issues you may encounter when setting up, developing, or deploying the Definable backend.
 
 ## Overview
 
-When troubleshooting issues with the Zyeta backend, it's helpful to categorize the problem:
+When troubleshooting issues with the Definable backend, it's helpful to categorize the problem:
 
 ```mermaid
-flowchart TD
-    A[Issue Encountered] --> B{Issue Category}
-    B -->|Development Environment| C[Setup Issues]
-    B -->|Runtime| D[Application Issues]
-    B -->|Data| E[Database Issues]
-    B -->|Deployment| F[Infrastructure Issues]
-    
-    C --> C1[Installation]
-    C --> C2[Configuration]
-    C --> C3[Dependencies]
-    
-    D --> D1[API Errors]
-    D --> D2[Authentication]
-    D --> D3[Integration]
-    D --> D4[Performance]
-    
-    E --> E1[Connection]
-    E --> E2[Migrations]
-    E --> E3[Query Issues]
-    
-    F --> F1[Docker]
-    F --> F2[CI/CD]
-    F --> F3[Deployment Environments]
+---
+config:
+  layout: elk
+---
+flowchart LR
+    A["Issue Encountered"] --> B{"Issue Category"}
+    B -- Development Environment --> C["Setup Issues"]
+    B -- Runtime --> D["Application Issues"]
+    B -- Data --> E["Database Issues"]
+    B -- Deployment --> F["Infrastructure Issues"]
+    C --> C1["Installation"] & C2["Configuration"] & C3["Dependencies"]
+    D --> D1["API Errors"] & D2["Authentication"] & D3["Integration"] & D4["Performance"]
+    E --> E1["Connection"] & E2["Migrations"] & E3["Query Issues"]
+    F --> F1["Docker"] & F2["CI/CD"] & F3["Deployment Environments"]
+
 ```
 
 ## Quick Solutions for Common Issues
@@ -65,7 +57,7 @@ When troubleshooting, follow this general process:
 
 ## Logging
 
-The Zyeta backend uses the `loguru` library for logging. To enable more detailed logs:
+The Definable backend uses the `loguru` library for logging. To enable more detailed logs:
 
 ```python
 # In your local development environment

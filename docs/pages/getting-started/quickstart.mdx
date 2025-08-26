@@ -1,9 +1,9 @@
 ---
 title: 'Quickstart Guide'
-description: 'Get up and running with Zyeta in minutes'
+description: 'Get up and running with Definable in minutes'
 ---
 
-This guide will help you set up and run Zyeta on your local machine for development and testing purposes.
+This guide will help you set up and run Definable on your local machine for development and testing purposes.
 
 ## Prerequisites
 
@@ -19,8 +19,8 @@ Before you begin, make sure you have the following installed:
 First, clone the repository from GitHub:
 
 ```bash
-git clone https://github.com/zyeta-io/zyeta.backend.git
-cd zyeta.backend
+git clone https://github.com/definable-io/definable.backend.git
+cd definable.backend
 ```
 
 ## Python Environment Setup
@@ -61,7 +61,7 @@ cp .env.local .env
 
 ```
 # Application
-APP_NAME=zyeta-backend
+APP_NAME=definable-backend
 ENVIRONMENT=dev
 
 # Security
@@ -88,7 +88,7 @@ Generate secure random strings for `JWT_SECRET` and `MASTER_API_KEY`. You can us
 The easiest way to set up PostgreSQL is using Docker:
 
 ```bash
-docker run --name zyeta-postgres -e POSTGRES_PASSWORD=mysecretpassword -p 5432:5432 -d postgres
+docker run --name definable-postgres -e POSTGRES_PASSWORD=mysecretpassword -p 5432:5432 -d postgres
 ```
 
 ### Option 2: Using Supabase
@@ -231,14 +231,14 @@ To verify your setup is working:
 
 ## What's Next?
 
-Now that you have Zyeta running, explore:
+Now that you have Definable running, explore:
 
 <CardGroup cols={2}>
   <Card title="Development Workflow" icon="code" href="/pages/getting-started/development-workflow">
     Learn our coding standards and contribution process
   </Card>
   <Card title="Architecture Overview" icon="diagram-project" href="/pages/architecture/overview">
-    Understand how Zyeta is structured
+    Understand how Definable is structured
   </Card>
   <Card title="Authentication" icon="lock" href="/pages/features/authentication">
     Learn about securing your API endpoints

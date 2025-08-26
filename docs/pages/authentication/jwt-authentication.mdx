@@ -1,15 +1,15 @@
 ---
 title: 'JWT Authentication'
-description: 'How JSON Web Tokens are implemented in Zyeta'
+description: 'How JSON Web Tokens are implemented in Definable'
 ---
 
-Zyeta uses JSON Web Tokens (JWT) as the primary authentication mechanism, providing a stateless, secure way to verify user identity across API requests.
+Definable uses JSON Web Tokens (JWT) as the primary authentication mechanism, providing a stateless, secure way to verify user identity across API requests.
 
 ## What are JWTs?
 
 JSON Web Tokens are an open standard (RFC 7519) for securely transmitting information between parties as a JSON object. This information can be verified and trusted because it is digitally signed.
 
-In Zyeta, JWTs are used to:
+In Definable, JWTs are used to:
 - Authenticate users after login
 - Maintain session state without server-side storage
 - Pass user identity information securely between services
@@ -53,7 +53,7 @@ HMACSHA256(
 )
 ```
 
-## Implementation in Zyeta
+## Implementation in Definable
 
 ### Token Generation
 
@@ -113,7 +113,7 @@ Client applications must include the JWT in the Authorization header:
 
 ```http
 GET /api/some-endpoint HTTP/1.1
-Host: api.zyeta.com
+Host: api.definable.ai
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjVmOGU3ZDZjLTkyYTQtNGMzYi1iM2UyLWYxYTdiOGQ5YzBlMSIsImV4cCI6MTYxOTI4MzQ5Mn0.8Kq1MseugX_dnLAT4ZPwTN7wxpY7zLBVyWiYw2ki8a0
 ```
 
@@ -139,7 +139,7 @@ async def protected_route(
 
 ## JWT Configuration
 
-Zyeta's JWT implementation can be configured through environment variables:
+Definable's JWT implementation can be configured through environment variables:
 
 ```env
 JWT_SECRET=your-secure-secret-key
@@ -151,7 +151,7 @@ JWT_EXPIRE_MINUTES=60  # Token validity period
 For WebSocket connections, JWTs are passed as query parameters:
 
 ```javascript
-const socket = new WebSocket('wss://api.zyeta.com/ws?token=your-jwt-token');
+const socket = new WebSocket('wss://api.definable.ai/ws?token=your-jwt-token');
 ```
 
 The server validates these tokens using the same mechanism:
@@ -170,7 +170,7 @@ async def __call__(self, websocket: WebSocket = None):
 
 ## Security Considerations
 
-Zyeta's JWT implementation follows these security best practices:
+Definable's JWT implementation follows these security best practices:
 
 - **Secret Key Protection**: The JWT secret is securely stored and never exposed
 - **Short Expiration Times**: Tokens expire quickly to limit the damage of token theft

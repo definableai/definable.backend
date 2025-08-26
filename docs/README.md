@@ -1,6 +1,6 @@
-# Zyeta Documentation
+# Definable Documentation
 
-This directory contains the official documentation for the Zyeta backend platform, powered by [Mintlify](https://mintlify.com).
+This directory contains the official documentation for the Definable backend platform, powered by [Mintlify](https://mintlify.com).
 
 ## Local Development
 
@@ -65,4 +65,4 @@ The documentation is automatically deployed when changes are pushed to the main 
 
 - [Mintlify Documentation](https://mintlify.com/docs)
 - [MDX Syntax](https://mdxjs.com/docs/what-is-mdx)
-- [Zyeta Development Guidelines](https://github.com/zyeta-io/guidelines) 
+- [Definable Development Guidelines](https://github.com/definable.ai-io/guidelines) 

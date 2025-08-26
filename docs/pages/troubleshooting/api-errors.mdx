@@ -1,9 +1,9 @@
 ---
 title: 'API Errors'
-description: 'Troubleshooting common API errors in the Zyeta backend'
+description: 'Troubleshooting common API errors in the Definable backend'
 ---
 
-This guide covers common API-related errors that may arise when working with the Zyeta backend.
+This guide covers common API-related errors that may arise when working with the Definable backend.
 
 ## HTTP Status Code Errors
 
@@ -229,9 +229,9 @@ This guide covers common API-related errors that may arise when working with the
      - Cache responses to reduce API calls
      - Implement request throttling on client side
      
-  4. **Understand Zyeta's rate limiting implementation:**
+  4. **Understand Definable's rate limiting implementation:**
      ```python
-     # Zyeta uses a sliding window rate limiter based on client IP
+     # Definable uses a sliding window rate limiter based on client IP
      # Default: 100 requests per 60-second window
      # When rate limit is reached, requests return:
      # Status code: 429
@@ -294,7 +294,7 @@ This guide covers common API-related errors that may arise when working with the
      
   5. **Error structure in development mode:**
      ```python
-     # Zyeta returns detailed errors in development mode
+     # Definable returns detailed errors in development mode
      if response.status_code == 500:
          error_data = response.json()
          if isinstance(error_data, dict) and 'error_type' in error_data:
@@ -387,12 +387,12 @@ This guide covers common API-related errors that may arise when working with the
      })
      ```
   
-  2. **Verify Zyeta's CORS configuration:**
-     - Zyeta's API allows all origins by default with "*"
+  2. **Verify Definable's CORS configuration:**
+     - Definable's API allows all origins by default with "*"
      - Credentials are allowed by default
      - All methods and headers are allowed
      ```javascript
-     // Zyeta's CORS is configured in app.py with:
+     // Definable's CORS is configured in app.py with:
      app.add_middleware(
        CORSMiddleware,
        allow_origins=["*"],  // Allows all origins
@@ -555,7 +555,7 @@ This guide covers common API-related errors that may arise when working with the
          payload = jwt.decode(token, options={"verify_signature": False})
          print(f"Token payload: {payload}")
          print(f"Expiration: {payload.get('exp')}")
-         # Zyeta JWT structure - should have 'id' claim
+         # Definable JWT structure - should have 'id' claim
          user_id = payload.get('id')
          print(f"User ID: {user_id}")
      except jwt.PyJWTError as e:
@@ -585,9 +585,9 @@ This guide covers common API-related errors that may arise when working with the
      - Add a buffer time when checking expiration
      - Consider using NTP to synchronize system clocks
      
-  5. **Understand Zyeta's JWT implementation:**
+  5. **Understand Definable's JWT implementation:**
      ```python
-     # Zyeta uses HS256 algorithm with a secret key
+     # Definable uses HS256 algorithm with a secret key
      # Token must be provided in the Authorization header as "Bearer {token}"
      # For WebSocket connections, token must be in query parameters as ?token={token}&org_id={org_id}
      # Common errors:

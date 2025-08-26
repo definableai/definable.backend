@@ -1,9 +1,9 @@
 ---
 title: 'Installation'
-description: 'How to set up the Zyeta backend development environment'
+description: 'How to set up the Definable backend development environment'
 ---
 
-This guide will walk you through the process of setting up the Zyeta backend development environment on your local machine.
+This guide will walk you through the process of setting up the Definable backend development environment on your local machine.
 
 ## Prerequisites
 
@@ -23,8 +23,8 @@ Before you begin, ensure you have the following installed:
 First, clone the repository from GitHub:
 
 ```bash
-git clone https://github.com/your-org/zyeta.backend.git
-cd zyeta.backend
+git clone https://github.com/your-org/definable.backend.git
+cd definable.backend
 ```
 
 ## Setting Up Python Environment
@@ -72,7 +72,7 @@ This will configure automatic linting and type checking before each commit.
 The easiest way to set up PostgreSQL is using Docker:
 
 ```bash
-docker run --name zyeta -e POSTGRES_PASSWORD=mysecretpassword -d postgres
+docker run --name definable -e POSTGRES_PASSWORD=mysecretpassword -d postgres
 ```
 
 ### Option 2: Using Supabase
