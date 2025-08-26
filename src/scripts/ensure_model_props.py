@@ -2,6 +2,8 @@
 """
 Ensures the 'props' column exists in the models table and populates it with data.
 Uses the script_run_tracker table to track execution.
+Enhanced with click commands for rerun and rollback functionality.
+Rollback deletes the specific model entries created by this script.
 """
 
 import asyncio
@@ -12,6 +14,7 @@ import sys
 import time
 from typing import Optional
 
+import click
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -364,7 +367,7 @@ def get_models_data():
   return props_data, llm_models
 
 
-async def main():
+async def run_script(force_rerun: bool = False):
   """Main function to execute the script."""
   script_name = "ensure_model_props"
   logger.info(f"Starting {script_name} script...")
@@ -372,8 +375,10 @@ async def main():
   async with async_session() as db:
     try:
       # Check if script has already been executed successfully
-      if await check_script_executed(db, script_name):
-        logger.info(f"Script '{script_name}' has already been executed successfully. Skipping.")
+      already_executed = await check_script_executed(db, script_name)
+
+      if not force_rerun and already_executed:
+        logger.info(f"Script '{script_name}' has already been executed successfully. Use --force to rerun.")
         return
 
       # Log script execution as pending
@@ -399,9 +404,62 @@ async def main():
       raise
 
 
-if __name__ == "__main__":
+async def rollback_script():
+  """Rollback the script execution by deleting the model entries created by this script."""
+  script_name = "ensure_model_props"
+  logger.info(f"Starting rollback for {script_name} script...")
+
+  async with async_session() as db:
+    try:
+      # Check if script was executed successfully
+      if not await check_script_executed(db, script_name):
+        logger.warning(f"Script '{script_name}' was not executed successfully. Nothing to rollback.")
+        return
+
+      # Delete the specific models created/updated by this script
+      _, llm_models = get_models_data()
+      deleted_count = 0
+
+      for name, provider, version, _ in llm_models:
+        result = await db.execute(
+          text("""
+                    DELETE FROM models
+                    WHERE name = :name AND provider = :provider AND version = :version
+                """),
+          {"name": name, "provider": provider, "version": version},
+        )
+        if result.rowcount > 0:
+          deleted_count += result.rowcount
+          logger.info(f"Deleted model {name} ({version}) from {provider}")
+
+      await db.commit()
+      logger.info(f"Deleted {deleted_count} model entries during rollback")
+
+      # Log rollback execution
+      await log_script_execution(db, script_name, "rolled_back")
+      logger.info(f"Script '{script_name}' rolled back successfully.")
+
+    except Exception as e:
+      error_message = str(e)
+      logger.error(f"Error during rollback: {error_message}")
+
+      # Log failed rollback (using 'failed' since 'rollback_failed' is not in enum)
+      await log_script_execution(db, script_name, "failed", f"Rollback failed: {error_message}")
+      raise
+
+
+@click.group()
+def cli():
+  """Ensure Model Properties script with rerun capabilities."""
+  pass
+
+
+@cli.command()
+@click.option("--force", is_flag=True, help="Force rerun even if script was already executed successfully")
+def run(force):
+  """Run the ensure model properties script."""
   try:
-    asyncio.run(main())
+    asyncio.run(run_script(force_rerun=force))
 
     # Give connections time to close properly
     if platform.system() == "Windows":
@@ -411,3 +469,88 @@ if __name__ == "__main__":
     logger.info("Script interrupted by user")
   except Exception as e:
     logger.error(f"Script failed: {e}")
+    sys.exit(1)
+
+
+@cli.command()
+def rollback():
+  """Rollback the ensure model properties script to previous state."""
+  try:
+    asyncio.run(rollback_script())
+
+    # Give connections time to close properly
+    if platform.system() == "Windows":
+      time.sleep(1)
+
+  except KeyboardInterrupt:
+    logger.info("Rollback interrupted by user")
+  except Exception as e:
+    logger.error(f"Rollback failed: {e}")
+    sys.exit(1)
+
+
+@cli.command()
+def status():
+  """Check the execution status of the script."""
+  script_name = "ensure_model_props"
+
+  async def check_status():
+    async with async_session() as db:
+      try:
+        result = await db.execute(
+          text("""
+                        SELECT status, error_message, updated_at
+                        FROM script_run_tracker
+                        WHERE script_name = :script_name
+                        ORDER BY updated_at DESC
+                        LIMIT 1
+                    """),
+          {"script_name": script_name},
+        )
+        row = result.fetchone()
+
+        if not row:
+          click.echo(f"Script '{script_name}' has never been executed.")
+          return
+
+        status, error_msg, updated_at = row
+        click.echo(f"Script: {script_name}")
+        click.echo(f"Status: {status}")
+        click.echo(f"Last Updated: {updated_at}")
+
+        if error_msg and status == "failed":
+          click.echo(f"Error: {error_msg}")
+
+      except Exception as e:
+        click.echo(f"Error checking status: {e}")
+
+  try:
+    asyncio.run(check_status())
+  except Exception as e:
+    click.echo(f"Failed to check status: {e}")
+    sys.exit(1)
+
+
+def main():
+  """Entry point for backward compatibility."""
+  asyncio.run(run_script())
+
+
+if __name__ == "__main__":
+  # Check if any arguments were provided
+  if len(sys.argv) == 1:
+    # No arguments, run the script directly for backward compatibility
+    try:
+      main()
+
+      # Give connections time to close properly
+      if platform.system() == "Windows":
+        time.sleep(1)
+
+    except KeyboardInterrupt:
+      logger.info("Script interrupted by user")
+    except Exception as e:
+      logger.error(f"Script failed: {e}")
+  else:
+    # Arguments provided, use click CLI
+    cli()

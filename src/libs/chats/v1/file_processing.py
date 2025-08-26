@@ -90,6 +90,7 @@ class FileProcessor:
   async def _extract_csv_content(self, file_path: str) -> str:
     """Extract content from CSV using Agno CSVReader."""
     try:
+      from pathlib import Path
       reader = CSVReader()
       documents = reader.read(Path(file_path))
 
@@ -111,6 +112,7 @@ class FileProcessor:
   async def _extract_docx_content(self, file_path: str) -> str:
     """Extract content from DOCX using Agno DocxReader."""
     try:
+      from pathlib import Path
       reader = DocxReader()
       documents = reader.read(Path(file_path))
 
