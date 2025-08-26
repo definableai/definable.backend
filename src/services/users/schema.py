@@ -40,6 +40,7 @@ class UserListResponse(BaseModel):
   class Config:
     from_attributes = True
 
+
 class InviteSignup(BaseModel):
   """Invite signup schema."""
 
@@ -50,6 +51,7 @@ class InviteSignup(BaseModel):
 
   class Config:
     from_attributes = True
+
 
 class StytchUser(BaseModel):
   """Stytch user schema."""

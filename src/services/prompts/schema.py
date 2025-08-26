@@ -69,10 +69,12 @@ class PromptUpdate(BaseModel):
   is_featured: Optional[bool] = None
   metadata: Optional[Dict] = None
 
+
 class SortBy(str, Enum):
-    RATING = "rating"
-    RECENT = "created_at"
-    ALPHABETICAL = "title"
+  RATING = "rating"
+  RECENT = "created_at"
+  ALPHABETICAL = "title"
+
 
 class PromptResponse(PromptBase):
   """Prompt response schema."""

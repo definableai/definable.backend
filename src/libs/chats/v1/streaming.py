@@ -1,15 +1,17 @@
 import asyncio
-from typing import AsyncGenerator, List, Optional, Sequence, Type, Union
+from typing import Any, AsyncGenerator, List, Optional, Sequence, Type, Union
 from uuid import UUID
 
 from agno.agent import Agent, RunResponse
 from agno.media import File, Image
+from agno.tools.dalle import DalleTools
 
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.models.deepseek import DeepSeek
 
 from agno.storage.postgres import PostgresStorage
+from agno.tools.reasoning import ReasoningTools
 
 from config.settings import settings
 
@@ -51,7 +53,8 @@ class LLMFactory:
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
     top_p: Optional[float] = None,
-) -> AsyncGenerator[RunResponse, None]:
+    thinking: bool = False,
+  ) -> AsyncGenerator[RunResponse, None]:
     """Stream chat responses using Agno agent.
 
     Args:
@@ -73,22 +76,99 @@ class LLMFactory:
         files.append(asset)
 
     model_class = self.get_model_class(provider)
+
+    # Anthropic requires max_tokens;
+    effective_max_tokens = max_tokens
+    if provider == "anthropic" and effective_max_tokens is None:
+      effective_max_tokens = 1024
+    tools: List[Any] = []
+    if thinking:
+      tools.append(ReasoningTools(add_instructions=True))
+
     # Create agent with storage for memory retention
+    agent = Agent(
+      model=model_class(
+        id=llm,
+        temperature=temperature,
+        max_tokens=effective_max_tokens,
+        top_p=top_p,
+      ),  # type: ignore
+      tools=tools or None,
+      storage=self.storage,
+      markdown=True,
+      stream=True,
+      stream_intermediate_steps=thinking,
+      add_history_to_messages=True,
+      session_id=str(chat_session_id),
+      num_history_responses=memory_size,
+      instructions=prompt,
+    )
+    async for token in await agent.arun(message, files=files or None, images=images or None):
+      yield token
+
+  async def image_chat(
+    self,
+    chat_session_id: str | UUID,
+    llm: str,
+    provider: str,
+    message: str,
+    prompt: Optional[str] = None,
+    assets: Sequence[Union[File, Image]] = [],
+    memory_size: int = 100,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    top_p: Optional[float] = None,
+  ) -> AsyncGenerator[RunResponse, None]:
+    """Stream image generation responses using Agno agent with DalleTools.
+
+    Args:
+        llm: The LLM model identifier
+        chat_session_id: Unique ID for the chat session
+        message: User's input message for image generation
+        prompt: Optional system prompt/instructions
+        assets: Optional files/images for context
+        memory_size: Number of previous messages to include
+        temperature: Model temperature parameter
+        max_tokens: Maximum tokens to generate
+        top_p: Top-p parameter for nucleus sampling
+
+    Yields:
+        Streaming response tokens including image generation results
+    """
+
+    images: List[Image] = []
+    files: List[File] = []
+
+    for asset in assets:
+      if isinstance(asset, Image):
+        images.append(asset)
+      elif isinstance(asset, File):
+        files.append(asset)
+
+    model_class = self.get_model_class(provider)
+
+    # Create agent with DalleTools for image generation
     agent = Agent(
       model=model_class(
         id=llm,
         temperature=temperature,
         max_tokens=max_tokens,
         top_p=top_p,
-      ), # type: ignore
+      ),  # type: ignore
+      tools=[DalleTools()],  # Enable image generation
       storage=self.storage,
       markdown=True,
       stream=True,
       add_history_to_messages=True,
       session_id=str(chat_session_id),
       num_history_responses=memory_size,
-      instructions=prompt,
+      instructions=prompt
+      or (
+        "You are an AI assistant that can generate images. When users ask for images, "
+        "use the image generation tool to create them based on their descriptions."
+      ),
     )
+
     async for token in await agent.arun(message, files=files or None, images=images or None):
       yield token
 

@@ -1,5 +1,5 @@
 {
-  "name": "Zyeta.io",
+  "name": "Definable.ai",
   "theme": "mint",
   "logo": {
     "light": "/logo/dark.svg",
@@ -8,9 +8,9 @@
   },
   "favicon": "/logo/favicon.svg",
   "colors": {
-    "primary": "#C084FC",
-    "light": "#DDB8FD",
-    "dark": "#9A4DFC"
+    "primary": "#8B5CF6",
+    "light": "#C4B5FD",
+    "dark": "#7C3AED"
   },
   "modeToggle": {
     "default": "dark"
@@ -19,49 +19,68 @@
   "topbarLinks": [
     {
       "name": "Documentation",
-      "url": "https://zyeta.io/docs"
+      "url": "https://docs.definable.ai"
     }
   ],
   "topbarCtaButton": {
     "name": "Dashboard",
-    "url": "https://app.zyeta.io"
+    "url": "https://app.definable.ai"
   },
   "tabs": [
     {
-      "name": "API Reference",
-      "url": "api-reference"
+      "name": "🎯 Core Concepts",
+      "url": "pages/concepts"
     },
     {
-      "name": "Guides",
-      "url": "development-guides"
+      "name": "📚 API Reference",
+      "url": "pages/api-reference"
     },
     {
-      "name": "Troubleshooting",
-      "url": "troubleshooting"
+      "name": "🛠️ Developer Guides",
+      "url": "pages/development-guides"
+    },
+    {
+      "name": "🔧 Troubleshooting",
+      "url": "pages/troubleshooting"
     }
   ],
   "anchors": [
     {
-      "name": "API Reference",
-      "icon": "rectangle-terminal",
-      "url": "api-reference"
+      "name": "🚀 Quick Start",
+      "icon": "rocket",
+      "url": "pages/getting-started/quickstart"
     },
     {
-      "name": "GitHub",
+      "name": "🤖 AI Agents",
+      "icon": "robot",
+      "url": "pages/concepts/agents"
+    },
+    {
+      "name": "📚 API Reference",
+      "icon": "rectangle-terminal",
+      "url": "pages/api-reference"
+    },
+    {
+      "name": "💬 Community",
       "icon": "github",
-      "url": "https://github.com/zyeta-io"
+      "url": "https://github.com/Neuron-Square/definable.backend"
+    },
+    {
+      "name": "📖 Examples",
+      "icon": "code",
+      "url": "pages/development-guides/coding-standards"
     }
   ],
   "navigation": {
     "groups": [
       {
-        "group": "Introduction",
+        "group": "🎯 Welcome",
         "pages": [
           "pages/introduction"
         ]
       },
       {
-        "group": "Getting Started",
+        "group": "🚀 Getting Started",
         "pages": [
           "pages/getting-started/quickstart",
           "pages/getting-started/installation",
@@ -70,7 +89,18 @@
         ]
       },
       {
-        "group": "Architecture",
+        "group": "💡 Core Concepts",
+        "pages": [
+          "pages/concepts/overview",
+          "pages/concepts/agents",
+          "pages/concepts/knowledge-base",
+          "pages/concepts/vector-database",
+          "pages/concepts/tools",
+          "pages/concepts/models"
+        ]
+      },
+      {
+        "group": "🏗️ Platform Architecture",
         "pages": [
           "pages/architecture/overview",
           "pages/architecture/directory-structure",
@@ -80,7 +110,7 @@
         ]
       },
       {
-        "group": "Authentication",
+        "group": "🔐 Security & Auth",
         "pages": [
           "pages/authentication/overview",
           "pages/authentication/jwt-authentication",
@@ -89,23 +119,44 @@
         ]
       },
       {
-        "group": "API Reference",
+        "group": "📡 API Reference",
         "pages": [
           "pages/api-reference/overview",
-          "pages/api-reference/auth-service",
-          "pages/api-reference/agents-service",
-          "pages/api-reference/conversation-service",
-          "pages/api-reference/invitations-service",
-          "pages/api-reference/kb-service",
-          "pages/api-reference/llm-service",
-          "pages/api-reference/public-upload-service",
-          "pages/api-reference/roles-service",
-          "pages/api-reference/tools-service",
-          "pages/api-reference/ws-service"
+          {
+            "group": "🤖 AI & Intelligence",
+            "pages": [
+              "pages/api-reference/agents-service",
+              "pages/api-reference/llm-service",
+              "pages/api-reference/tools-service",
+              "pages/api-reference/kb-service"
+            ]
+          },
+          {
+            "group": "💬 Communication",
+            "pages": [
+              "pages/api-reference/conversation-service",
+              "pages/api-reference/ws-service"
+            ]
+          },
+          {
+            "group": "👥 Organization",
+            "pages": [
+              "pages/api-reference/auth-service",
+              "pages/api-reference/org-service",
+              "pages/api-reference/roles-service",
+              "pages/api-reference/invitations-service"
+            ]
+          },
+          {
+            "group": "🔧 Utilities",
+            "pages": [
+              "pages/api-reference/public-upload-service"
+            ]
+          }
         ]
       },
       {
-        "group": "Development Guides",
+        "group": "🛠️ Development Guides",
         "pages": [
           "pages/development-guides/coding-standards",
           "pages/development-guides/adding-new-services",
@@ -115,7 +166,7 @@
         ]
       },
       {
-        "group": "Troubleshooting",
+        "group": "🚨 Troubleshooting",
         "pages": [
           "pages/troubleshooting/overview",
           "pages/troubleshooting/installation-issues",
@@ -127,12 +178,12 @@
     ]
   },
   "footerSocials": {
-    "github": "https://github.com/zyeta-io",
-    "linkedin": "https://www.linkedin.com/company/zyeta-io",
-    "twitter": "https://twitter.com/zyeta_io"
+    "github": "https://github.com/Neuron-Square/definable.backend",
+    "linkedin": "https://www.linkedin.com/company/definable-ai",
+    "twitter": "https://twitter.com/definable_ai"
   },
   "api": {
-    "baseUrl": "https://api.zyeta.io",
+    "baseUrl": "https://api-beta.definable.ai/",
     "auth": {
       "method": "bearer"
     },
@@ -141,14 +192,14 @@
     },
     "maintainOrder": true
   },
-  "openapi": "/zyeta.json",
+  "openapi": "/definable.json",
   "feedback": {
     "suggestEdit": true,
     "raiseIssue": true,
     "thumbsRating": true
   },
   "search": {
-    "prompt": "Search Zyeta documentation...",
+    "prompt": "Search Definable.ai documentation...",
     "placeholderText": "Search docs...",
     "indexingOptions": {
       "minScore": 0.3,
@@ -160,20 +211,20 @@
     { "source": "/api", "destination": "/pages/api-reference/overview" }
   ],
   "seo": {
-    "titleSuffix": " | Zyeta Documentation",
-    "defaultTitle": "Zyeta Backend Documentation",
-    "description": "Documentation for Zyeta Backend APIs and development workflows",
-    "canonicalUrl": "https://docs.zyeta.io"
+    "titleSuffix": " | Definable.ai Documentation",
+    "defaultTitle": "Definable.ai Backend Documentation",
+    "description": "Documentation for Definable.ai Backend APIs and development workflows",
+    "canonicalUrl": "https://docs.definable.ai"
   },
   "metadata": {
     "og:image": "/logo/og-image.png",
-    "og:title": "Zyeta Documentation",
-    "og:description": "Documentation for Zyeta Backend APIs and development workflows",
-    "twitter:site": "@zyeta_io",
+    "og:title": "Definable.ai Documentation",
+    "og:description": "Documentation for Definable.ai Backend APIs and development workflows",
+    "twitter:site": "@definable_ai",
     "twitter:card": "summary_large_image"
   },
   "codeSamples": {
-    "languages": ["curl", "python", "node"]
+    "languages": ["curl", "python", "typescript", "javascript", "go"]
   },
   "toc": {
     "title": "On This Page"

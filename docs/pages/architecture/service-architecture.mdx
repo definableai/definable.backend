@@ -1,9 +1,9 @@
 ---
 title: 'Service Architecture'
-description: 'Understanding the service-oriented architecture in Zyeta'
+description: 'Understanding the service-oriented architecture in Definable'
 ---
 
-Zyeta employs a service-oriented architecture built on FastAPI that emphasizes modularity, discoverability, and maintainability. This document explains the core components and patterns used in the service layer.
+Definable employs a service-oriented architecture built on FastAPI that emphasizes modularity, discoverability, and maintainability. This document explains the core components and patterns used in the service layer.
 
 ## Core Concepts
 
@@ -16,7 +16,7 @@ The service architecture is built around these key concepts:
 
 ## Service Structure
 
-Each service in Zyeta follows a consistent pattern:
+Each service in Definable follows a consistent pattern:
 
 ```python
 class AuthService:
@@ -80,7 +80,7 @@ The service discovery process:
 
 ## API Versioning
 
-Zyeta supports API versioning through its directory structure. The Manager class automatically handles versioning by including directory names in the API path:
+Definable supports API versioning through its directory structure. The Manager class automatically handles versioning by including directory names in the API path:
 
 ```
 services/
@@ -204,7 +204,7 @@ This capability is especially useful when:
 
 ## Core Services
 
-Zyeta is organized around domain-specific services:
+Definable is organized around domain-specific services:
 
 <AccordionGroup>
   <Accordion title="Auth Service">
@@ -336,7 +336,7 @@ flowchart TD
 
 ## Best Practices
 
-When developing services in Zyeta:
+When developing services in Definable:
 
 1. **Follow the Naming Convention**: Use `method_resource` format
 2. **Keep Methods Focused**: Each method should handle one specific operation
