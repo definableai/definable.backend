@@ -1,5 +1,5 @@
 import asyncio
-from typing import AsyncGenerator, List, Optional, Sequence, Type, Union
+from typing import Any, AsyncGenerator, List, Optional, Sequence, Type, Union
 from uuid import UUID
 
 from agno.agent import Agent, RunResponse
@@ -54,7 +54,7 @@ class LLMFactory:
     max_tokens: Optional[int] = None,
     top_p: Optional[float] = None,
     thinking: bool = False,
-) -> AsyncGenerator[RunResponse, None]:
+  ) -> AsyncGenerator[RunResponse, None]:
     """Stream chat responses using Agno agent.
 
     Args:
@@ -81,7 +81,7 @@ class LLMFactory:
     effective_max_tokens = max_tokens
     if provider == "anthropic" and effective_max_tokens is None:
       effective_max_tokens = 1024
-    tools = []
+    tools: List[Any] = []
     if thinking:
       tools.append(ReasoningTools(add_instructions=True))
 
@@ -92,7 +92,7 @@ class LLMFactory:
         temperature=temperature,
         max_tokens=effective_max_tokens,
         top_p=top_p,
-      ), # type: ignore
+      ),  # type: ignore
       tools=tools or None,
       storage=self.storage,
       markdown=True,
@@ -118,7 +118,7 @@ class LLMFactory:
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
     top_p: Optional[float] = None,
-    ) -> AsyncGenerator[RunResponse, None]:
+  ) -> AsyncGenerator[RunResponse, None]:
     """Stream image generation responses using Agno agent with DalleTools.
 
     Args:
@@ -154,7 +154,7 @@ class LLMFactory:
         temperature=temperature,
         max_tokens=max_tokens,
         top_p=top_p,
-      ), # type: ignore
+      ),  # type: ignore
       tools=[DalleTools()],  # Enable image generation
       storage=self.storage,
       markdown=True,
@@ -162,7 +162,8 @@ class LLMFactory:
       add_history_to_messages=True,
       session_id=str(chat_session_id),
       num_history_responses=memory_size,
-      instructions=prompt or (
+      instructions=prompt
+      or (
         "You are an AI assistant that can generate images. When users ask for images, "
         "use the image generation tool to create them based on their descriptions."
       ),
