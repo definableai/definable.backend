@@ -515,7 +515,7 @@ class PromptService:
     else:
       base_query = base_query.order_by(PromptModel.created_at.desc())
 
-# Apply pagination
+    # Apply pagination
     query = base_query.offset(offset * limit).limit(limit + 1)
     result = await session.execute(query)
 

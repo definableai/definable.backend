@@ -5,13 +5,12 @@ from agno.models.deepseek import DeepSeek
 
 from config.settings import settings
 
+
 def map_model_to_deepseek(model_name: str) -> str:
-    """Maps the generic model names to DeepSeek model IDs."""
-    model_mapping = {
-        "chat": "deepseek-chat",
-        "reason": "deepseek-reason"
-    }
-    return model_mapping.get(model_name, "deepseek-chat")
+  """Maps the generic model names to DeepSeek model IDs."""
+  model_mapping = {"chat": "deepseek-chat", "reason": "deepseek-reason"}
+  return model_mapping.get(model_name, "deepseek-chat")
+
 
 async def generate_prompts_stream(text: str, prompt_type: str = "task", num_prompts: int = 1, model: str = "chat") -> AsyncGenerator[str, None]:
   """Generate prompts using DeepSeek V3 model with streaming response"""
@@ -25,13 +24,13 @@ async def generate_prompts_stream(text: str, prompt_type: str = "task", num_prom
       "You are an AI system design expert. Generate detailed task instructions for AI systems based on the user's input."
       "Now you have to remember that first you have to read the prompt thoroughly and learn whether the prompt is a task"
       "or just a simple message. You have to use your brain to understand the user's intent and then you have to generate the prompt accordingly.",  # noqa: E501
-      "If the prompt does not appears to be a task then DO NOT GENERATE ANY PROMPT, JUST RETURN THE TEXT AS IT IS WITH A LITTLE BIT OF ENHANCEMENT OF THE TEXT WITH SOME EXAMPLES IF POSSIBLE."  # noqa: E501
-    )
+      "If the prompt does not appears to be a task then DO NOT GENERATE ANY PROMPT, JUST RETURN THE TEXT AS IT IS WITH A LITTLE BIT OF ENHANCEMENT OF THE TEXT WITH SOME EXAMPLES IF POSSIBLE.",  # noqa: E501
+    ),
   }
 
   extension_prompt = (  # noqa: F841
-      "Always remember that the prompts you are generating will be used by an AI system to generate a response. "
-      "So, you have to generate the prompts in a way that is easy for an AI system to understand."
+    "Always remember that the prompts you are generating will be used by an AI system to generate a response. "
+    "So, you have to generate the prompts in a way that is easy for an AI system to understand."
   )
 
   # Get the appropriate system prompt

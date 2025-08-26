@@ -51,7 +51,7 @@ class LLMFactory:
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
     top_p: Optional[float] = None,
-) -> AsyncGenerator[RunResponse, None]:
+  ) -> AsyncGenerator[RunResponse, None]:
     """Stream chat responses using Agno agent.
 
     Args:
@@ -80,7 +80,7 @@ class LLMFactory:
         temperature=temperature,
         max_tokens=max_tokens,
         top_p=top_p,
-      ), # type: ignore
+      ),  # type: ignore
       storage=self.storage,
       markdown=True,
       stream=True,
