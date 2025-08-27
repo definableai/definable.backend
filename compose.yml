@@ -29,7 +29,7 @@ services:
       redis:
         condition: service_healthy
     networks:
-      # - nginx_proxy_manager_default
+      - nginx_proxy_manager_default
       - default
 
   # Celery worker service
@@ -54,8 +54,8 @@ volumes:
     driver: local
 
 networks:
-  # nginx_proxy_manager_default:
-  #   external: true
+  nginx_proxy_manager_default:
+    external: true
   default:
     driver: bridge
     enable_ipv6: true
