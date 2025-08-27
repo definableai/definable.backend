@@ -12,6 +12,7 @@ from models.auth_model import UserModel
 from models.billing_models import BillingPlanModel, ChargeModel, TransactionModel, TransactionStatus, TransactionType, WalletModel
 from models.chat_model import ChatModel, ChatUploadModel, MessageModel
 from models.invitations_model import InvitationModel, InvitationStatus
+from models.job_model import JobModel, JobStatus
 from models.kb_model import DocumentStatus, KBDocumentModel, KBFolder, KnowledgeBaseModel, SourceTypeModel
 from models.llm_model import LLMModel
 from models.org_model import OrganizationMemberModel, OrganizationModel
@@ -34,6 +35,8 @@ __all__ = [
   "DocumentStatus",
   "InvitationModel",
   "InvitationStatus",
+  "JobModel",
+  "JobStatus",
   "KBDocumentModel",
   "KBFolder",
   "KnowledgeBaseModel",

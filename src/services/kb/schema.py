@@ -39,6 +39,13 @@ class AllowedFileExtension(str, Enum):
   USPTO = "uspto"
 
 
+class CrawlerType(str, Enum):
+  """Crawler types with abstracted naming."""
+
+  BASE = "base"  # Maps to crawl4ai
+  PREMIUM = "premium"  # Maps to firecrawl
+
+
 def validate_file_extension(filename: str) -> str:
   """Validate file extension."""
   # Get the file extension (lowercase)
@@ -179,6 +186,7 @@ class URLDocumentData(DocumentBase):
   operation: Literal["scrape", "crawl", "map"] = Field(..., description="Operation to perform")
   folder_id: Optional[str] = Field(None, description="Folder ID")
   settings: Optional[ScrapeOptions | CrawlerOptions | MapOptions] = Field(None, description="Settings for the operation")
+  crawler: CrawlerType = Field(default=CrawlerType.PREMIUM, description="Crawler service to use (base=crawl4ai, premium=firecrawl)")
 
   @model_validator(mode="after")
   def validate_operation_settings(self) -> "URLDocumentData":
@@ -212,7 +220,12 @@ class URLDocumentData(DocumentBase):
     """Generate metadata for URL document."""
     # settings is guaranteed to be set after validation
     assert self.settings is not None, "Settings should be set after validation"
-    return {"url": self.url, "operation": self.operation, "settings": self.settings.model_dump()}
+    return {
+      "url": self.url,
+      "operation": self.operation,
+      "settings": self.settings.model_dump(),
+      "crawler": self.crawler.value,  # Use .value to get the string representation
+    }
 
 
 class KBDocumentUpdate(BaseModel):
@@ -234,11 +247,10 @@ class KBDocumentResponse(BaseModel):
   folder_id: Optional[UUID]
   source_metadata: Dict = Field(..., description="Source-specific metadata")
   content: Optional[str]
-  extraction_status: DocumentStatus
-  indexing_status: DocumentStatus
   error_message: Optional[str]
   extraction_completed_at: Optional[datetime]
   indexing_completed_at: Optional[datetime]
+  status: str = Field(..., description="Overall document processing status: pending, uploading, extracting, indexing, completed, failed")
 
   class Config:
     from_attributes = True

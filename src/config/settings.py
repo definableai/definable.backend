@@ -11,6 +11,9 @@ class Settings(BaseSettings):
 
   agent_base_url: str
   app_name: str
+  app_base_url: str
+  job_update_url: str
+  internal_token: str
   jwt_secret: str
   master_api_key: str
   openai_api_key: str
