@@ -1,4 +1,21 @@
 services:
+  # Redis service for Celery broker and result backend
+  redis:
+    image: redis:7-alpine
+    container_name: zyeta.redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Main backend application
   zyeta.backend:
     container_name: zyeta.backend
     restart: unless-stopped
@@ -8,13 +25,37 @@ services:
     env_file: .env
     expose:
       - "3000"
+    depends_on:
+      redis:
+        condition: service_healthy
     networks:
-      - nginx_proxy_manager_default
+      # - nginx_proxy_manager_default
       - default
 
+  # Celery worker service
+  zyeta.celery-worker:
+    container_name: zyeta.celery-worker
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    env_file: .env
+    command: ["python", "run_celery_worker.py", "--concurrency", "4", "--loglevel", "info", "--pool", "prefork"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - default
+    volumes:
+      - ./logs:/app/logs  # Mount logs directory for worker logs
+
+volumes:
+  redis_data:
+    driver: local
+
 networks:
-  nginx_proxy_manager_default:
-    external: true
+  # nginx_proxy_manager_default:
+  #   external: true
   default:
     driver: bridge
     enable_ipv6: true
