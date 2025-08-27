@@ -311,7 +311,7 @@ def update_job_progress(
         # Determine status string based on job status and metadata
         status_str = "pending"
         if job.status == JobStatus.PROCESSING:
-          task_type = metadata.get("task_type", "")
+          task_type = metadata.get("task_type", "") if metadata else ""
           if "upload" in task_type or "file" in task_type:
             status_str = "uploading"
           elif "extract" in task_type or "processing" in task_type or "document_processing" in task_type:
@@ -322,7 +322,7 @@ def update_job_progress(
             status_str = "processing"  # Default for processing
         elif job.status == JobStatus.COMPLETED:
           # Differentiate between intermediate completions and final completion
-          task_type = metadata.get("task_type", "")
+          task_type = metadata.get("task_type", "") if metadata else ""
           if "document_indexing" in task_type:
             status_str = "completed"  # Final job - indexing is the last step
           else:
@@ -2456,7 +2456,7 @@ async def _process_url_map(
     logger.info(f"Updated parent document {doc_id} with file_type: webpage")
 
     main_content = ""
-    child_documents = []
+    child_documents: list = []
     processed_urls = []
     combined_content_parts = []
 
