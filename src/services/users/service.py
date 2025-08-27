@@ -1,17 +1,18 @@
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
-from fastapi.responses import JSONResponse
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies.security import RBAC, JWTBearer
 from libs.stytch.v1 import stytch_base
-from models import OrganizationMemberModel, OrganizationModel, RoleModel, UserModel
+from models import InvitationModel, OrganizationMemberModel, OrganizationModel, RoleModel, UserModel
+from models.invitations_model import InvitationStatus
 from services.__base.acquire import Acquire
 
-from .schema import InviteSignup, OrganizationInfo, StytchUser, UserDetailResponse, UserListResponse
+from .schema import InviteResponse, InviteSignup, OrganizationInfo, StytchUser, UserDetailResponse, UserListResponse
 
 
 class UserService:
@@ -53,7 +54,7 @@ class UserService:
     user: dict = Depends(RBAC("users", "read")),
   ) -> UserListResponse:
     """
-    Get a paginated list of all users in an organization.
+    Get a hybrid list of active users and pending invitations for an organization.
 
     Args:
         org_id: Organization ID
@@ -63,56 +64,44 @@ class UserService:
         user: Current user with appropriate permissions
 
     Returns:
-        Paginated list of users with organization details
+        Paginated list combining active users and pending invitations
     """
     try:
       self.logger.info(f"Getting list of users for organization {org_id}")
       self.logger.debug(f"Pagination parameters: offset={offset}, limit={limit}")
 
-      # Count total users in the organization
-      count_query = (
-        select(func.count(UserModel.id))
-        .join(OrganizationMemberModel, UserModel.id == OrganizationMemberModel.user_id)
-        .where(OrganizationMemberModel.organization_id == org_id, OrganizationMemberModel.status == "active")
+      # Get all items (users + invitations) to properly handle sorting and pagination
+      all_items = []
+
+      # 1. Get active users
+      active_users = await self._get_active_users(org_id, session)
+      for user_detail in active_users:
+        all_items.append(user_detail)
+
+      # 2. Get pending invitations
+      pending_invitations = await self._get_pending_invitations(org_id, session)
+      for invitation_detail in pending_invitations:
+        all_items.append(invitation_detail)
+
+      # 3. Sort by status (active first) and then by creation date (newest first)
+      all_items.sort(
+        key=lambda x: (
+          0 if x.status == "active" else 1,  # Active users first
+          x.invited_at or (str(x.id) if x.id else ""),  # Then by date (newest first)
+        ),
+        reverse=True,
       )
-      total = await session.scalar(count_query) or 0
-      self.logger.debug(f"Total users in organization {org_id}: {total}")
 
-      # Get user IDs with pagination
-      user_query = (
-        select(UserModel.id)
-        .join(OrganizationMemberModel, UserModel.id == OrganizationMemberModel.user_id)
-        .where(OrganizationMemberModel.organization_id == org_id, OrganizationMemberModel.status == "active")
-        .order_by(UserModel.created_at.desc())
-        .offset(offset * limit)
-        .limit(limit + 1)  # Get one extra to check if there are more
-      )
-      self.logger.debug(f"Executing user query with offset={offset * limit}, limit={limit + 1}")
+      total = len(all_items)
+      self.logger.debug(f"Total items (users + invitations): {total}")
 
-      result = await session.execute(user_query)
-      user_ids = list(result.scalars().all())
-      self.logger.debug(f"Retrieved {len(user_ids)} user IDs from database")
+      # 4. Apply pagination
+      start_idx = offset * limit
+      end_idx = start_idx + limit
+      paginated_items = all_items[start_idx:end_idx]
 
-      # Check if there are more users
-      has_more = len(user_ids) > limit
-      self.logger.debug(f"Has more users: {has_more}")
-
-      user_ids = user_ids[:limit]  # Remove the extra item
-
-      # Get detailed user information for each user
-      self.logger.debug(f"Fetching detailed information for {len(user_ids)} users")
-      user_details = []
-      for user_id in user_ids:
-        try:
-          self.logger.debug(f"Fetching details for user: {user_id}")
-          user_detail = await self._get_user_details(user_id, session)
-          user_details.append(user_detail)
-        except Exception as e:
-          self.logger.warning(f"Failed to get details for user {user_id}: {str(e)}")
-          # Continue with other users instead of failing the entire request
-
-      self.logger.info(f"Successfully retrieved {len(user_details)} users for organization {org_id}")
-      return UserListResponse(users=user_details, total=total)
+      self.logger.info(f"Successfully retrieved {len(paginated_items)} items for organization {org_id}")
+      return UserListResponse(users=paginated_items, total=total)
 
     except Exception as e:
       self.logger.error(f"Error in get_list: {str(e)}", exc_info=True)
@@ -127,7 +116,7 @@ class UserService:
     org_id: UUID,
     token_payload: dict = Depends(RBAC("users", "write")),
     session: AsyncSession = Depends(get_db),
-  ) -> JSONResponse:
+  ) -> InviteResponse:
     """Post signup invite."""
     email = user_data.email
     try:
@@ -135,20 +124,64 @@ class UserService:
       self.logger.debug(f"Invite data: first_name={user_data.first_name}, last_name={user_data.last_name}")
       self.logger.debug("User does not exist, creating new user and sending invitation")
 
-      # User does not exist, create new user
-      user = await stytch_base.invite_user(email=email, first_name=user_data.first_name, last_name=user_data.last_name)
-      self.logger.info(f"Stytch user: {user}")
-      self.logger.info("Stytch invitation sent, creating invitation record")
+      # 1. Validate organization exists
+      org = await session.get(OrganizationModel, org_id)
+      if not org:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
 
-      self.logger.debug(f"Creating invitation record for org_id={org_id}, role_id={user_data.role}")
+      # 2. Get role details by role ID
+      role_query = select(RoleModel).where(RoleModel.id == user_data.role)
+      role_result = await session.execute(role_query)
+      role = role_result.unique().scalar_one_or_none()
+      if not role:
+        self.logger.error(f"Role '{user_data.role}' not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+
+      # 3. Create invitation record with proper role ID
+      invitation = InvitationModel(
+        invitee_email=email,
+        invited_by=token_payload["id"],
+        organization_id=org_id,
+        role_id=role.id,  # Use role.id instead of user_data.role
+        expiry_time=datetime.now(timezone.utc) + timedelta(days=30),
+      )
+      session.add(invitation)
+      await session.commit()
+      await session.refresh(invitation)
+      self.logger.info(f"Invitation record created: {invitation}")
+
+      # 4. Send Stytch invitation with organization context
+      user = await stytch_base.invite_user_for_organization(
+        email=email,
+        first_name=user_data.first_name,
+        last_name=user_data.last_name,
+        invitation_id=str(invitation.id),
+        organization_id=str(org_id),
+        role_id=str(role.id),  # Use role.id instead of user_data.role
+      )
+      self.logger.info(f"Stytch user with organization context: {user}")
+      self.logger.info("Stytch invitation sent with organization context")
+
+      self.logger.debug(f"Creating invitation record for org_id={org_id}, role_id={role.id}")
       self.logger.debug("Invitation record created successfully")
 
       self.logger.info(f"User invitation process completed successfully for {email}")
-      return JSONResponse(
-        content={
-          "message": "User invited successfully",
-        },
-        status_code=status.HTTP_200_OK,
+
+      return InviteResponse(
+        email=email,
+        first_name=user_data.first_name,
+        last_name=user_data.last_name,
+        full_name=f"{user_data.first_name} {user_data.last_name}",
+        invite_id=str(invitation.id),
+        organizations=[
+          {
+            "id": str(org_id),  # Convert UUID to string
+            "name": org.name,
+            "slug": org.slug,
+            "role_name": role.name,
+            "role_id": str(role.id),  # Convert UUID to string
+          }
+        ],
       )
 
     except Exception as e:
@@ -316,3 +349,94 @@ class UserService:
       user_id=str(user_id),
       org_id=str(org_id),
     )
+
+  async def _get_active_users(self, org_id: UUID, session: AsyncSession) -> list[UserDetailResponse]:
+    """Get all active users in the organization."""
+    try:
+      # Get user IDs for active members
+      user_query = (
+        select(UserModel.id)
+        .join(OrganizationMemberModel, UserModel.id == OrganizationMemberModel.user_id)
+        .where(OrganizationMemberModel.organization_id == org_id, OrganizationMemberModel.status == "active")
+        .order_by(UserModel.created_at.desc())
+      )
+
+      result = await session.execute(user_query)
+      user_ids = list(result.scalars().all())
+
+      # Get detailed user information for each user
+      user_details = []
+      for user_id in user_ids:
+        try:
+          user_detail = await self._get_user_details(user_id, session)
+          # Set status and invitation-related fields for active users
+          user_detail.status = "active"
+          user_detail.invite_id = None
+          user_detail.invited_at = None
+          user_details.append(user_detail)
+        except Exception as e:
+          self.logger.warning(f"Failed to get details for user {user_id}: {str(e)}")
+          continue
+
+      return user_details
+    except Exception as e:
+      self.logger.error(f"Error getting active users: {str(e)}")
+      return []
+
+  async def _get_pending_invitations(self, org_id: UUID, session: AsyncSession) -> list[UserDetailResponse]:
+    """Get all pending invitations for the organization."""
+    try:
+      # Query pending invitations with role information
+      invitation_query = (
+        select(InvitationModel, RoleModel, OrganizationModel)
+        .join(RoleModel, InvitationModel.role_id == RoleModel.id)
+        .join(OrganizationModel, InvitationModel.organization_id == OrganizationModel.id)
+        .where(InvitationModel.organization_id == org_id, InvitationModel.status.in_([InvitationStatus.PENDING]))
+        .order_by(InvitationModel.created_at.desc())
+      )
+
+      result = await session.execute(invitation_query)
+      invitations = result.unique().all()
+
+      invitation_details = []
+      for invitation, role, org in invitations:
+        try:
+          # Determine status based on expiry
+          status = "pending"
+          if invitation.expiry_time < datetime.now(timezone.utc):
+            status = "expired"
+
+          # Since we don't have first_name/last_name in invitation, use placeholder or extract from email
+          email_parts = invitation.invitee_email.split("@")[0].split(".")
+          first_name = email_parts[0].title() if email_parts else "Invited"
+          last_name = email_parts[1].title() if len(email_parts) > 1 else "User"
+
+          # Create UserDetailResponse for invitation
+          invitation_detail = UserDetailResponse(
+            id=None,  # No user ID for pending invitations
+            email=invitation.invitee_email,
+            first_name=first_name,
+            last_name=last_name,
+            full_name=f"{first_name} {last_name}",
+            status=status,
+            invite_id=str(invitation.id),
+            invited_at=invitation.created_at.isoformat() if invitation.created_at else None,
+            organizations=[
+              OrganizationInfo(
+                id=org.id,
+                name=org.name,
+                slug=org.slug,
+                role_name=role.name,
+                role_id=role.id,
+              )
+            ],
+          )
+          invitation_details.append(invitation_detail)
+        except Exception as e:
+          self.logger.warning(f"Failed to process invitation {invitation.id}: {str(e)}")
+          continue
+
+      return invitation_details
+    except Exception as e:
+      self.logger.error(f"Error getting pending invitations: {str(e)}")
+      return []
