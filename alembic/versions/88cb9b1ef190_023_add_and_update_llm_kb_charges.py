@@ -73,7 +73,7 @@ def upgrade() -> None:
           "unit": "credit", "measure": "token", "description": "Claude 3.5 Sonnet model usage charge",
         },
         {
-          "name": "claude-3-haiku", "amount": 1, "service": "llm", "action": "generate",
+          "name": "claude-3.5-haiku", "amount": 1, "service": "llm", "action": "generate",
           "unit": "credit", "measure": "token", "description": "Claude 3 Haiku model usage charge",
         },
         # ------------------------
