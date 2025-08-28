@@ -23,16 +23,25 @@ def upgrade() -> None:
     """ Find charges with NULL IDs and assign them a new UUID."""
     conn = op.get_bind()
 
-    # Define a helper for the charges table
+    # Define a helper for the charges table - must match the actual database schema
     charges_table = sa.Table(
         'charges',
         sa.MetaData(),
-        sa.Column('id', sa.dialects.postgresql.UUID(as_uuid=True)),
-        sa.Column('name', sa.String())
+        sa.Column('id', sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column('name', sa.String(), primary_key=True),
+        sa.Column('amount', sa.Integer(), nullable=False),
+        sa.Column('unit', sa.String(), nullable=False),
+        sa.Column('measure', sa.String(), nullable=False),
+        sa.Column('service', sa.String(), nullable=False),
+        sa.Column('action', sa.String(), nullable=False),
+        sa.Column('description', sa.String(), nullable=True),
+        sa.Column('is_active', sa.Boolean(), nullable=False),
+        sa.Column('created_at', sa.DateTime(), nullable=False),
+        sa.Column('updated_at', sa.DateTime(), nullable=False),
     )
 
     # Find all rows where the id is NULL
-    results = conn.execute(sa.select(charges_table).where(charges_table.c.id == None)).fetchall()
+    results = conn.execute(sa.select(charges_table).where(charges_table.c.id.is_(None))).fetchall()
 
     print(f"Found {len(results)} charges with NULL IDs. Backfilling now...")
 

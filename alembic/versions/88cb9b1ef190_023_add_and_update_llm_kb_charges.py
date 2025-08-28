@@ -161,9 +161,7 @@ def downgrade() -> None:
         "deepseek-chat", "deepseek-reasoner", "o4-mini", "o1-preview", "o1",
         "o1-small-text-indexing", "o1-small-text-retrieval", "pdf-extraction", "excel-ext"
     ]
-    
-    # FIX: Create a comma-separated string of single-quoted names for the SQL IN clause.
-    # This syntax is compatible with all Python 3 versions.
+
+    # Create a comma-separated string of single-quoted names for the SQL IN clause.
     names_for_sql = ", ".join([f"'{name}'" for name in charge_names])
-    
     op.execute(f"DELETE FROM charges WHERE name IN ({names_for_sql})")
