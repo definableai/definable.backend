@@ -1,21 +1,22 @@
-"""add_and_update_llm_kb_charges
+"""023_add_and_update_llm_kb_charges
 
-Revision ID: 0178f5553318
-Revises: 3643ed7fee67
-Create Date: 2025-08-28 13:33:23.268082
+Revision ID: 88cb9b1ef190
+Revises: 6a4713935734
+Create Date: 2025-08-28 14:23:24.858076
 
 """
 from typing import Sequence, Union
 from uuid import uuid4
 
 from alembic import op
+
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 
 
 # revision identifiers, used by Alembic.
-revision: str = '0178f5553318'
-down_revision: Union[str, None] = '3643ed7fee67'
+revision: str = '88cb9b1ef190'
+down_revision: Union[str, None] = '6a4713935734'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -151,15 +152,18 @@ def upgrade() -> None:
             insert_statement = sa.insert(charges_table).values(**charge_data)
             conn.execute(insert_statement)
 
+
 def downgrade() -> None:
-    """ Remove the charges if they were added by this migration."""
+    """This downgrade will remove the charges if they were added by this migration."""
     charge_names = [
         "gpt-4.1", "gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo",
         "claude-3.7-sonnet", "claude-3.5-sonnet", "claude-3-haiku",
         "deepseek-chat", "deepseek-reasoner", "o4-mini", "o1-preview", "o1",
         "o1-small-text-indexing", "o1-small-text-retrieval", "pdf-extraction", "excel-ext"
     ]
-
-    op.execute(
-        f"DELETE FROM charges WHERE name IN ({', '.join([f'\"{name}\"' for name in charge_names])})"
-    )
+    
+    # FIX: Create a comma-separated string of single-quoted names for the SQL IN clause.
+    # This syntax is compatible with all Python 3 versions.
+    names_for_sql = ", ".join([f"'{name}'" for name in charge_names])
+    
+    op.execute(f"DELETE FROM charges WHERE name IN ({names_for_sql})")
