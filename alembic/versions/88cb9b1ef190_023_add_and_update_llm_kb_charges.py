@@ -113,10 +113,10 @@ def upgrade() -> None:
           "name": "o1-small-text-retrieval", "amount": 3, "service": "kb", "action": "retrieval",
           "unit": "credit", "measure": "token", "description": "Text retrieval with OpenAI Ada embedding model",
         },
-        {
-          "name": "pdf-extraction", "amount": 5, "service": "kb", "action": "extract",
-          "unit": "credit", "measure": "page", "description": "PDF text extraction per page",
-        },
+        # {
+        #   "name": "pdf-extraction", "amount": 5, "service": "kb", "action": "extract",
+        #   "unit": "credit", "measure": "page", "description": "PDF text extraction per page",
+        # },
         {
           "name": "excel-ext", "amount": 4, "service": "kb", "action": "extraction",
           "unit": "credit", "measure": "sheet", "description": "Extract data from Excel spreadsheets",
