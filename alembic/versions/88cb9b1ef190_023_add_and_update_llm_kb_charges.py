@@ -40,6 +40,12 @@ def upgrade() -> None:
         sa.Column('is_active', sa.Boolean, default=True),
     )
 
+    # Remove deprecated charge
+    conn.execute(
+        sa.delete(charges_table).where(charges_table.c.name == "pdf-extraction")
+    )
+    print("Removed deprecated charge: 'pdf-extraction'")  # noqa: T201
+
     # --- List of charges ---
     desired_charges = [
         # ------------------------
@@ -113,10 +119,6 @@ def upgrade() -> None:
           "name": "o1-small-text-retrieval", "amount": 3, "service": "kb", "action": "retrieval",
           "unit": "credit", "measure": "token", "description": "Text retrieval with OpenAI Ada embedding model",
         },
-        # {
-        #   "name": "pdf-extraction", "amount": 5, "service": "kb", "action": "extract",
-        #   "unit": "credit", "measure": "page", "description": "PDF text extraction per page",
-        # },
         {
           "name": "excel-ext", "amount": 4, "service": "kb", "action": "extraction",
           "unit": "credit", "measure": "sheet", "description": "Extract data from Excel spreadsheets",
