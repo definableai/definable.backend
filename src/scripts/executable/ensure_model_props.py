@@ -8,14 +8,14 @@ import os
 import sys
 
 # Add the parent directory to the path so we can import from src
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+  sys.path.insert(0, parent_dir)
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from scripts.base_script import BaseScript
+from scripts.core.base_script import BaseScript
 from common.logger import log as logger
 
 

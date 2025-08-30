@@ -2,6 +2,37 @@
 
 This directory contains maintenance and setup scripts for the application. All scripts follow a standardized architecture using the `BaseScript` class to ensure consistency and maintainability.
 
+## Directory Structure
+
+```
+src/scripts/
+├── README.md                     # This documentation
+├── __init__.py                   # Python package marker
+├── core/                         # Core architecture and tools
+│   ├── __init__.py
+│   ├── base_script.py           # Base class for all scripts
+│   ├── create_script.py         # CLI tool for generating new scripts
+│   └── example_script.py        # Example/template script
+└── executable/                   # Executable maintenance scripts
+    ├── __init__.py
+    ├── create_razorpay_plans.py  # Razorpay payment plan synchronization
+    ├── create_stripe_plans.py    # Stripe payment plan synchronization
+    ├── delete_all_test_stytch_users.py  # Test user cleanup (Stytch)
+    └── ensure_model_props.py     # Model properties management
+```
+
+### Core vs Executable
+
+- **`core/`**: Contains the script architecture, base classes, and development tools
+  - `base_script.py`: The foundational BaseScript class that all scripts inherit from
+  - `create_script.py`: CLI tool for generating new scripts with proper boilerplate
+  - `example_script.py`: Reference implementation showing best practices
+
+- **`executable/`**: Contains actual maintenance and operational scripts
+  - Production scripts that perform specific tasks
+  - All inherit from `BaseScript` and follow the established patterns
+  - Can be run independently or as part of deployment processes
+
 ## Architecture Overview
 
 The script architecture provides:
@@ -13,7 +44,30 @@ The script architecture provides:
 - **Force rerun**: Ability to force re-execution of previously successful scripts
 - **Standardized path setup**: Each script includes a standard path setup block that ensures imports from the `src` directory work correctly when scripts are run directly
 
-## Creating a New Script
+## Quick Start
+
+### Option 1: Using the Script Generator (Recommended)
+
+The fastest way to create a new script is using the built-in CLI generator:
+
+```bash
+# Create a new script with boilerplate
+python src/scripts/core/create_script.py create my_script_name -d "Description of what the script does"
+
+# Validate a script name before creating
+python src/scripts/core/create_script.py validate my_script_name
+
+# List all existing scripts
+python src/scripts/core/create_script.py list
+
+# Get help and system info
+python src/scripts/core/create_script.py --help
+python src/scripts/core/create_script.py info
+```
+
+### Option 2: Manual Creation
+
+If you prefer to create scripts manually:
 
 1. **Create a new Python file** in the `src/scripts/` directory
 2. **Import the BaseScript class** from `scripts.base_script`
@@ -32,13 +86,13 @@ import os
 import sys
 
 # Add the parent directory to the path so we can import from src
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from scripts.base_script import BaseScript
+from scripts.core.base_script import BaseScript
 from common.logger import log as logger
 
 
@@ -186,3 +240,133 @@ Existing scripts in this directory demonstrate various patterns:
 - `create_razorpay_plans.py` - Similar payment integration pattern
 - `ensure_model_props.py` - Database schema and data management
 - `delete_all_test_stytch_users.py` - Environment-aware cleanup script
+
+## Script Generator CLI Tool
+
+The `create_script.py` tool provides a production-ready CLI for generating new scripts with proper boilerplate code.
+
+### Features
+
+- **Automatic Boilerplate Generation**: Creates scripts with all necessary imports, class structure, and CLI integration
+- **Name Validation**: Ensures script names follow Python conventions and don't conflict with existing scripts
+- **Smart Class Naming**: Converts snake_case script names to PascalCase class names
+- **Template Customization**: Generates TODO comments and example code for common patterns
+- **Cross-Platform**: Works on Windows, macOS, and Linux
+
+### Commands
+
+#### `create`
+Creates a new script with full boilerplate code.
+
+```bash
+python src/scripts/core/create_script.py create my_new_script -d "Clean up old user data"
+
+# With overwrite protection
+python src/scripts/core/create_script.py create existing_script -d "New description" --overwrite
+```
+
+**Generated script includes:**
+- Proper BaseScript inheritance
+- Path setup for imports
+- Execute, rollback, and verify method stubs
+- CLI integration with run/rollback/status commands
+- TODO comments with implementation guidance
+- Example code patterns
+
+#### `validate`
+Validates a script name without creating the file.
+
+```bash
+python src/scripts/core/create_script.py validate my_script_name
+```
+
+**Validation checks:**
+- Python identifier rules (lowercase, underscores, numbers)
+- Minimum length (3 characters)
+- Not a Python keyword
+- No file conflicts
+- Proper naming conventions
+
+#### `list`
+Shows all existing scripts with descriptions.
+
+```bash
+python src/scripts/core/create_script.py list
+```
+
+**Output includes:**
+- Script filenames
+- Extracted descriptions from docstrings
+- Total script count
+
+#### `info`
+Displays system information and usage examples.
+
+```bash
+python src/scripts/core/create_script.py info
+```
+
+### Generated Script Structure
+
+When you create a script named `cleanup_old_data`, the generator creates:
+
+```python
+#!/usr/bin/env python3
+"""
+Clean up old data from the system
+"""
+
+import os
+import sys
+
+# Path setup (automatically included)
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+from sqlalchemy.ext.asyncio import AsyncSession
+from scripts.base_script import BaseScript
+from common.logger import log as logger
+
+class CleanupOldDataScript(BaseScript):
+    """Clean up old data from the system"""
+    
+    def __init__(self):
+        super().__init__("cleanup_old_data")
+    
+    async def execute(self, db: AsyncSession) -> None:
+        """Main script execution logic."""
+        logger.info("Starting cleanup_old_data script execution...")
+        
+        # TODO: Implement your script logic here
+        # Examples provided in comments
+        
+        logger.info("cleanup_old_data script execution completed.")
+    
+    async def rollback(self, db: AsyncSession) -> None:
+        """Rollback logic (optional)."""
+        # TODO: Implement rollback logic
+        pass
+    
+    async def verify(self, db: AsyncSession) -> bool:
+        """Verification logic (optional)."""
+        # TODO: Implement verification logic
+        return True
+
+def main():
+    """Entry point for backward compatibility."""
+    script = CleanupOldDataScript()
+    script.main()
+
+if __name__ == "__main__":
+    script = CleanupOldDataScript()
+    script.run_cli()
+```
+
+### Best Practices for Script Generator
+
+1. **Use descriptive names**: `cleanup_old_users` instead of `cleanup`
+2. **Include purpose in description**: Be specific about what the script does
+3. **Follow snake_case**: The generator validates this automatically
+4. **Implement incrementally**: Start with execute(), add rollback() and verify() as needed
+5. **Test immediately**: Generated scripts work out of the box for testing

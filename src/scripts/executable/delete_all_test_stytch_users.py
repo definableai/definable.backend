@@ -9,15 +9,15 @@ import sys
 from typing import List, Optional
 
 # Add the parent directory to the path so we can import from src
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+  sys.path.insert(0, parent_dir)
 
 import stytch
 from sqlalchemy.ext.asyncio import AsyncSession
 from stytch.consumer.models.users import User
 
-from scripts.base_script import BaseScript
+from scripts.core.base_script import BaseScript
 from common.logger import log as logger
 from config.settings import settings
 
