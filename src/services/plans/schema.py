@@ -12,6 +12,7 @@ class CurrencyType(str, Enum):
   USD = "USD"
   INR = "INR"
 
+
 class BillingPlanBaseSchema(BaseModel):
   """Base schema for billing plan operations."""
 
