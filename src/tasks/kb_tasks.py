@@ -184,8 +184,7 @@ def send_job_update(
     }
 
     logger.info(f"Sending job update for {job_id}: status={status}, progress={progress}%")
-    logger.debug(f"Update payload: {payload}")
-
+    
     # Send HTTP request to job update endpoint using httpx
     with httpx.Client(timeout=timeout) as client:
       response = client.post(url=settings.job_update_url, headers=headers, json=payload)
@@ -385,7 +384,7 @@ def update_job_progress(
             file_id=file_id,
           )
         else:
-          logger.debug(f"Skipping job update for {job_id}: status={status_str}, progress={progress}% (no significant change)")
+          pass  # No significant change in job status
 
   except Exception as e:
     logger.error(
@@ -518,7 +517,7 @@ def process_document_task(
             content = loop.run_until_complete(extract_content())
             if not content:
               content = "No content could be extracted from this document"
-            logger.info(f"Content extracted successfully, length: {len(content)} characters")
+            logger.info("Content extracted successfully")
           finally:
             loop.close()
 
@@ -583,7 +582,7 @@ def process_document_task(
             content = result.get("content", "")
             if not content or not content.strip():
               content = f"No content could be extracted from URL: {url}"
-            logger.info(f"URL content extraction completed, length: {len(content)} characters")
+            logger.info("URL content extraction completed")
           finally:
             loop.close()
 
@@ -636,14 +635,34 @@ def process_document_task(
         send_update=True,
       )
 
-      # Handle charging if provided
+      # Finalize charge with actual content-based page count
       if charge_id and complete_charge:
         try:
           from utils.charge import Charge
 
-          charge = Charge.from_transaction_id(charge_id, session=session)
+          # Calculate page count from extracted content
+          actual_page_count = 1
+          
+          if source_type_name == "file":
+            content_chars = len(content) if content else 0
+            if content_chars > 0:
+              actual_page_count = max(1, int(content_chars / 2500))
+              logger.info(f"Charging for {actual_page_count} pages")
+          
+          # Complete the transaction with accurate page count
+          charge = Charge.from_transaction_id_with_session(charge_id, session)
           if charge:
-            charge.calculate_and_update_sync()
+            charge.calculate_and_update_with_session(
+              metadata={
+                "pages": actual_page_count,
+                "content_chars": len(content) if content else 0,
+                "processing_method": source_type_name
+              },
+              status ="completed",
+              job_id = job_id
+            )
+            logger.info(f"Processing charge completed for {actual_page_count} pages")
+            
         except Exception as e:
           logger.warning(f"Failed to complete charge {charge_id}: {e}")
 
@@ -823,6 +842,18 @@ def process_document_task(
             org_id=UUID(org_id),
             send_update=True,
           )
+          
+          # Release charge on processing failure
+          if job and job.context and job.context.get("charge_id"):
+            try:
+              from utils.charge import Charge
+              charge_id = job.context.get("charge_id")
+              charge = Charge.from_transaction_id_with_session(charge_id, session)
+              charge.delete_transaction_with_session(reason=f"Processing failed: {str(e)}", job_id=job_id)
+              logger.info(f"Released charge {charge_id}")
+            except Exception as charge_error:
+              logger.warning(f"Failed to release charge: {charge_error}")
+              
       except Exception:
         pass
 
@@ -1124,7 +1155,7 @@ def index_documents_task(
               metadata = doc_model.source_metadata or {}
               metadata["actual_chunks"] = actual_chunks
               doc_model.source_metadata = metadata
-              logger.debug(f"Document {doc_model.id} metadata updated with chunk information")
+
 
               session.add(doc_model)
               session.commit()
@@ -1379,6 +1410,10 @@ def upload_file_task(
             org_id=UUID(org_id),
             send_update=True,
           )
+          
+          # Upload failed - no charge needed since we only charge after successful processing
+          logger.info("Upload failed. No charge applied since charging happens during processing.")
+            
         return {"success": False, "error": f"S3 upload failed: {str(e)}"}
 
       # Update document with S3 info
@@ -1391,12 +1426,8 @@ def upload_file_task(
         doc.source_metadata = metadata
         session.commit()
 
-      # Complete charge (handled asynchronously in service layer)
-      try:
-        # Note: Charge completion is handled asynchronously in the service layer
-        logger.info(f"Upload completed, charge {charge_id} will be processed by background service")
-      except Exception as e:
-        logger.warning(f"Failed to log charge info {charge_id}: {e}")
+      # Charge finalization moved to processing phase for accuracy and performance
+      logger.info("Upload completed successfully. Charging deferred to processing phase.")
 
       # Update job status to completed
       if job:

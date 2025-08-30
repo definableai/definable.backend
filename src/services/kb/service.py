@@ -352,16 +352,40 @@ class KnowledgeBaseService:
       # Get file size without fully reading content to avoid blocking
       file_size = document_data.file.size or 0
       file_size_mb = file_size / (1024 * 1024)
-      charge_qty = max(1, int(file_size_mb))
+      
+      # Improved page estimation based on file type
+      file_type = document_data.file.content_type or ""
+      filename = document_data.file.filename.lower() if document_data.file.filename else ""
+      
+      self.logger.info(f"File size estimation - file_size: {file_size} bytes, file_type: {file_type}, filename: {filename}")
+      
+      if "pdf" in file_type.lower() or filename.endswith('.pdf'):
+        # For PDFs, use a more aggressive estimation
+        # Small PDFs: ~5-10KB per page, Large PDFs: ~100KB per page
+        # Use 8KB per page as baseline for small/compressed PDFs
+        if file_size < 100000:  # Less than 100KB - likely compressed
+          estimated_pages = max(1, int(file_size / 8000))  # 8KB per page
+        else:
+          estimated_pages = max(1, int(file_size / 50000))  # 50KB per page for larger PDFs
+      else:
+        # For other documents, use MB-based estimation
+        estimated_pages = max(1, int(file_size_mb))
+        
+      charge_qty = estimated_pages
       file_metadata["charge_qty"] = charge_qty
+      file_metadata["estimated_pages"] = estimated_pages
+      
+      self.logger.info(f"Estimated pages for charging: {estimated_pages} pages (file_size: {file_size} bytes)")
 
       # Update charge with initial file information
       await charge.calculate_and_update(
         metadata={
           "file_name": document_data.file.filename,
           "file_size_mb": file_size_mb,
+          "file_size_bytes": file_size,
           "file_type": document_data.file.content_type,
-          "pages": file_metadata.get("pages", 1),
+          "pages": estimated_pages,  # Use estimated pages instead of default 1
+          "estimated_pages": estimated_pages,
           "sheet_count": file_metadata.get("sheet_count", 1),
           "charge_qty": charge_qty,
         },
@@ -444,7 +468,7 @@ class KnowledgeBaseService:
             "doc_id": str(db_doc.id),
             "kb_id": str(kb_id),
             "charge_id": str(charge.transaction_id),
-            "complete_charge": False,
+            "complete_charge": True,  # Charge during processing for accuracy
           },
         )
         task_session.add(process_job)
