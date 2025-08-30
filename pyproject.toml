@@ -59,6 +59,5 @@ dependencies = [
 [dependency-groups]
 dev = [
     "mypy>=1.15.0",
-    "types-aiofiles>=24.1.0.20250809",
-    "types-requests>=2.32.0.20241016",
+    "types-aiofiles>=24.1.0.20250809"
 ]
