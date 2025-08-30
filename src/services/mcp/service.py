@@ -14,6 +14,7 @@ from models.mcp_model import MCPServerModel, MCPSessionModel
 from models.mcp_tool_model import MCPToolModel
 from services.__base.acquire import Acquire
 from services.mcp.schema import (
+  MCPConnectedAccountCreate,
   MCPConnectedAccountResponse,
   MCPInstanceCreate,
   MCPInstanceResponse,
@@ -39,7 +40,24 @@ class MCPService:
     self.acquire = acquire
     self.logger = acquire.logger
     self.client = Composio(api_key=settings.composio_api_key)
-    self.gmail_auth_config_id = settings.gmail_auth_config
+
+  def _get_auth_config(self, toolkit: str) -> str:
+    """Get auth config ID for a toolkit using environment variable naming convention.
+    Looks for environment variables like:
+    - GMAIL_AUTH_CONFIG for toolkit "gmail"
+    - GITHUB_AUTH_CONFIG for toolkit "github"
+    - TWITTER_AUTH_CONFIG for toolkit "twitter"
+    """
+    env_var_name = f"{toolkit.upper()}_AUTH_CONFIG"
+
+    auth_config = getattr(settings, env_var_name.lower(), None)
+
+    if not auth_config:
+      raise HTTPException(
+        status_code=HTTPStatus.BAD_REQUEST, detail=f"Auth config not found for toolkit '{toolkit}'. Please set {env_var_name} environment variable."
+      )
+
+    return auth_config
 
   async def post_create_server(
     self,
@@ -50,6 +68,7 @@ class MCPService:
     try:
       name = data.name
       toolkit = data.toolkit
+      auth_config_id = self._get_auth_config(toolkit)
 
       toolkit_slug = toolkit
       result = await session.execute(MCPToolModel.__table__.select().where(MCPToolModel.toolkit == toolkit_slug))
@@ -75,7 +94,7 @@ class MCPService:
         await session.commit()
 
       mcp = self.client.mcp.create(
-        auth_config_ids=[self.gmail_auth_config_id],
+        auth_config_ids=[auth_config_id],
         name=name,
         allowed_tools=allowed_tools,
       )
@@ -138,10 +157,12 @@ class MCPService:
 
   async def post_connect_account(
     self,
+    data: MCPConnectedAccountCreate,
     user: dict = Depends(RBAC("mcp", "write")),
     session: AsyncSession = Depends(get_db),
   ) -> MCPConnectedAccountResponse:
     try:
+      auth_config_id = self._get_auth_config(data.toolkit)
       # Get user email from database
       user_id = user.get("id")
       user_query = select(UserModel).where(UserModel.id == user_id)
@@ -157,7 +178,7 @@ class MCPService:
       response = requests.post(
         "https://backend.composio.dev/api/v3/connected_accounts",
         headers={"x-api-key": settings.composio_api_key},
-        json={"auth_config": {"id": self.gmail_auth_config_id}, "connection": {"user_id": user_email}},
+        json={"auth_config": {"id": auth_config_id}, "connection": {"user_id": user_email}},
       )
       response.raise_for_status()
       result = response.json()

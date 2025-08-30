@@ -32,6 +32,10 @@ class MCPInstanceResponse(BaseModel):
   updated_at: str
 
 
+class MCPConnectedAccountCreate(BaseModel):
+  toolkit: str
+
+
 class MCPConnectedAccountResponse(BaseModel):
   id: str
   status: str
