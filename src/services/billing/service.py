@@ -1,10 +1,10 @@
 # import asyncio
 import json
 from datetime import datetime
+from http import HTTPStatus
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import UUID, uuid4
 
-import razorpay
 import stripe
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import and_, func, select, text
@@ -15,14 +15,26 @@ from database import get_db
 from dependencies.security import RBAC
 
 # from dependencies.usage import Usage  # Import the Usage dependency at the top of the file
-from models import BillingPlanModel, TransactionModel, TransactionStatus, TransactionType, UserModel, WalletModel
+from libs.payments.razorpay.v1 import razorpay_engine
+from models import (
+  BillingPlanModel,
+  CustomerModel,
+  TransactionModel,
+  TransactionStatus,
+  TransactionType,
+  UserModel,
+  WalletModel,
+)
 from services.__base.acquire import Acquire
 
 # from utils.charge import Charge
 from .schema import (
   BillingPlanResponseSchema,
   CheckoutSessionCreateSchema,
+  CreateSubscriptionWithPlanIdRequestSchema,
+  CreateSubscriptionWithPlanIdResponseSchema,
   CreditCalculationResponseSchema,
+  RazorpaySubscriptionSchema,
   TransactionWithInvoiceSchema,
   WalletResponseSchema,
 )
@@ -42,6 +54,8 @@ class BillingService:
     "post=checkout",
     "post=checkout_cancel",
     "post=stripe_webhook",
+    "post=create_subscription",
+    "post=create_subscription_with_plan_id",
     "post=razorpay_webhook",
     "post=verify_razorpay_payment",
   ]
@@ -55,6 +69,7 @@ class BillingService:
     self.session: Optional[AsyncSession] = None
     self.request_id = str(uuid4())  # Add a unique ID per service instance
     self.logger = acquire.logger
+    self.razorpay_engine = razorpay_engine  # Initialize Razorpay engine
 
   async def get_wallet(
     self,
@@ -250,33 +265,38 @@ class BillingService:
 
     # Handle based on payment provider
     if transaction.payment_provider == "stripe":
-      if not transaction.stripe_invoice_id:
+      invoice_id = transaction.invoice_id
+      if not invoice_id:
         self.logger.warning(f"No Stripe invoice ID found for transaction {transaction_id}")
         raise HTTPException(status_code=404, detail="No invoice available for this transaction")
 
       # Get the invoice from Stripe
-      invoice = stripe.Invoice.retrieve(transaction.stripe_invoice_id)
+      invoice = stripe.Invoice.retrieve(invoice_id)
       self.logger.debug(f"Retrieved Stripe invoice: {invoice.id} for transaction {transaction_id}")
       invoice_url = invoice.hosted_invoice_url or ""
 
     elif transaction.payment_provider == "razorpay":
-      if not transaction.razorpay_invoice_id:
+      invoice_id = transaction.invoice_id
+      if not invoice_id:
         self.logger.warning(f"No Razorpay invoice ID found for transaction {transaction_id}")
-        raise HTTPException(status_code=404, detail="No invoice available for this transaction")
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="No invoice available for this transaction")
 
-      # Get the invoice from Razorpay
-      client = self.get_razorpay_client()
+      # Get the invoice from Razorpay using engine
       try:
-        # Fetch invoice by ID
-        invoice = client.invoice.fetch(transaction.razorpay_invoice_id)
+        invoice_response = self.razorpay_engine.fetch_invoice(invoice_id)
+        if not invoice_response.success:
+          self.logger.error(f"Error fetching Razorpay invoice: {invoice_response.errors}")
+          raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=f"Error retrieving invoice: {invoice_response.errors}")
+
+        invoice = invoice_response.data
         invoice_url = invoice.get("short_url") or ""
         self.logger.debug(f"Retrieved Razorpay invoice URL: {invoice_url}")
       except Exception as e:
         self.logger.error(f"Error fetching Razorpay invoice: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error retrieving invoice: {str(e)}")
+        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=f"Error retrieving invoice: {str(e)}")
     else:
       self.logger.warning(f"Unsupported payment provider: {transaction.payment_provider}")
-      raise HTTPException(status_code=400, detail=f"Invoices not supported for {transaction.payment_provider}")
+      raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=f"Invoices not supported for {transaction.payment_provider}")
 
     # Return the hosted invoice URL
     return {
@@ -335,7 +355,7 @@ class BillingService:
       transactions_response = [TransactionWithInvoiceSchema.from_transaction(tx).dict() for tx in transactions]
     except Exception as e:
       self.logger.error(f"Error processing transactions: {e}")
-      raise HTTPException(status_code=500, detail="Error processing transactions")
+      raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Error processing transactions")
 
     self.logger.debug(f"Returning {len(transactions_response)} credit transactions")
     return {
@@ -613,11 +633,12 @@ class BillingService:
       status=TransactionStatus.PENDING,
       amount=amount,
       credits=credit_amount,
-      stripe_payment_intent_id=None,
-      stripe_customer_id=customer.id,
-      stripe_invoice_id=None,
       payment_provider="stripe",
       description=f"Purchase of {credit_amount} credits",
+      payment_metadata={
+        "customer_id": customer.id,
+        "session_id": stripe_session.id,
+      },
       transaction_metadata={
         "org_id": str(org_id),
         "checkout_session_id": stripe_session.id,
@@ -637,14 +658,13 @@ class BillingService:
     if not user_db:
       raise HTTPException(status_code=404, detail="User not found")
 
-    # Get or create customer
-    customer_id = await self._get_or_create_razorpay_customer(user_id, user_db.email, f"{user_db.first_name} {user_db.last_name}", session)
+    # Get or create customer and store in customer table
+    customer_id = await self._get_or_create_razorpay_customer_with_storage(
+      user_id, user_db.email, f"{user_db.first_name} {user_db.last_name}", session
+    )
 
     # Convert USD to INR (Razorpay requires amount in paise)
     amount_inr = int(amount * 100)  # Example conversion rate
-
-    # Create invoice directly
-    client = self.get_razorpay_client()
     callback_url = settings.stripe_success_url
 
     try:
@@ -673,7 +693,11 @@ class BillingService:
         "callback_method": "get",
       }
 
-      invoice = client.invoice.create(data=invoice_data)
+      invoice_response = self.razorpay_engine.create_invoice(invoice_data)
+      if not invoice_response.success:
+        raise Exception(f"Failed to create invoice: {invoice_response.errors}")
+
+      invoice = invoice_response.data
 
       # Create transaction record
       transaction = TransactionModel(
@@ -684,11 +708,13 @@ class BillingService:
         status=TransactionStatus.PENDING,
         amount=amount,
         credits=credit_amount,
-        razorpay_invoice_id=invoice.get("id"),
-        razorpay_customer_id=customer_id,
         payment_provider="razorpay",
         description=f"Purchase of {credit_amount} credits via Razorpay",
-        transaction_metadata={"invoice_id": invoice.get("id"), "receipt": receipt_id, "amount_inr": amount_inr},
+        payment_metadata={
+          "customer_id": customer_id,
+          "invoice_id": invoice.get("id"),
+        },
+        transaction_metadata={"receipt": receipt_id, "amount_inr": amount_inr},
       )
 
       session.add(transaction)
@@ -834,8 +860,14 @@ class BillingService:
       if transaction:
         # Update transaction status
         transaction.status = TransactionStatus.COMPLETED
-        transaction.stripe_payment_intent_id = session_obj.payment_intent
-        transaction.stripe_invoice_id = session_obj.invoice
+
+        # Update payment metadata with payment details
+        if not transaction.payment_metadata:
+          transaction.payment_metadata = {}
+        transaction.payment_metadata.update({
+          "payment_intent_id": session_obj.payment_intent,
+          "invoice_id": session_obj.invoice,
+        })
 
         # Add credits to organization's wallet
         org_id = UUID(metadata.get("org_id"))
@@ -881,6 +913,244 @@ class BillingService:
     if "session_id" in locals():
       self.logger.debug(f"Looking for transaction with checkout_session_id: {session_id}", query=str(query))
 
+  async def post_create_subscription(
+    self,
+    plan_id: UUID,
+    org_id: UUID,
+    token: dict = Depends(RBAC("billing", "write")),
+    session: AsyncSession = Depends(get_db),
+  ) -> Dict[str, Any]:
+    """Create a new subscription for an organization."""
+
+    # Check plan exists
+    query = select(BillingPlanModel).where(BillingPlanModel.id == plan_id)
+    result = await session.execute(query)
+    plan = result.scalar_one_or_none()
+
+    if not plan:
+      raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Billing plan not found")
+
+    user_id = token["id"]
+    if not user_id:
+      raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="User ID is required")
+
+    org_id = token["org_id"]
+    if not org_id:
+      raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Organization ID is required")
+
+    # Check if plan uses INR currency (Razorpay)
+    if plan.currency == "INR":
+      return await self._create_razorpay_subscription(plan, user_id, org_id, session)
+
+    # For non-INR currencies, return error for now
+    raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=f"Subscription creation for currency {plan.currency} is not supported yet")
+
+  async def _create_razorpay_subscription(
+    self,
+    plan: BillingPlanModel,
+    user_id: UUID,
+    org_id: UUID,
+    session: AsyncSession,
+  ) -> Dict[str, Any]:
+    """Create a Razorpay subscription for INR currency plans."""
+
+    try:
+      # Get user details for customer creation
+      user_query = select(UserModel).where(UserModel.id == user_id)
+      user_result = await session.execute(user_query)
+      user = user_result.scalar_one_or_none()
+
+      if not user:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="User not found")
+
+      self.logger.info(f"Creating Razorpay subscription for plan {plan.id} with currency INR")
+
+      # Get or create Razorpay customer and store in customer table
+      customer_id = await self._get_or_create_razorpay_customer_with_storage(user_id, user.email, f"{user.first_name} {user.last_name}", session)
+
+      # Check if plan has razorpay plan_id, if not create one
+      razorpay_plan_id = plan.plan_id
+
+      if not razorpay_plan_id:
+        # Create Razorpay plan if it doesn't exist
+        razorpay_plan_data = {
+          "name": plan.name,
+          "amount": int(plan.amount * 100),  # Convert to paise
+          "currency": plan.currency,
+          "period": "monthly",  # Default to monthly, could be made configurable
+          "description": f"Subscription plan: {plan.name}",
+        }
+
+        plan_response = self.razorpay_engine.create_plan(**razorpay_plan_data)
+        if not plan_response.success:
+          self.logger.error(f"Failed to create Razorpay plan: {plan_response.errors}")
+          raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=f"Failed to create subscription plan: {plan_response.errors}")
+
+        razorpay_plan = plan_response.data
+        razorpay_plan_id = razorpay_plan["id"]
+
+        # Update the billing plan with the razorpay plan_id
+        plan.plan_id = razorpay_plan_id
+        await session.commit()
+        await session.refresh(plan)
+
+      # Calculate subscription timing
+      import time
+
+      start_at = int(time.time()) + 300  # Start 5 minutes from now
+      expire_by = int(time.time()) + (365 * 24 * 60 * 60)  # Expire in 1 year
+
+      # Create subscription with enhanced parameters
+      subscription_response = self.razorpay_engine.create_subscription(
+        plan_id=razorpay_plan_id,
+        customer_id=customer_id,
+        total_count=12,  # 12 months by default
+        quantity=1,
+        start_at=start_at,
+        expire_by=expire_by,
+        customer_notify=True,
+        notes={"organization_id": str(org_id), "user_id": str(user_id), "plan_id": str(plan.id), "plan_name": plan.name},
+        notify_info={"notify_email": user.email},
+      )
+
+      if not subscription_response.success:
+        self.logger.error(f"Failed to create Razorpay subscription: {subscription_response.errors}")
+        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=f"Failed to create subscription: {subscription_response.errors}")
+
+      subscription = subscription_response.data
+
+      self.logger.info(f"Successfully created Razorpay subscription: {subscription['id']}")
+
+      return {
+        "success": True,
+        "provider": "razorpay",
+        "subscription_id": subscription["id"],
+        "subscription_url": subscription.get("short_url", ""),
+        "plan_id": razorpay_plan_id,
+        "customer_id": customer_id,
+        "status": subscription.get("status"),
+        "currency": plan.currency,
+        "amount": plan.amount,
+        "credits": plan.credits,
+        "start_at": subscription.get("start_at"),
+        "end_at": subscription.get("end_at"),
+        "total_count": subscription.get("total_count"),
+        "remaining_count": subscription.get("remaining_count"),
+        "subscription_details": subscription,
+      }
+
+    except HTTPException:
+      # Re-raise HTTP exceptions as-is
+      raise
+    except Exception as e:
+      self.logger.error(f"Unexpected error creating Razorpay subscription: {str(e)}", exc_info=True)
+      raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=f"Failed to create subscription: {str(e)}")
+
+  async def post_create_subscription_with_plan_id(
+    self,
+    subscription_data: CreateSubscriptionWithPlanIdRequestSchema,
+    org_id: UUID,
+    session: AsyncSession = Depends(get_db),
+    user: dict = Depends(RBAC("billing", "write")),
+  ) -> CreateSubscriptionWithPlanIdResponseSchema:
+    """Create a subscription using an existing Razorpay plan_id."""
+
+    user_id = UUID(user["id"])
+    self.session = session
+
+    try:
+      # Get user details
+      user_query = select(UserModel).where(UserModel.id == user_id)
+      user_result = await session.execute(user_query)
+      user_obj = user_result.scalar_one_or_none()
+
+      if not user_obj:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="User not found")
+
+      # Get or create Razorpay customer and store in customer table
+      customer_id = await self._get_or_create_razorpay_customer_with_storage(
+        user_id, user_obj.email, f"{user_obj.first_name} {user_obj.last_name}", session
+      )
+
+      # Set default timing if not provided
+      import time
+
+      start_at = subscription_data.start_at
+      expire_by = subscription_data.expire_by
+
+      if not start_at:
+        start_at = int(time.time()) + 300  # Start 5 minutes from now
+      if not expire_by:
+        expire_by = int(time.time()) + (365 * 24 * 60 * 60)  # Expire in 1 year
+
+      # Default notes if not provided
+      notes = subscription_data.notes
+      if not notes:
+        notes = {"organization_id": str(org_id), "user_id": str(user_id), "created_via": "api"}
+
+      self.logger.info(f"Creating Razorpay subscription with plan_id: {subscription_data.plan_id} for user {user_id}")
+
+      # Create subscription using existing plan_id
+      subscription_response = self.razorpay_engine.create_subscription(
+        plan_id=subscription_data.plan_id,
+        customer_id=customer_id,
+        total_count=subscription_data.total_count,
+        quantity=subscription_data.quantity,
+        start_at=start_at,
+        expire_by=expire_by,
+        customer_notify=subscription_data.customer_notify,
+        notes=notes,
+        addons=subscription_data.addons,
+        notify_info={"notify_email": user_obj.email},
+      )
+
+      if not subscription_response.success:
+        self.logger.error(f"Failed to create Razorpay subscription: {subscription_response.errors}")
+        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=f"Failed to create subscription: {subscription_response.errors}")
+
+      subscription = subscription_response.data
+      self.logger.info(f"Successfully created Razorpay subscription: {subscription['id']}")
+
+      # Create the subscription schema object
+      subscription_schema = RazorpaySubscriptionSchema(
+        id=subscription["id"],
+        entity=subscription.get("entity"),
+        plan_id=subscription.get("plan_id"),
+        status=subscription.get("status"),
+        current_start=subscription.get("current_start"),
+        current_end=subscription.get("current_end"),
+        ended_at=subscription.get("ended_at"),
+        quantity=subscription.get("quantity"),
+        notes=subscription.get("notes"),
+        charge_at=subscription.get("charge_at"),
+        start_at=subscription.get("start_at"),
+        end_at=subscription.get("end_at"),
+        auth_attempts=subscription.get("auth_attempts"),
+        total_count=subscription.get("total_count"),
+        paid_count=subscription.get("paid_count"),
+        customer_notify=subscription.get("customer_notify"),
+        created_at=subscription.get("created_at"),
+        expire_by=subscription.get("expire_by"),
+        short_url=subscription.get("short_url"),
+        has_scheduled_changes=subscription.get("has_scheduled_changes"),
+        change_scheduled_at=subscription.get("change_scheduled_at"),
+        source=subscription.get("source"),
+        remaining_count=subscription.get("remaining_count"),
+      )
+
+      return CreateSubscriptionWithPlanIdResponseSchema(
+        success=True,
+        provider="razorpay",
+        subscription=subscription_schema,
+        customer_id=customer_id,
+      )
+
+    except HTTPException:
+      raise
+    except Exception as e:
+      self.logger.error(f"Unexpected error in create_subscription_with_plan_id: {str(e)}", exc_info=True)
+      raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=f"Failed to create subscription: {str(e)}")
+
   async def _get_or_create_stripe_customer(
     self,
     user_id: UUID,
@@ -890,16 +1160,17 @@ class BillingService:
     """Get or create a Stripe customer for the user."""
     self.logger.debug("Getting or creating Stripe customer", user_id=str(user_id), email=email)
 
-    # Check if customer exists
+    # Check if customer exists in payment_metadata
     transaction_result = await session.execute(
-      select(TransactionModel.stripe_customer_id)
+      select(TransactionModel.payment_metadata)
       .where(TransactionModel.user_id == user_id)
-      .where(TransactionModel.stripe_customer_id.isnot(None))
+      .where(TransactionModel.payment_provider == "stripe")
+      .where(text("payment_metadata->>'customer_id' IS NOT NULL"))
       .order_by(TransactionModel.created_at.desc())
     )
 
     result = transaction_result.first()
-    customer_id = result[0] if result else None
+    customer_id = result[0].get("customer_id") if result and result[0] else None
     self.logger.debug("Customer ID lookup result", customer_id=customer_id)
 
     if customer_id:
@@ -991,10 +1262,10 @@ class BillingService:
     # Try to continue processing even if signature verification fails
     try:
       if signature:
-        webhook_secret = settings.razorpay_webhook_secret
         payload_string = json.dumps(payload, separators=(",", ":"))
-        client = self.get_razorpay_client()
-        client.utility.verify_webhook_signature(payload_string, signature, webhook_secret)
+        signature_response = self.razorpay_engine.verify_webhook_signature(payload_string, signature)
+        if not signature_response.success or not signature_response.data:
+          raise Exception("Signature verification failed")
         self.logger.info("Webhook signature verified successfully")
     except Exception as e:
       self.logger.warning(f"Webhook signature verification failed: {str(e)}")
@@ -1016,8 +1287,12 @@ class BillingService:
 
       self.logger.info(f"Processing invoice.paid webhook: invoice_id={invoice_id}, payment_id={payment_id}")
 
-      # Find transaction by invoice_id
-      query = select(TransactionModel).where(TransactionModel.razorpay_invoice_id == invoice_id)
+      # Find transaction by invoice_id using payment_metadata
+      query = (
+        select(TransactionModel)
+        .where(text("payment_metadata->>'invoice_id' = :invoice_id"), TransactionModel.payment_provider == "razorpay")
+        .params(invoice_id=invoice_id)
+      )
       result = await session.execute(query)
       transaction = result.scalar_one_or_none()
 
@@ -1029,16 +1304,20 @@ class BillingService:
       if transaction.status != TransactionStatus.COMPLETED:
         # Update transaction with payment ID and status
         transaction.status = TransactionStatus.COMPLETED
-        transaction.razorpay_payment_id = payment_id  # ← This specifically updates the payment ID
+
+        # Update payment metadata with payment details
+        if not transaction.payment_metadata:
+          transaction.payment_metadata = {}
+        transaction.payment_metadata.update({
+          "payment_id": payment_id,
+        })
 
         if not transaction.transaction_metadata:
           transaction.transaction_metadata = {}
 
         # Update transaction metadata
         transaction.transaction_metadata.update({
-          "payment_id": payment_id,
           "payment_status": invoice_entity.get("status", "paid"),
-          "invoice_id": invoice_id,
           "payment_method": payment_entity.get("method"),
           "webhook_event": event,
           "processed_at": datetime.utcnow().isoformat(),
@@ -1070,7 +1349,11 @@ class BillingService:
 
       # If we have an invoice_id, try to find the transaction
       if invoice_id:
-        query = select(TransactionModel).where(TransactionModel.razorpay_invoice_id == invoice_id)
+        query = (
+          select(TransactionModel)
+          .where(text("payment_metadata->>'invoice_id' = :invoice_id"), TransactionModel.payment_provider == "razorpay")
+          .params(invoice_id=invoice_id)
+        )
         result = await session.execute(query)
         transaction = result.scalar_one_or_none()
 
@@ -1078,13 +1361,18 @@ class BillingService:
         if transaction and transaction.status != TransactionStatus.COMPLETED:
           self.logger.info(f"Processing payment.captured for invoice: {invoice_id}")
           transaction.status = TransactionStatus.COMPLETED
-          transaction.razorpay_payment_id = payment_id
+
+          # Update payment metadata with payment ID
+          if not transaction.payment_metadata:
+            transaction.payment_metadata = {}
+          transaction.payment_metadata.update({
+            "payment_id": payment_id,
+          })
 
           if not transaction.transaction_metadata:
             transaction.transaction_metadata = {}
 
           transaction.transaction_metadata.update({
-            "payment_id": payment_id,
             "payment_status": "captured",
             "webhook_event": event,
             "processed_at": datetime.utcnow().isoformat(),
@@ -1104,49 +1392,117 @@ class BillingService:
     self.logger.info(f"Webhook event {event} processed (no action taken)")
     return {"status": "success", "message": "Webhook received"}
 
-  def get_razorpay_client(self):
-    return razorpay.Client(auth=(settings.razorpay_key_id, settings.razorpay_key_secret))
-
-  async def _get_or_create_razorpay_customer(self, user_id: UUID, email: str, name: str, session: Optional[AsyncSession] = None) -> str:
-    """Get or create a Razorpay customer for the user."""
+  async def _get_or_create_razorpay_customer_with_storage(self, user_id: UUID, email: str, name: str, session: Optional[AsyncSession] = None) -> str:
+    """Get or create a Razorpay customer and store in customer table."""
     # Use provided session or fall back to self.session
     db_session = session or self.session
     if not db_session:
       raise ValueError("No database session available")
 
-    # Check existing customer in our database
+    # Check if customer exists in our customer table
+    customer_query = select(CustomerModel).where(
+      CustomerModel.user_id == user_id, CustomerModel.payment_provider == "razorpay", CustomerModel.is_active
+    )
+    customer_result = await db_session.execute(customer_query)
+    existing_customer = customer_result.scalar_one_or_none()
+
+    if existing_customer:
+      self.logger.info(f"Found existing customer in database: {existing_customer.customer_id}")
+      return existing_customer.customer_id
+
+    # No customer found in our database, check Razorpay directly
+    customer_response = self.razorpay_engine.fetch_customer_by_email(email)
+    razorpay_customer_id = None
+
+    if customer_response.success and customer_response.data:
+      # Found existing customer in Razorpay
+      razorpay_customer = customer_response.data
+      razorpay_customer_id = razorpay_customer["id"]
+      self.logger.info(f"Found existing Razorpay customer: {razorpay_customer_id}")
+    else:
+      # Create new customer in Razorpay
+      notes = {"user_id": str(user_id)}
+      create_response = self.razorpay_engine.create_customer(name=name, email=email, notes=notes)
+
+      if not create_response.success:
+        # Check if customer already exists error
+        if create_response.errors and any("already exists" in str(error) for error in create_response.errors):
+          # Try to fetch by email again
+          self.logger.info(f"Customer already exists, trying to fetch by email: {email}")
+          customer_response = self.razorpay_engine.fetch_customer_by_email(email)
+          if customer_response.success and customer_response.data:
+            razorpay_customer_id = customer_response.data["id"]
+
+        if not razorpay_customer_id:
+          raise Exception(f"Failed to create customer: {create_response.errors}")
+      else:
+        razorpay_customer = create_response.data
+        razorpay_customer_id = razorpay_customer["id"]
+        self.logger.info(f"Successfully created new Razorpay customer: {razorpay_customer_id}")
+
+    # Store customer in our database
+    new_customer = CustomerModel(
+      id=uuid4(),
+      user_id=user_id,
+      payment_provider="razorpay",
+      customer_id=razorpay_customer_id,
+      is_active=True,
+      provider_metadata={"email": email, "name": name},
+    )
+
+    db_session.add(new_customer)
+    await db_session.commit()
+    await db_session.refresh(new_customer)
+
+    self.logger.info(f"Stored customer {razorpay_customer_id} in database for user {user_id}")
+    return razorpay_customer_id
+
+  async def _get_or_create_razorpay_customer_via_engine(self, user_id: UUID, email: str, name: str, session: Optional[AsyncSession] = None) -> str:
+    """Get or create a Razorpay customer using the engine."""
+    # Use provided session or fall back to self.session
+    db_session = session or self.session
+    if not db_session:
+      raise ValueError("No database session available")
+
+    # Check existing customer in payment_metadata
     transaction_result = await db_session.execute(
-      select(TransactionModel.razorpay_customer_id)
+      select(TransactionModel.payment_metadata)
       .where(TransactionModel.user_id == user_id)
-      .where(TransactionModel.razorpay_customer_id.isnot(None))
+      .where(TransactionModel.payment_provider == "razorpay")
+      .where(text("payment_metadata->>'customer_id' IS NOT NULL"))
       .order_by(TransactionModel.created_at.desc())
     )
 
     result = transaction_result.first()
-    customer_id = result[0] if result else None
+    customer_id = result[0].get("customer_id") if result and result[0] else None
     self.logger.debug("Customer ID lookup result", customer_id=customer_id)
 
     if customer_id:
       return customer_id
 
+    # Try to find existing customer by email first
+    customer_response = self.razorpay_engine.fetch_customer_by_email(email)
+    if customer_response.success and customer_response.data:
+      existing_customer = customer_response.data
+      self.logger.info(f"Found existing customer: {existing_customer['id']}")
+      return existing_customer["id"]
+
     # Create new customer
-    client = self.get_razorpay_client()
-    customer_data = {"name": name, "email": email, "notes": {"user_id": str(user_id)}}
+    notes = {"user_id": str(user_id)}
+    customer_response = self.razorpay_engine.create_customer(name=name, email=email, notes=notes)
 
-    try:
-      # Try to create a new customer
-      customer = client.customer.create(data=customer_data)
-      return customer["id"]
-    except razorpay.errors.BadRequestError as e:
-      if "Customer already exists for the merchant" in str(e):
-        # Customer exists in Razorpay but not in our database
-        # Fetch existing customer by email
-        self.logger.info(f"Customer already exists, fetching by email: {email}")
-        customers = client.customer.all({"email": email})
-        if customers and "items" in customers and len(customers["items"]) > 0:
-          existing_customer = customers["items"][0]
-          self.logger.info(f"Found existing customer: {existing_customer['id']}")
-          return existing_customer["id"]
+    if not customer_response.success:
+      # Check if customer already exists error
+      if customer_response.errors and any("already exists" in str(error) for error in customer_response.errors):
+        # Try to fetch by email again
+        self.logger.info(f"Customer already exists, trying to fetch by email: {email}")
+        customer_response = self.razorpay_engine.fetch_customer_by_email(email)
+        if customer_response.success and customer_response.data:
+          return customer_response.data["id"]
 
-      # Re-raise if we couldn't handle or if it's a different error
-      raise
+      # If we still can't create or find, raise the error
+      raise Exception(f"Failed to create customer: {customer_response.errors}")
+
+    customer = customer_response.data
+    self.logger.info(f"Successfully created new customer: {customer['id']}")
+    return customer["id"]
