@@ -9,7 +9,7 @@ from models.agent_deployment_model import (
 from models.agent_model import AgentModel, AgentToolModel
 from models.api_key_model import APIKeyModel
 from models.auth_model import UserModel
-from models.billing_models import BillingPlanModel, ChargeModel, TransactionModel, TransactionStatus, TransactionType, WalletModel
+from models.billing_models import BillingPlanModel, ChargeModel, CustomerModel, TransactionModel, TransactionStatus, TransactionType, WalletModel
 from models.chat_model import ChatModel, ChatUploadModel, MessageModel
 from models.invitations_model import InvitationModel, InvitationStatus
 from models.job_model import JobModel, JobStatus
@@ -31,6 +31,7 @@ __all__ = [
   "BillingPlanModel",
   "ChargeModel",
   "ChatModel",
+  "CustomerModel",
   "ChatUploadModel",
   "DocumentStatus",
   "InvitationModel",
