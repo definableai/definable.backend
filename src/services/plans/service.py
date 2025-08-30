@@ -10,18 +10,16 @@ from dependencies.security import RBAC
 from models import BillingPlanModel
 from services.__base.acquire import Acquire
 
-from .schema import BillingPlanCreateSchema, BillingPlanResponseSchema, BillingPlanUpdateSchema
+from .schema import BillingPlanCreateSchema, BillingPlanResponseSchema, BillingPlanUpdateSchema, CurrencyType
 
 
 class BillingPlansService:
   """Service for managing billing plans."""
 
   http_exposed = [
-    "get=plan",
-    "get=plans",
+    "get=list",
     "post=create",
     "patch=plan",
-    "delete=plan",
   ]
 
   def __init__(self, acquire: Acquire):
@@ -29,9 +27,10 @@ class BillingPlansService:
     self.acquire = acquire
     self.logger = acquire.logger
 
-  async def get_plan(
+  async def get(
     self,
     plan_id: UUID,
+    org_id: UUID,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("billing", "read")),
   ) -> BillingPlanResponseSchema:
@@ -41,10 +40,11 @@ class BillingPlansService:
       raise HTTPException(status_code=404, detail="Billing plan not found")
     return BillingPlanResponseSchema.from_plan(plan)
 
-  async def get_plans(
+  async def get_list(
     self,
+    org_id: UUID,
     is_active: Optional[bool] = None,
-    currency: Optional[str] = None,
+    currency: Optional[CurrencyType] = None,
     limit: int = 100,
     offset: int = 0,
     session: AsyncSession = Depends(get_db),
@@ -149,8 +149,9 @@ class BillingPlansService:
     self.logger.info(f"Updated billing plan: {plan.name} (ID: {plan_id})")
     return BillingPlanResponseSchema.from_plan(plan)
 
-  async def delete_plan(
+  async def delete(
     self,
+    org_id: UUID,
     plan_id: UUID,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("billing", "write")),

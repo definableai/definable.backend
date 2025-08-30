@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 from uuid import UUID
 
@@ -7,6 +8,10 @@ from pydantic import BaseModel, Field, field_validator
 from models import BillingPlanModel
 
 
+class CurrencyType(str, Enum):
+  USD = "USD"
+  INR = "INR"
+
 class BillingPlanBaseSchema(BaseModel):
   """Base schema for billing plan operations."""
 
@@ -14,7 +19,7 @@ class BillingPlanBaseSchema(BaseModel):
   amount: float = Field(..., description="Cost of the plan in currency units")
   credits: int = Field(..., description="Number of credits provided by this plan")
   discount_percentage: float = Field(default=0.0, description="Discount percentage (0-100)")
-  currency: str = Field(default="USD", description="Currency code (e.g., USD, EUR, INR)")
+  currency: CurrencyType = Field(default=CurrencyType.USD, description="Currency code (e.g., USD, EUR, INR)")
 
   @field_validator("discount_percentage")
   def validate_discount_percentage(cls, v):
@@ -37,7 +42,7 @@ class BillingPlanUpdateSchema(BaseModel):
   credits: Optional[int] = Field(None, description="Number of credits provided by this plan")
   discount_percentage: Optional[float] = Field(None, description="Discount percentage (0-100)")
   is_active: Optional[bool] = Field(None, description="Whether this plan is active")
-  currency: Optional[str] = Field(None, description="Currency code (e.g., USD, EUR, INR)")
+  currency: Optional[CurrencyType] = Field(None, description="Currency code (e.g., USD, EUR, INR)")
 
   @field_validator("discount_percentage")
   def validate_discount_percentage(cls, v):
@@ -67,7 +72,7 @@ class BillingPlanResponseSchema(BillingPlanBaseSchema):
         "credits": 30000,
         "discount_percentage": 0.0,
         "is_active": True,
-        "currency": "USD",
+        "currency": CurrencyType.USD,
         "created_at": "2023-01-01T00:00:00Z",
         "updated_at": "2023-01-01T00:00:00Z",
       }
