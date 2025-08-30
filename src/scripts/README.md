@@ -11,6 +11,7 @@ The script architecture provides:
 - **CLI interface**: Consistent command-line interface with run/rollback/status commands
 - **Error handling**: Standardized error handling and logging
 - **Force rerun**: Ability to force re-execution of previously successful scripts
+- **Standardized path setup**: Each script includes a standard path setup block that ensures imports from the `src` directory work correctly when scripts are run directly
 
 ## Creating a New Script
 
@@ -29,14 +30,16 @@ Description of your script's purpose.
 
 import os
 import sys
-from sqlalchemy.ext.asyncio import AsyncSession
 
 # Add the parent directory to the path so we can import from src
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.append(parent_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
-from common.logger import log as logger
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from scripts.base_script import BaseScript
+from common.logger import log as logger
 
 
 class YourScript(BaseScript):
@@ -125,6 +128,9 @@ python your_script.py status
 
 # Run directly (backward compatibility)
 python your_script.py
+
+# Run with force (backward compatibility shorthand)
+python your_script.py --force
 ```
 
 ## Best Practices

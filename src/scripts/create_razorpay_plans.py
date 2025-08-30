@@ -9,16 +9,17 @@ import os
 import sys
 from typing import List, Optional, Tuple
 
+# Add the parent directory to the path so we can import from src
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Add the parent directory to the path so we can import from src
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.append(parent_dir)
-
+from scripts.base_script import BaseScript
 from common.logger import log as logger
 from libs.payments.razorpay.v1.engine import engine as razorpay_engine
-from scripts.base_script import BaseScript
 
 
 async def fetch_billing_plans(db: AsyncSession) -> List[Tuple[str, str, float, int, str]]:

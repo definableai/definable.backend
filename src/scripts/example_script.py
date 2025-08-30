@@ -6,14 +6,16 @@ This template shows the minimal implementation needed for a new script.
 
 import os
 import sys
-from sqlalchemy.ext.asyncio import AsyncSession
 
 # Add the parent directory to the path so we can import from src
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.append(parent_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
-from common.logger import log as logger
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from scripts.base_script import BaseScript
+from common.logger import log as logger
 
 
 class ExampleScript(BaseScript):

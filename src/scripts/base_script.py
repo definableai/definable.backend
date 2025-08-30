@@ -17,8 +17,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Add the parent directory to the path so we can import from src
+# This ensures all scripts can import from the src directory
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.append(parent_dir)
+if parent_dir not in sys.path:
+  sys.path.insert(0, parent_dir)
 
 from common.logger import log as logger
 from database.postgres import async_session
@@ -278,6 +280,19 @@ class BaseScript(ABC):
       # No arguments, run the script directly for backward compatibility
       try:
         self.main()
+
+        # Give connections time to close properly on Windows
+        if platform.system() == "Windows":
+          time.sleep(1)
+
+      except KeyboardInterrupt:
+        logger.info("Script interrupted by user")
+      except Exception as e:
+        logger.error(f"Script failed: {e}")
+    elif len(sys.argv) == 2 and sys.argv[1] == "--force":
+      # Handle --force as a top-level option for backward compatibility
+      try:
+        asyncio.run(self.run_script(force_rerun=True))
 
         # Give connections time to close properly on Windows
         if platform.system() == "Windows":
