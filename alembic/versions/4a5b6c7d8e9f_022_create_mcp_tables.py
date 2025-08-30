@@ -23,7 +23,6 @@ def upgrade():
     sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
     sa.Column("name", sa.String(), nullable=False),
     sa.Column("mcp_url", sa.String(), nullable=False),
-    sa.Column("auth_config_ids", postgresql.JSONB, nullable=True),
     sa.Column("toolkits", postgresql.JSONB, nullable=True),
     sa.Column("allowed_tools", postgresql.JSONB, nullable=True),
     sa.Column("server_instance_count", sa.Integer(), nullable=False, default=0),

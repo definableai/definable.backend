@@ -13,7 +13,6 @@ class MCPServerModel(Base):
   id: Mapped[uuid_pkg.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
   name: Mapped[str] = mapped_column(String, nullable=False)
   mcp_url: Mapped[str] = mapped_column(String, nullable=False)
-  auth_config_ids: Mapped[list] = mapped_column(JSONB, nullable=True)
   toolkits: Mapped[list] = mapped_column(JSONB, nullable=True)
   allowed_tools: Mapped[list] = mapped_column(JSONB, nullable=True)
   server_instance_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
