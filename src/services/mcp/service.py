@@ -1,6 +1,6 @@
 from http import HTTPStatus
 
-import requests
+import httpx
 from composio_client import Composio
 from fastapi import Depends, HTTPException
 from sqlalchemy import select
@@ -78,7 +78,7 @@ class MCPService:
       if not allowed_tools:
         api_url = f"https://backend.composio.dev/api/v3/tools?toolkit_slug={toolkit_slug}"
         headers = {"x-api-key": settings.composio_api_key}
-        response = requests.get(api_url, headers=headers)
+        response = httpx.get(api_url, headers=headers)
         response.raise_for_status()
         items = response.json().get("items", [])
         allowed_tools = []
@@ -138,7 +138,7 @@ class MCPService:
       url = f"https://backend.composio.dev/api/v3/mcp/servers/{server_id}/instances"
       payload = {"user_id": user_email}
       headers = {"x-api-key": settings.composio_api_key, "Content-Type": "application/json"}
-      response = requests.post(url, json=payload, headers=headers)
+      response = httpx.post(url, json=payload, headers=headers)
       response.raise_for_status()
       instance = response.json()
       db_instance = MCPSessionModel(
@@ -175,7 +175,7 @@ class MCPService:
       user_email = db_user.email
 
       # Create a new connected account using Composio API directly
-      response = requests.post(
+      response = httpx.post(
         "https://backend.composio.dev/api/v3/connected_accounts",
         headers={"x-api-key": settings.composio_api_key},
         json={"auth_config": {"id": auth_config_id}, "connection": {"user_id": user_email}},
