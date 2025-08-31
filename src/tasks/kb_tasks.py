@@ -638,7 +638,7 @@ def process_document_task(
       # Finalize charge with actual content-based page count
       if charge_id and complete_charge:
         try:
-          from utils.charge import Charge
+          from models import TransactionModel, WalletModel, TransactionStatus, TransactionType
 
           # Calculate page count from extracted content
           actual_page_count = 1
@@ -649,19 +649,57 @@ def process_document_task(
               actual_page_count = max(1, int(content_chars / 2500))
               logger.info(f"Charging for {actual_page_count} pages")
           
-          # Complete the transaction with accurate page count
-          charge = Charge.from_transaction_id_with_session(charge_id, session)
-          if charge:
-            charge.calculate_and_update_with_session(
-              metadata={
-                "pages": actual_page_count,
-                "content_chars": len(content) if content else 0,
-                "processing_method": source_type_name
-              },
-              status ="completed",
-              job_id = job_id
-            )
-            logger.info(f"Processing charge completed for {actual_page_count} pages")
+          # Complete the transaction with accurate page count using direct database operations
+          transaction = session.get(TransactionModel, UUID(charge_id))
+          if transaction:
+            # Get the actual held amount and current transaction details
+            original_held_amount = transaction.credits
+            current_metadata = transaction.transaction_metadata or {}
+            
+            # Use FastAPI's page estimation if available, otherwise use content-based calculation
+            final_page_count = current_metadata.get("estimated_pages", actual_page_count)
+            charge_amount = final_page_count * 5  # 5 credits per page for PDF extraction
+            
+            # Convert HOLD to DEBIT and update transaction
+            transaction.type = TransactionType.DEBIT
+            transaction.status = TransactionStatus.COMPLETED  
+            transaction.credits = charge_amount
+            transaction.description = "Credits used for pdf_extraction"
+            
+            # Preserve existing metadata and add processing details
+            current_metadata.update({
+              "pages": final_page_count,
+              "content_chars": len(content) if content else 0,
+              "processing_method": source_type_name,
+              "processing_status": "completed",
+              "job_id": str(job_id),
+              "job_status": "completed"
+            })
+            transaction.transaction_metadata = current_metadata
+            
+            # Update wallet - release hold and finalize charge
+            wallet = session.query(WalletModel).filter_by(organization_id=transaction.organization_id).first()
+            if wallet:
+              # Calculate difference between final charge and original hold
+              charge_difference = charge_amount - original_held_amount
+              
+              if charge_difference > 0:
+                # Need to charge more than originally held
+                wallet.balance -= charge_difference
+              elif charge_difference < 0:
+                # Refund excess hold amount back to balance
+                wallet.balance += abs(charge_difference)
+              
+              # Release the hold (use actual held amount) and update credits_spent
+              wallet.hold = max(0, wallet.hold - original_held_amount)
+              wallet.credits_spent += charge_amount
+              
+              session.commit()
+              logger.info(f"Processing charge completed for {final_page_count} pages ({charge_amount} credits)")
+            else:
+              logger.warning(f"Wallet not found for transaction {charge_id}")
+          else:
+            logger.warning(f"Transaction {charge_id} not found")
             
         except Exception as e:
           logger.warning(f"Failed to complete charge {charge_id}: {e}")
@@ -843,14 +881,37 @@ def process_document_task(
             send_update=True,
           )
           
-          # Release charge on processing failure
+          # Release charge on processing failure using direct database operations
           if job and job.context and job.context.get("charge_id"):
             try:
-              from utils.charge import Charge
+              from models import TransactionModel, WalletModel, TransactionStatus
+              
               charge_id = job.context.get("charge_id")
-              charge = Charge.from_transaction_id_with_session(charge_id, session)
-              charge.delete_transaction_with_session(reason=f"Processing failed: {str(e)}", job_id=job_id)
-              logger.info(f"Released charge {charge_id}")
+              transaction = session.get(TransactionModel, UUID(charge_id))
+              
+              if transaction:
+                # Update transaction status to cancelled and add failure reason
+                transaction.status = TransactionStatus.CANCELLED
+                metadata = transaction.transaction_metadata or {}
+                metadata.update({
+                  "cancellation_reason": f"Processing failed: {str(e)}",
+                  "job_id": str(job_id),
+                  "job_status": "failed"
+                })
+                transaction.transaction_metadata = metadata
+                
+                # Release held amount back to wallet balance
+                wallet = session.query(WalletModel).filter_by(organization_id=transaction.organization_id).first()
+                if wallet and transaction.credits:
+                  # Return held amount to available balance
+                  wallet.hold = max(0, wallet.hold - transaction.credits)
+                  session.commit()
+                  logger.info(f"Released charge {charge_id}")
+                else:
+                  logger.warning(f"Wallet not found or no credits to release for transaction {charge_id}")
+              else:
+                logger.warning(f"Transaction {charge_id} not found for release")
+                
             except Exception as charge_error:
               logger.warning(f"Failed to release charge: {charge_error}")
               
