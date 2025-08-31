@@ -996,7 +996,6 @@ def index_documents_task(
       from datetime import datetime
 
       from models import DocumentStatus, KBDocumentModel, KnowledgeBaseModel
-      from utils.charge import Charge
 
       # Get documents and verify they exist
       doc_models = []
@@ -1361,7 +1360,6 @@ def index_documents_task(
                 wallet = session.query(WalletModel).filter_by(organization_id=UUID(org_id)).first()
                 if wallet and wallet.balance >= indexing_credits:
                   original_wallet_balance = wallet.balance
-                  original_credits_spent = wallet.credits_spent
                   wallet.balance -= indexing_credits
                   wallet.credits_spent += indexing_credits
 
@@ -1369,7 +1367,7 @@ def index_documents_task(
                   session.commit()
 
                   logger.info(f"Successfully updated transaction {charge_id} with combined charges: {combined_total} credits")
-                  logger.info(f"Indexing charges added: {indexing_credits} credits, new wallet balance: {wallet.balance}")
+                  logger.info(f"Indexing charges added: {indexing_credits} credits, old balance: {original_wallet_balance}, new balance: {wallet.balance}")
 
                 else:
                   logger.warning(f"Insufficient credits for indexing. Required: {indexing_credits}, Available: {wallet.balance if wallet else 'N/A'}")
