@@ -184,6 +184,7 @@ def send_job_update(
     }
 
     logger.info(f"Sending job update for {job_id}: status={status}, progress={progress}%")
+    logger.debug(f"Update payload: {payload}")
 
     # Send HTTP request to job update endpoint using httpx
     with httpx.Client(timeout=timeout) as client:
@@ -517,7 +518,7 @@ def process_document_task(
             content = loop.run_until_complete(extract_content())
             if not content:
               content = "No content could be extracted from this document"
-            logger.info("Content extracted successfully")
+            logger.info(f"Content extracted successfully, length: {len(content)} characters")
           finally:
             loop.close()
 
@@ -582,7 +583,7 @@ def process_document_task(
             content = result.get("content", "")
             if not content or not content.strip():
               content = f"No content could be extracted from URL: {url}"
-            logger.info("URL content extraction completed")
+            logger.info(f"URL content extraction completed, length: {len(content)} characters")
           finally:
             loop.close()
 
