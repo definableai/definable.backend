@@ -184,7 +184,7 @@ def send_job_update(
     }
 
     logger.info(f"Sending job update for {job_id}: status={status}, progress={progress}%")
-    
+
     # Send HTTP request to job update endpoint using httpx
     with httpx.Client(timeout=timeout) as client:
       response = client.post(url=settings.job_update_url, headers=headers, json=payload)
@@ -635,71 +635,96 @@ def process_document_task(
         send_update=True,
       )
 
-      # Finalize charge with actual content-based page count
-      if charge_id and complete_charge:
+      # Finalize processing charge based on actual content
+      # If there's a charge_id, it means FastAPI created a charge for processing
+      if charge_id:
         try:
           from models import TransactionModel, WalletModel, TransactionStatus, TransactionType
 
-          # Calculate page count from extracted content
-          actual_page_count = 1
-          
           if source_type_name == "file":
+            actual_page_count = 1
             content_chars = len(content) if content else 0
             if content_chars > 0:
               actual_page_count = max(1, int(content_chars / 2500))
               logger.info(f"Charging for {actual_page_count} pages")
-          
-          # Complete the transaction with accurate page count using direct database operations
-          transaction = session.get(TransactionModel, UUID(charge_id))
-          if transaction:
-            # Get the actual held amount and current transaction details
-            original_held_amount = transaction.credits
-            current_metadata = transaction.transaction_metadata or {}
             
-            # Use FastAPI's page estimation if available, otherwise use content-based calculation
-            final_page_count = current_metadata.get("estimated_pages", actual_page_count)
-            charge_amount = final_page_count * 5  # 5 credits per page for PDF extraction
-            
-            # Convert HOLD to DEBIT and update transaction
-            transaction.type = TransactionType.DEBIT
-            transaction.status = TransactionStatus.COMPLETED  
-            transaction.credits = charge_amount
-            transaction.description = "Credits used for pdf_extraction"
-            
-            # Preserve existing metadata and add processing details
-            current_metadata.update({
-              "pages": final_page_count,
-              "content_chars": len(content) if content else 0,
-              "processing_method": source_type_name,
-              "processing_status": "completed",
-              "job_id": str(job_id),
-              "job_status": "completed"
-            })
-            transaction.transaction_metadata = current_metadata
-            
-            # Update wallet - release hold and finalize charge
-            wallet = session.query(WalletModel).filter_by(organization_id=transaction.organization_id).first()
-            if wallet:
-              # Calculate difference between final charge and original hold
-              charge_difference = charge_amount - original_held_amount
+            transaction = session.get(TransactionModel, UUID(charge_id))
+            if transaction:
+              original_held_amount = transaction.credits
+              current_metadata = transaction.transaction_metadata or {}
               
-              if charge_difference > 0:
-                # Need to charge more than originally held
-                wallet.balance -= charge_difference
-              elif charge_difference < 0:
-                # Refund excess hold amount back to balance
-                wallet.balance += abs(charge_difference)
+              final_page_count = current_metadata.get("estimated_pages", actual_page_count)
+              charge_amount = final_page_count * 5
               
-              # Release the hold (use actual held amount) and update credits_spent
-              wallet.hold = max(0, wallet.hold - original_held_amount)
-              wallet.credits_spent += charge_amount
+              # Finalize transaction
+              transaction.type = TransactionType.DEBIT
+              transaction.status = TransactionStatus.COMPLETED  
+              transaction.credits = charge_amount
+              transaction.description = "Credits used for pdf_extraction"
               
-              session.commit()
-              logger.info(f"Processing charge completed for {final_page_count} pages ({charge_amount} credits)")
+              current_metadata.update({
+                "pages": final_page_count,
+                "content_chars": len(content) if content else 0,
+                "processing_method": source_type_name,
+                "processing_status": "completed",
+                "job_id": str(job_id),
+                "job_status": "completed"
+              })
+              transaction.transaction_metadata = current_metadata
+              
+              # Update wallet balance and release hold
+              wallet = session.query(WalletModel).filter_by(organization_id=transaction.organization_id).first()
+              if wallet:
+                wallet.balance -= charge_amount
+                wallet.hold = max(0, wallet.hold - original_held_amount)
+                wallet.credits_spent += charge_amount
+                
+                session.commit()
+                logger.info(f"Processing charge completed for {final_page_count} pages ({charge_amount} credits)")
+              else:
+                logger.warning(f"Wallet not found for transaction {charge_id}")
             else:
-              logger.warning(f"Wallet not found for transaction {charge_id}")
-          else:
-            logger.warning(f"Transaction {charge_id} not found")
+              logger.warning(f"Transaction {charge_id} not found")
+          
+          elif source_type_name == "url":
+            transaction = session.get(TransactionModel, UUID(charge_id))
+            if transaction:
+              original_held_amount = transaction.credits
+              current_metadata = dict(transaction.transaction_metadata or {})
+              
+              charge_qty = current_metadata.get("charge_qty", 1)
+              charge_amount = charge_qty * 1
+              
+              # Finalize transaction
+              transaction.type = TransactionType.DEBIT
+              transaction.status = TransactionStatus.COMPLETED
+              transaction.credits = charge_amount
+              transaction.description = "Credits used for url_extraction"
+              
+              current_metadata.update({
+                "operation": doc.source_metadata.get("operation", "scrape"),
+                "url": doc.source_metadata.get("url", ""),
+                "content_chars": len(content) if content else 0,
+                "processing_method": "url_extraction",
+                "processing_status": "completed",
+                "job_id": str(job_id),
+                "job_status": "completed"
+              })
+              transaction.transaction_metadata = current_metadata
+              
+              # Update wallet balance and release hold
+              wallet = session.query(WalletModel).filter_by(organization_id=transaction.organization_id).first()
+              if wallet:
+                wallet.balance -= charge_amount
+                wallet.hold = max(0, wallet.hold - original_held_amount)
+                wallet.credits_spent += charge_amount
+                
+                session.commit()
+                logger.info(f"URL processing charge completed for operation '{doc.source_metadata.get('operation', 'scrape')}' ({charge_amount} credits)")
+              else:
+                logger.warning(f"Wallet not found for transaction {charge_id}")
+            else:
+              logger.warning(f"Transaction {charge_id} not found")
             
         except Exception as e:
           logger.warning(f"Failed to complete charge {charge_id}: {e}")
@@ -1322,11 +1347,11 @@ def index_documents_task(
                 original_amount = original_transaction.credits or 0
                 combined_total = original_amount + indexing_credits
                 
-                # Update transaction with combined amount and detailed breakdown
+                # Update transaction with combined charges
                 original_transaction.credits = combined_total
                 
                 # Preserve existing metadata and add indexing details
-                metadata = original_transaction.transaction_metadata or {}
+                metadata = dict(original_transaction.transaction_metadata or {})
                 metadata.update({
                   "processing_credits": original_amount,
                   "indexing_credits": indexing_credits,
@@ -1341,7 +1366,7 @@ def index_documents_task(
                 })
                 original_transaction.transaction_metadata = metadata
                 
-                # Deduct only the additional indexing credits from wallet
+                # Deduct indexing credits from wallet
                 wallet = session.query(WalletModel).filter_by(organization_id=UUID(org_id)).first()
                 if wallet and wallet.balance >= indexing_credits:
                   original_wallet_balance = wallet.balance

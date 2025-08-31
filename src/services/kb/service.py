@@ -468,7 +468,7 @@ class KnowledgeBaseService:
             "doc_id": str(db_doc.id),
             "kb_id": str(kb_id),
             "charge_id": str(charge.transaction_id),
-            "complete_charge": True,  # Charge during processing for accuracy
+            "complete_charge": False,
           },
         )
         task_session.add(process_job)
