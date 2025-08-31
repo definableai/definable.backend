@@ -352,14 +352,14 @@ class KnowledgeBaseService:
       # Get file size without fully reading content to avoid blocking
       file_size = document_data.file.size or 0
       file_size_mb = file_size / (1024 * 1024)
-      
+
       # Improved page estimation based on file type
       file_type = document_data.file.content_type or ""
       filename = document_data.file.filename.lower() if document_data.file.filename else ""
-      
+
       self.logger.info(f"File size estimation - file_size: {file_size} bytes, file_type: {file_type}, filename: {filename}")
-      
-      if "pdf" in file_type.lower() or filename.endswith('.pdf'):
+
+      if "pdf" in file_type.lower() or filename.endswith(".pdf"):
         # For PDFs, use a more aggressive estimation
         # Small PDFs: ~5-10KB per page, Large PDFs: ~100KB per page
         # Use 8KB per page as baseline for small/compressed PDFs
@@ -370,11 +370,11 @@ class KnowledgeBaseService:
       else:
         # For other documents, use MB-based estimation
         estimated_pages = max(1, int(file_size_mb))
-        
+
       charge_qty = estimated_pages
       file_metadata["charge_qty"] = charge_qty
       file_metadata["estimated_pages"] = estimated_pages
-      
+
       self.logger.info(f"Estimated pages for charging: {estimated_pages} pages (file_size: {file_size} bytes)")
 
       # Update charge with initial file information

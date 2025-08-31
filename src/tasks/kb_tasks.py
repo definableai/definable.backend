@@ -648,60 +648,60 @@ def process_document_task(
             if content_chars > 0:
               actual_page_count = max(1, int(content_chars / 2500))
               logger.info(f"Charging for {actual_page_count} pages")
-            
+
             transaction = session.get(TransactionModel, UUID(charge_id))
             if transaction:
               original_held_amount = transaction.credits
               current_metadata = transaction.transaction_metadata or {}
-              
+
               final_page_count = current_metadata.get("estimated_pages", actual_page_count)
               charge_amount = final_page_count * 5
-              
+
               # Finalize transaction
               transaction.type = TransactionType.DEBIT
-              transaction.status = TransactionStatus.COMPLETED  
+              transaction.status = TransactionStatus.COMPLETED
               transaction.credits = charge_amount
               transaction.description = "Credits used for pdf_extraction"
-              
+
               current_metadata.update({
                 "pages": final_page_count,
                 "content_chars": len(content) if content else 0,
                 "processing_method": source_type_name,
                 "processing_status": "completed",
                 "job_id": str(job_id),
-                "job_status": "completed"
+                "job_status": "completed",
               })
               transaction.transaction_metadata = current_metadata
-              
+
               # Update wallet balance and release hold
               wallet = session.query(WalletModel).filter_by(organization_id=transaction.organization_id).first()
               if wallet:
                 wallet.balance -= charge_amount
                 wallet.hold = max(0, wallet.hold - original_held_amount)
                 wallet.credits_spent += charge_amount
-                
+
                 session.commit()
                 logger.info(f"Processing charge completed for {final_page_count} pages ({charge_amount} credits)")
               else:
                 logger.warning(f"Wallet not found for transaction {charge_id}")
             else:
               logger.warning(f"Transaction {charge_id} not found")
-          
+
           elif source_type_name == "url":
             transaction = session.get(TransactionModel, UUID(charge_id))
             if transaction:
               original_held_amount = transaction.credits
               current_metadata = dict(transaction.transaction_metadata or {})
-              
+
               charge_qty = current_metadata.get("charge_qty", 1)
               charge_amount = charge_qty * 1
-              
+
               # Finalize transaction
               transaction.type = TransactionType.DEBIT
               transaction.status = TransactionStatus.COMPLETED
               transaction.credits = charge_amount
               transaction.description = "Credits used for url_extraction"
-              
+
               current_metadata.update({
                 "operation": doc.source_metadata.get("operation", "scrape"),
                 "url": doc.source_metadata.get("url", ""),
@@ -709,24 +709,26 @@ def process_document_task(
                 "processing_method": "url_extraction",
                 "processing_status": "completed",
                 "job_id": str(job_id),
-                "job_status": "completed"
+                "job_status": "completed",
               })
               transaction.transaction_metadata = current_metadata
-              
+
               # Update wallet balance and release hold
               wallet = session.query(WalletModel).filter_by(organization_id=transaction.organization_id).first()
               if wallet:
                 wallet.balance -= charge_amount
                 wallet.hold = max(0, wallet.hold - original_held_amount)
                 wallet.credits_spent += charge_amount
-                
+
                 session.commit()
-                logger.info(f"URL processing charge completed for operation '{doc.source_metadata.get('operation', 'scrape')}' ({charge_amount} credits)")
+                logger.info(
+                  f"URL processing charge completed for operation '{doc.source_metadata.get('operation', 'scrape')}' ({charge_amount} credits)"
+                )
               else:
                 logger.warning(f"Wallet not found for transaction {charge_id}")
             else:
               logger.warning(f"Transaction {charge_id} not found")
-            
+
         except Exception as e:
           logger.warning(f"Failed to complete charge {charge_id}: {e}")
 
@@ -906,26 +908,22 @@ def process_document_task(
             org_id=UUID(org_id),
             send_update=True,
           )
-          
+
           # Release charge on processing failure using direct database operations
           if job and job.context and job.context.get("charge_id"):
             try:
               from models import TransactionModel, WalletModel, TransactionStatus
-              
+
               charge_id = job.context.get("charge_id")
               transaction = session.get(TransactionModel, UUID(charge_id))
-              
+
               if transaction:
                 # Update transaction status to cancelled and add failure reason
                 transaction.status = TransactionStatus.CANCELLED
                 metadata = transaction.transaction_metadata or {}
-                metadata.update({
-                  "cancellation_reason": f"Processing failed: {str(e)}",
-                  "job_id": str(job_id),
-                  "job_status": "failed"
-                })
+                metadata.update({"cancellation_reason": f"Processing failed: {str(e)}", "job_id": str(job_id), "job_status": "failed"})
                 transaction.transaction_metadata = metadata
-                
+
                 # Release held amount back to wallet balance
                 wallet = session.query(WalletModel).filter_by(organization_id=transaction.organization_id).first()
                 if wallet and transaction.credits:
@@ -937,10 +935,10 @@ def process_document_task(
                   logger.warning(f"Wallet not found or no credits to release for transaction {charge_id}")
               else:
                 logger.warning(f"Transaction {charge_id} not found for release")
-                
+
             except Exception as charge_error:
               logger.warning(f"Failed to release charge: {charge_error}")
-              
+
       except Exception:
         pass
 
@@ -1041,14 +1039,8 @@ def index_documents_task(
       if initial_charge_id:
         try:
           # Set up additive charging - we'll charge per document as they succeed
-          indexing_charge = {
-            "kb_model": kb_model,
-            "total_credits": 0,
-            "documents_charged": 0,
-            "total_chunks": 0,
-            "job_id": str(job_id)
-          }
-            
+          indexing_charge = {"kb_model": kb_model, "total_credits": 0, "documents_charged": 0, "total_chunks": 0, "job_id": str(job_id)}
+
         except Exception as e:
           logger.error(
             f"Failed to setup indexing charges: {str(e)}",
@@ -1092,7 +1084,6 @@ def index_documents_task(
             token_count = len(doc_model.content.split())
             estimated_chunks = max(1, token_count // kb_model.settings["max_chunk_size"])
             logger.info(f"Content analysis - tokens: {token_count}, estimated_chunks: {estimated_chunks}")
-
 
           else:
             logger.warning(f"Document {doc_model.id} has no content for embedding")
@@ -1239,7 +1230,6 @@ def index_documents_task(
               metadata["actual_chunks"] = actual_chunks
               doc_model.source_metadata = metadata
 
-
               session.add(doc_model)
               session.commit()
               logger.info(f"Document {doc_model.id} changes committed to database")
@@ -1249,18 +1239,18 @@ def index_documents_task(
                 try:
                   # Base charge: 2 credits per chunk we successfully created
                   chunk_charge = actual_chunks * 2
-                  
+
                   # Size bonus: larger chunks need more processing power
                   total_tokens = sum(len(chunk.page_content.split()) for chunk in chunks)
                   avg_tokens_per_chunk = total_tokens / actual_chunks if actual_chunks > 0 else 0
-                  
+
                   if avg_tokens_per_chunk < 500:
                     size_charge = 5  # Small chunks
                   elif avg_tokens_per_chunk < 1000:
                     size_charge = 10  # Medium chunks
                   else:
                     size_charge = 15  # Large chunks
-                  
+
                   # Model premium: better models cost more
                   model_rates = {
                     "text-embedding-3-small": 10,
@@ -1268,17 +1258,17 @@ def index_documents_task(
                     "text-embedding-3-large": 30,
                   }
                   model_charge = model_rates.get(indexing_charge["kb_model"].embedding_model, 20)
-                  
+
                   # Add it all up for this document
                   document_charge = chunk_charge + size_charge + model_charge
-                  
+
                   # Track totals across all documents
                   indexing_charge["total_credits"] += document_charge
                   indexing_charge["documents_charged"] += 1
                   indexing_charge["total_chunks"] += actual_chunks
-                  
+
                   logger.info(f"Charged {document_charge} credits for document {doc_model.id} ({actual_chunks} chunks)")
-                  
+
                 except Exception as e:
                   logger.warning(f"Failed to calculate indexing charge for document {doc_model.id}: {e}")
 
@@ -1326,31 +1316,31 @@ def index_documents_task(
           total_credits = indexing_charge["total_credits"]
           docs_charged = indexing_charge["documents_charged"]
           total_chunks = indexing_charge["total_chunks"]
-          
+
           # Log final indexing charge summary
           logger.info(f"Indexing complete: {docs_charged}/{total_docs} documents, {total_chunks} chunks, {int(total_credits)} credits charged")
-          
+
           try:
             # Update existing transaction with combined processing + indexing charges
             from models import WalletModel, TransactionModel
-            
+
             indexing_credits = int(total_credits)
             charge_id = job.context.get("charge_id") if job and job.context else None
-            
+
             # Fallback to initial_charge_id if charge_id not found
             if not charge_id and job and job.context:
               charge_id = job.context.get("initial_charge_id")
-            
+
             if charge_id:
               # Get the original processing transaction
               original_transaction = session.get(TransactionModel, UUID(charge_id))
               if original_transaction:
                 original_amount = original_transaction.credits or 0
                 combined_total = original_amount + indexing_credits
-                
+
                 # Update transaction with combined charges
                 original_transaction.credits = combined_total
-                
+
                 # Preserve existing metadata and add indexing details
                 metadata = dict(original_transaction.transaction_metadata or {})
                 metadata.update({
@@ -1362,11 +1352,11 @@ def index_documents_task(
                     "documents_indexed": docs_charged,
                     "total_chunks": total_chunks,
                     "embedding_model": indexing_charge["kb_model"].embedding_model,
-                    "job_id": str(job_id)
-                  }
+                    "job_id": str(job_id),
+                  },
                 })
                 original_transaction.transaction_metadata = metadata
-                
+
                 # Deduct indexing credits from wallet
                 wallet = session.query(WalletModel).filter_by(organization_id=UUID(org_id)).first()
                 if wallet and wallet.balance >= indexing_credits:
@@ -1374,19 +1364,19 @@ def index_documents_task(
                   original_credits_spent = wallet.credits_spent
                   wallet.balance -= indexing_credits
                   wallet.credits_spent += indexing_credits
-                  
+
                   # Atomic commit: transaction update + wallet deduction
                   session.commit()
-                  
+
                   logger.info(f"Successfully updated transaction {charge_id} with combined charges: {combined_total} credits")
                   logger.info(f"Indexing charges added: {indexing_credits} credits, new wallet balance: {wallet.balance}")
-                  
+
                 else:
                   logger.warning(f"Insufficient credits for indexing. Required: {indexing_credits}, Available: {wallet.balance if wallet else 'N/A'}")
-                  
+
               else:
                 logger.warning(f"Original transaction {charge_id} not found, falling back to direct wallet deduction")
-                
+
                 # Fallback: direct wallet deduction without transaction update
                 wallet = session.query(WalletModel).filter_by(organization_id=UUID(org_id)).first()
                 if wallet and wallet.balance >= indexing_credits:
@@ -1394,10 +1384,10 @@ def index_documents_task(
                   wallet.credits_spent += indexing_credits
                   session.commit()
                   logger.info(f"Fallback: deducted {indexing_credits} credits directly from wallet")
-                
+
             else:
               logger.warning("No charge_id found in job context, cannot update transaction")
-            
+
           except Exception as charge_error:
             logger.error(f"Failed to update transaction with indexing charges: {str(charge_error)}")
             try:
@@ -1405,7 +1395,7 @@ def index_documents_task(
             except Exception as rollback_error:
               logger.error(f"Rollback failed: {rollback_error}")
             # Continue execution - indexing succeeded, billing is separate concern
-          
+
         except Exception as e:
           logger.warning(f"Failed to log final indexing charge summary: {e}")
       else:
@@ -1580,10 +1570,10 @@ def upload_file_task(
             org_id=UUID(org_id),
             send_update=True,
           )
-          
+
           # Upload failed - no charge needed since we only charge after successful processing
           logger.info("Upload failed. No charge applied since charging happens during processing.")
-            
+
         return {"success": False, "error": f"S3 upload failed: {str(e)}"}
 
       # Update document with S3 info
