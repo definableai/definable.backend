@@ -558,6 +558,7 @@ class Charge:
     result = await self.session.execute(query)
     return result.scalar_one_or_none()
 
+  # Sync version of from_transaction_id
   @classmethod
   def from_transaction_id_with_session(cls, transaction_id: str, session):
     """Create Charge instance from existing transaction ID for sync sessions."""

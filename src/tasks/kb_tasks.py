@@ -949,27 +949,29 @@ def index_documents_task(
 
       logger.info(f"Knowledge base found: {kb_model.name}")
 
-      # Get existing charge if provided for updating
-      embedding_charge = None
+      # Set up additive indexing charges - separate from processing charges
+      indexing_charge = None
       if initial_charge_id:
         try:
-          logger.info(f"Using existing charge for indexing operation: {initial_charge_id}")
-          embedding_charge = Charge.from_transaction_id(initial_charge_id, session=session)
-          if embedding_charge:
-            logger.info(f"Found existing charge: {embedding_charge.transaction_id}")
-          else:
-            logger.warning(f"Could not find charge with ID: {initial_charge_id}")
+          # Set up additive charging - we'll charge per document as they succeed
+          indexing_charge = {
+            "kb_model": kb_model,
+            "total_credits": 0,
+            "documents_charged": 0,
+            "total_chunks": 0,
+            "job_id": str(job_id)
+          }
+            
         except Exception as e:
           logger.error(
-            f"Failed to get existing charge {initial_charge_id}: {str(e)}",
+            f"Failed to setup indexing charges: {str(e)}",
             extra={
-              "charge_id": initial_charge_id,
               "kb_id": str(kb_id),
               "job_id": str(job_id),
               "error": str(e),
             },
           )
-          embedding_charge = None
+          indexing_charge = None
 
       # Process documents one by one
       logger.info("Starting document processing for indexing")
@@ -1004,13 +1006,7 @@ def index_documents_task(
             estimated_chunks = max(1, token_count // kb_model.settings["max_chunk_size"])
             logger.info(f"Content analysis - tokens: {token_count}, estimated_chunks: {estimated_chunks}")
 
-            # Update charge with document-specific information if we have a charge
-            if embedding_charge and embedding_charge.transaction_id:
-              try:
-                logger.debug("Charge update skipped in sync context - will be handled asynchronously")
-                logger.info(f"Document {doc_model.id} analysis: {token_count} tokens, {estimated_chunks} estimated chunks")
-              except Exception as e:
-                logger.error(f"Failed to log charge info: {str(e)}")
+
           else:
             logger.warning(f"Document {doc_model.id} has no content for embedding")
 
@@ -1161,22 +1157,43 @@ def index_documents_task(
               session.commit()
               logger.info(f"Document {doc_model.id} changes committed to database")
 
-              # Update charge with actual chunk information (no async/await in sync context)
-              if embedding_charge and embedding_charge.transaction_id:
+              # Apply additive indexing charge - only charge for what actually worked
+              if indexing_charge and actual_chunks > 0:
                 try:
-                  logger.debug("Updating charge with actual chunk count - skipping in sync context")
-                  logger.info(f"Embedding charge will be updated asynchronously for {actual_chunks} chunks")
+                  # Base charge: 2 credits per chunk we successfully created
+                  chunk_charge = actual_chunks * 2
+                  
+                  # Size bonus: larger chunks need more processing power
+                  total_tokens = sum(len(chunk.page_content.split()) for chunk in chunks)
+                  avg_tokens_per_chunk = total_tokens / actual_chunks if actual_chunks > 0 else 0
+                  
+                  if avg_tokens_per_chunk < 500:
+                    size_charge = 5  # Small chunks
+                  elif avg_tokens_per_chunk < 1000:
+                    size_charge = 10  # Medium chunks
+                  else:
+                    size_charge = 15  # Large chunks
+                  
+                  # Model premium: better models cost more
+                  model_rates = {
+                    "text-embedding-3-small": 10,
+                    "text-embedding-ada-002": 20,
+                    "text-embedding-3-large": 30,
+                  }
+                  model_charge = model_rates.get(indexing_charge["kb_model"].embedding_model, 20)
+                  
+                  # Add it all up for this document
+                  document_charge = chunk_charge + size_charge + model_charge
+                  
+                  # Track totals across all documents
+                  indexing_charge["total_credits"] += document_charge
+                  indexing_charge["documents_charged"] += 1
+                  indexing_charge["total_chunks"] += actual_chunks
+                  
+                  logger.info(f"Charged {document_charge} credits for document {doc_model.id} ({actual_chunks} chunks)")
+                  
                 except Exception as e:
-                  logger.error(
-                    f"Failed to log charge update: {str(e)}",
-                    extra={
-                      "doc_id": str(doc_model.id) if doc_model else None,
-                      "kb_id": str(kb_id),
-                      "job_id": str(job_id),
-                      "actual_chunks": actual_chunks if "actual_chunks" in locals() else None,
-                      "error": str(e),
-                    },
-                  )
+                  logger.warning(f"Failed to calculate indexing charge for document {doc_model.id}: {e}")
 
             except Exception as embed_error:
               logger.error(
@@ -1212,34 +1229,100 @@ def index_documents_task(
           session.commit()
           logger.info(f"Document {doc_model.id} status updated to FAILED")
 
-          # Update charge with failure information (handled asynchronously elsewhere)
-          if embedding_charge and embedding_charge.transaction_id:
-            try:
-              logger.info(f"Charge error handling for document {doc_model.id} will be processed asynchronously")
-              logger.info(f"Error details logged for charge: {embedding_charge.transaction_id}")
-            except Exception as charge_error:
-              logger.error(
-                f"Failed to log charge error info: {str(charge_error)}",
-                extra={
-                  "kb_id": str(kb_id),
-                  "job_id": str(job_id),
-                  "doc_id": str(doc_model.id) if doc_model else None,
-                  "error": str(charge_error),
-                },
-              )
+          # Document failed - no charge for failed work, fair billing
+          if indexing_charge:
+            logger.info(f"Document {doc_model.id} failed indexing - no charge applied")
 
-      # Complete charge if provided (handled asynchronously elsewhere)
-      if embedding_charge and embedding_charge.transaction_id:
+      # Final additive indexing charge summary and application
+      if indexing_charge and indexing_charge.get("total_credits", 0) > 0:
         try:
-          logger.info("Indexing charge completion will be handled asynchronously")
-          logger.info(f"Indexing completed: {indexed_count}/{total_docs} documents, charge: {embedding_charge.transaction_id}")
+          total_credits = indexing_charge["total_credits"]
+          docs_charged = indexing_charge["documents_charged"]
+          total_chunks = indexing_charge["total_chunks"]
+          
+          # Log final indexing charge summary
+          logger.info(f"Indexing complete: {docs_charged}/{total_docs} documents, {total_chunks} chunks, {int(total_credits)} credits charged")
+          
+          try:
+            # Update existing transaction with combined processing + indexing charges
+            from models import WalletModel, TransactionModel
+            
+            indexing_credits = int(total_credits)
+            charge_id = job.context.get("charge_id") if job and job.context else None
+            
+            # Fallback to initial_charge_id if charge_id not found
+            if not charge_id and job and job.context:
+              charge_id = job.context.get("initial_charge_id")
+            
+            if charge_id:
+              # Get the original processing transaction
+              original_transaction = session.get(TransactionModel, UUID(charge_id))
+              if original_transaction:
+                original_amount = original_transaction.credits or 0
+                combined_total = original_amount + indexing_credits
+                
+                # Update transaction with combined amount and detailed breakdown
+                original_transaction.credits = combined_total
+                
+                # Preserve existing metadata and add indexing details
+                metadata = original_transaction.transaction_metadata or {}
+                metadata.update({
+                  "processing_credits": original_amount,
+                  "indexing_credits": indexing_credits,
+                  "total_credits": combined_total,
+                  "charge_breakdown": "processing + indexing",
+                  "indexing_details": {
+                    "documents_indexed": docs_charged,
+                    "total_chunks": total_chunks,
+                    "embedding_model": indexing_charge["kb_model"].embedding_model,
+                    "job_id": str(job_id)
+                  }
+                })
+                original_transaction.transaction_metadata = metadata
+                
+                # Deduct only the additional indexing credits from wallet
+                wallet = session.query(WalletModel).filter_by(organization_id=UUID(org_id)).first()
+                if wallet and wallet.balance >= indexing_credits:
+                  original_wallet_balance = wallet.balance
+                  original_credits_spent = wallet.credits_spent
+                  wallet.balance -= indexing_credits
+                  wallet.credits_spent += indexing_credits
+                  
+                  # Atomic commit: transaction update + wallet deduction
+                  session.commit()
+                  
+                  logger.info(f"Successfully updated transaction {charge_id} with combined charges: {combined_total} credits")
+                  logger.info(f"Indexing charges added: {indexing_credits} credits, new wallet balance: {wallet.balance}")
+                  
+                else:
+                  logger.warning(f"Insufficient credits for indexing. Required: {indexing_credits}, Available: {wallet.balance if wallet else 'N/A'}")
+                  
+              else:
+                logger.warning(f"Original transaction {charge_id} not found, falling back to direct wallet deduction")
+                
+                # Fallback: direct wallet deduction without transaction update
+                wallet = session.query(WalletModel).filter_by(organization_id=UUID(org_id)).first()
+                if wallet and wallet.balance >= indexing_credits:
+                  wallet.balance -= indexing_credits
+                  wallet.credits_spent += indexing_credits
+                  session.commit()
+                  logger.info(f"Fallback: deducted {indexing_credits} credits directly from wallet")
+                
+            else:
+              logger.warning("No charge_id found in job context, cannot update transaction")
+            
+          except Exception as charge_error:
+            logger.error(f"Failed to update transaction with indexing charges: {str(charge_error)}")
+            try:
+              session.rollback()
+            except Exception as rollback_error:
+              logger.error(f"Rollback failed: {rollback_error}")
+            # Continue execution - indexing succeeded, billing is separate concern
+          
         except Exception as e:
-          logger.warning(f"Failed to log indexing completion: {e}")
-      elif initial_charge_id:
-        try:
-          logger.info(f"Initial charge {initial_charge_id} completion will be handled by charge service")
-        except Exception as e:
-          logger.warning(f"Failed to log initial charge completion {initial_charge_id}: {e}")
+          logger.warning(f"Failed to log final indexing charge summary: {e}")
+      else:
+        logger.info("No indexing charges - no documents were successfully indexed")
 
       # Update job status to completed
       if job:
