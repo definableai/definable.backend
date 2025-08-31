@@ -1367,7 +1367,8 @@ def index_documents_task(
                   session.commit()
 
                   logger.info(f"Successfully updated transaction {charge_id} with combined charges: {combined_total} credits")
-                  logger.info(f"Indexing charges added: {indexing_credits} credits, old balance: {original_wallet_balance}, new balance: {wallet.balance}")
+                  logger.info(f"Indexing charges added: {indexing_credits} credits")
+                  logger.info(f"Old balance: {original_wallet_balance}, new balance: {wallet.balance}")
 
                 else:
                   logger.warning(f"Insufficient credits for indexing. Required: {indexing_credits}, Available: {wallet.balance if wallet else 'N/A'}")
