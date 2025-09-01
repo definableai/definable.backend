@@ -43,8 +43,6 @@ def upgrade() -> None:
     # Find all rows where the id is NULL
     results = conn.execute(sa.select(charges_table).where(charges_table.c.id.is_(None))).fetchall()
 
-    print(f"Found {len(results)} charges with NULL IDs. Backfilling now...")
-
     for row in results:
         new_id = uuid4()
         # Create an UPDATE statement to set the new ID
@@ -54,12 +52,6 @@ def upgrade() -> None:
             .values(id=new_id)
         )
         conn.execute(update_statement)
-        print(f"  -> Assigned ID {new_id} to charge '{row.name}'")
-
-    print("Finished backfilling NULL IDs.")
-
-# def upgrade() -> None:
-#     pass
 
 def downgrade() -> None:
     pass

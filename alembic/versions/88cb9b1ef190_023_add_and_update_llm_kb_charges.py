@@ -44,7 +44,6 @@ def upgrade() -> None:
     conn.execute(
         sa.delete(charges_table).where(charges_table.c.name == "pdf-extraction")
     )
-    print("Removed deprecated charge: 'pdf-extraction'")  # noqa: T201
 
     # --- List of charges ---
     desired_charges = [
@@ -133,7 +132,6 @@ def upgrade() -> None:
 
         if result:
             # Update existing charge
-            print(f"Updating existing charge: '{charge_data['name']}'")
             update_statement = (
                 sa.update(charges_table)
                 .where(charges_table.c.name == charge_data['name'])
@@ -150,7 +148,6 @@ def upgrade() -> None:
             conn.execute(update_statement)
         else:
             # Insert new charge
-            print(f"Inserting new charge: '{charge_data['name']}'")
             insert_statement = sa.insert(charges_table).values(**charge_data)
             conn.execute(insert_statement)
 
