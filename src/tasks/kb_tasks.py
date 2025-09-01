@@ -385,7 +385,7 @@ def update_job_progress(
             file_id=file_id,
           )
         else:
-          logger.debug(f"Skipping job update for {job_id}: status={status_str}, progress={progress}% (no significant change)")
+          pass  # No significant change in job status
 
   except Exception as e:
     logger.error(
@@ -636,14 +636,79 @@ def process_document_task(
         send_update=True,
       )
 
-      # Handle charging if provided
-      if charge_id and complete_charge:
+      # Finalize processing charge based on actual content
+      # If there's a charge_id, it means FastAPI created a charge for processing
+      if charge_id:
         try:
-          from utils.charge import Charge
+          from models import TransactionModel, WalletModel, TransactionStatus, TransactionType
 
-          charge = Charge.from_transaction_id(charge_id, session=session)
-          if charge:
-            charge.calculate_and_update_sync()
+          if source_type_name == "file":
+            transaction = session.get(TransactionModel, UUID(charge_id))
+            if transaction:
+              original_held_amount = transaction.credits
+              current_metadata = transaction.transaction_metadata or {}
+
+              # Get file size from transaction metadata (set during FastAPI charge creation)
+              file_size_bytes = current_metadata.get("file_size_bytes", 0)
+              file_size_mb = max(1, int((file_size_bytes / (1024 * 1024)) + 0.5))  # Round up
+
+              # Charge 5 credits per MB
+              charge_amount = file_size_mb * 5
+
+              logger.info(f"Charging for {file_size_mb} MB ({file_size_bytes} bytes)")
+
+              # Finalize transaction
+              transaction.type = TransactionType.DEBIT
+              transaction.status = TransactionStatus.COMPLETED
+              transaction.credits = charge_amount
+              transaction.description = "Credits used for pdf_extraction"
+
+              current_metadata.update({
+                "file_size_mb": file_size_mb,
+                "file_size_bytes": file_size_bytes,
+                "content_chars": len(content) if content else 0,
+                "processing_method": source_type_name,
+                "processing_status": "completed",
+                "job_id": str(job_id),
+                "job_status": "completed",
+              })
+              transaction.transaction_metadata = current_metadata
+
+              # Update wallet balance and release hold
+              wallet = session.query(WalletModel).filter_by(organization_id=transaction.organization_id).first()
+              if wallet:
+                wallet.balance -= charge_amount
+                wallet.hold = max(0, wallet.hold - original_held_amount)
+                wallet.credits_spent += charge_amount
+
+                session.commit()
+                logger.info(f"Processing charge completed for {file_size_mb} MB ({charge_amount} credits)")
+              else:
+                logger.warning(f"Wallet not found for transaction {charge_id}")
+            else:
+              logger.warning(f"Transaction {charge_id} not found")
+
+          elif source_type_name == "url":
+            # URL processing is now limit-based per subscription tier (0/50/500 pages per month)
+            # Release any held transaction since URLs are no longer charged
+            transaction = session.get(TransactionModel, UUID(charge_id))
+            if transaction and transaction.status == TransactionStatus.PENDING:
+              # Release the held amount back to wallet
+              wallet = session.query(WalletModel).filter_by(organization_id=transaction.organization_id).first()
+              if wallet:
+                wallet.hold = max(0, wallet.hold - transaction.credits)
+
+              # Complete the transaction and release the hold
+              transaction.type = TransactionType.RELEASE
+              transaction.status = TransactionStatus.COMPLETED
+              transaction.description = "URL processing - no charge per pricing model"
+              transaction.credits = 0
+
+              session.commit()
+              logger.info("Released held transaction for URL processing - no charges per pricing model")
+            else:
+              logger.info("URL processing completed - no charges per pricing model")
+
         except Exception as e:
           logger.warning(f"Failed to complete charge {charge_id}: {e}")
 
@@ -823,6 +888,37 @@ def process_document_task(
             org_id=UUID(org_id),
             send_update=True,
           )
+
+          # Release charge on processing failure using direct database operations
+          if job and job.context and job.context.get("charge_id"):
+            try:
+              from models import TransactionModel, WalletModel, TransactionStatus
+
+              charge_id = job.context.get("charge_id")
+              transaction = session.get(TransactionModel, UUID(charge_id))
+
+              if transaction:
+                # Update transaction status to cancelled and add failure reason
+                transaction.status = TransactionStatus.CANCELLED
+                metadata = transaction.transaction_metadata or {}
+                metadata.update({"cancellation_reason": f"Processing failed: {str(e)}", "job_id": str(job_id), "job_status": "failed"})
+                transaction.transaction_metadata = metadata
+
+                # Release held amount back to wallet balance
+                wallet = session.query(WalletModel).filter_by(organization_id=transaction.organization_id).first()
+                if wallet and transaction.credits:
+                  # Return held amount to available balance
+                  wallet.hold = max(0, wallet.hold - transaction.credits)
+                  session.commit()
+                  logger.info(f"Released charge {charge_id}")
+                else:
+                  logger.warning(f"Wallet not found or no credits to release for transaction {charge_id}")
+              else:
+                logger.warning(f"Transaction {charge_id} not found for release")
+
+            except Exception as charge_error:
+              logger.warning(f"Failed to release charge: {charge_error}")
+
       except Exception:
         pass
 
@@ -880,7 +976,6 @@ def index_documents_task(
       from datetime import datetime
 
       from models import DocumentStatus, KBDocumentModel, KnowledgeBaseModel
-      from utils.charge import Charge
 
       # Get documents and verify they exist
       doc_models = []
@@ -918,27 +1013,7 @@ def index_documents_task(
 
       logger.info(f"Knowledge base found: {kb_model.name}")
 
-      # Get existing charge if provided for updating
-      embedding_charge = None
-      if initial_charge_id:
-        try:
-          logger.info(f"Using existing charge for indexing operation: {initial_charge_id}")
-          embedding_charge = Charge.from_transaction_id(initial_charge_id, session=session)
-          if embedding_charge:
-            logger.info(f"Found existing charge: {embedding_charge.transaction_id}")
-          else:
-            logger.warning(f"Could not find charge with ID: {initial_charge_id}")
-        except Exception as e:
-          logger.error(
-            f"Failed to get existing charge {initial_charge_id}: {str(e)}",
-            extra={
-              "charge_id": initial_charge_id,
-              "kb_id": str(kb_id),
-              "job_id": str(job_id),
-              "error": str(e),
-            },
-          )
-          embedding_charge = None
+      # Indexing is now limit-based per subscription tier, not charge-based
 
       # Process documents one by one
       logger.info("Starting document processing for indexing")
@@ -973,13 +1048,6 @@ def index_documents_task(
             estimated_chunks = max(1, token_count // kb_model.settings["max_chunk_size"])
             logger.info(f"Content analysis - tokens: {token_count}, estimated_chunks: {estimated_chunks}")
 
-            # Update charge with document-specific information if we have a charge
-            if embedding_charge and embedding_charge.transaction_id:
-              try:
-                logger.debug("Charge update skipped in sync context - will be handled asynchronously")
-                logger.info(f"Document {doc_model.id} analysis: {token_count} tokens, {estimated_chunks} estimated chunks")
-              except Exception as e:
-                logger.error(f"Failed to log charge info: {str(e)}")
           else:
             logger.warning(f"Document {doc_model.id} has no content for embedding")
 
@@ -1124,28 +1192,12 @@ def index_documents_task(
               metadata = doc_model.source_metadata or {}
               metadata["actual_chunks"] = actual_chunks
               doc_model.source_metadata = metadata
-              logger.debug(f"Document {doc_model.id} metadata updated with chunk information")
 
               session.add(doc_model)
               session.commit()
               logger.info(f"Document {doc_model.id} changes committed to database")
 
-              # Update charge with actual chunk information (no async/await in sync context)
-              if embedding_charge and embedding_charge.transaction_id:
-                try:
-                  logger.debug("Updating charge with actual chunk count - skipping in sync context")
-                  logger.info(f"Embedding charge will be updated asynchronously for {actual_chunks} chunks")
-                except Exception as e:
-                  logger.error(
-                    f"Failed to log charge update: {str(e)}",
-                    extra={
-                      "doc_id": str(doc_model.id) if doc_model else None,
-                      "kb_id": str(kb_id),
-                      "job_id": str(job_id),
-                      "actual_chunks": actual_chunks if "actual_chunks" in locals() else None,
-                      "error": str(e),
-                    },
-                  )
+              # Document indexed successfully - no charges per pricing model
 
             except Exception as embed_error:
               logger.error(
@@ -1181,34 +1233,9 @@ def index_documents_task(
           session.commit()
           logger.info(f"Document {doc_model.id} status updated to FAILED")
 
-          # Update charge with failure information (handled asynchronously elsewhere)
-          if embedding_charge and embedding_charge.transaction_id:
-            try:
-              logger.info(f"Charge error handling for document {doc_model.id} will be processed asynchronously")
-              logger.info(f"Error details logged for charge: {embedding_charge.transaction_id}")
-            except Exception as charge_error:
-              logger.error(
-                f"Failed to log charge error info: {str(charge_error)}",
-                extra={
-                  "kb_id": str(kb_id),
-                  "job_id": str(job_id),
-                  "doc_id": str(doc_model.id) if doc_model else None,
-                  "error": str(charge_error),
-                },
-              )
+          # Document failed - no additional action needed
 
-      # Complete charge if provided (handled asynchronously elsewhere)
-      if embedding_charge and embedding_charge.transaction_id:
-        try:
-          logger.info("Indexing charge completion will be handled asynchronously")
-          logger.info(f"Indexing completed: {indexed_count}/{total_docs} documents, charge: {embedding_charge.transaction_id}")
-        except Exception as e:
-          logger.warning(f"Failed to log indexing completion: {e}")
-      elif initial_charge_id:
-        try:
-          logger.info(f"Initial charge {initial_charge_id} completion will be handled by charge service")
-        except Exception as e:
-          logger.warning(f"Failed to log initial charge completion {initial_charge_id}: {e}")
+      # Indexing completed - no charges per pricing model (limit-based)
 
       # Update job status to completed
       if job:
@@ -1379,6 +1406,10 @@ def upload_file_task(
             org_id=UUID(org_id),
             send_update=True,
           )
+
+          # Upload failed - no charge needed since we only charge after successful processing
+          logger.info("Upload failed. No charge applied since charging happens during processing.")
+
         return {"success": False, "error": f"S3 upload failed: {str(e)}"}
 
       # Update document with S3 info
@@ -1391,12 +1422,8 @@ def upload_file_task(
         doc.source_metadata = metadata
         session.commit()
 
-      # Complete charge (handled asynchronously in service layer)
-      try:
-        # Note: Charge completion is handled asynchronously in the service layer
-        logger.info(f"Upload completed, charge {charge_id} will be processed by background service")
-      except Exception as e:
-        logger.warning(f"Failed to log charge info {charge_id}: {e}")
+      # Charge finalization moved to processing phase for accuracy and performance
+      logger.info("Upload completed successfully. Charging deferred to processing phase.")
 
       # Update job status to completed
       if job:
