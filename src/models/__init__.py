@@ -14,7 +14,9 @@ from models.chat_model import ChatModel, ChatUploadModel, MessageModel
 from models.invitations_model import InvitationModel, InvitationStatus
 from models.job_model import JobModel, JobStatus
 from models.kb_model import DocumentStatus, KBDocumentModel, KBFolder, KnowledgeBaseModel, SourceTypeModel
+from models.llm_category_model import LLMCategoryModel, LLMModelCategoryModel
 from models.llm_model import LLMModel
+from models.marketplace_model import MarketplaceAssistantModel, MarketplaceReviewModel, MarketplaceUsageModel
 from models.org_model import OrganizationMemberModel, OrganizationModel
 from models.prompt_model import PromptCategoryModel, PromptModel
 from models.public_upload_model import PublicUploadModel
@@ -41,7 +43,12 @@ __all__ = [
   "KBFolder",
   "KnowledgeBaseModel",
   "LLMModel",
+  "LLMCategoryModel",
+  "LLMModelCategoryModel",
   "LogLevel",
+  "MarketplaceAssistantModel",
+  "MarketplaceUsageModel",
+  "MarketplaceReviewModel",
   "LogType",
   "MessageModel",
   "OrganizationMemberModel",
