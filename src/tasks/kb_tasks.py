@@ -654,7 +654,7 @@ def process_document_task(
 
               # Charge 5 credits per MB
               charge_amount = file_size_mb * 5
-              
+
               logger.info(f"Charging for {file_size_mb} MB ({file_size_bytes} bytes)")
 
               # Finalize transaction
@@ -697,15 +697,15 @@ def process_document_task(
               wallet = session.query(WalletModel).filter_by(organization_id=transaction.organization_id).first()
               if wallet:
                 wallet.hold = max(0, wallet.hold - transaction.credits)
-                
+
               # Complete the transaction and release the hold
               transaction.type = TransactionType.RELEASE
               transaction.status = TransactionStatus.COMPLETED
               transaction.description = "URL processing - no charge per pricing model"
               transaction.credits = 0
-              
+
               session.commit()
-              logger.info(f"Released held transaction for URL processing - no charges per pricing model")
+              logger.info("Released held transaction for URL processing - no charges per pricing model")
             else:
               logger.info(f"URL processing completed - no charges per pricing model")
 
