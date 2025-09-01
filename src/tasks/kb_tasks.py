@@ -707,7 +707,7 @@ def process_document_task(
               session.commit()
               logger.info("Released held transaction for URL processing - no charges per pricing model")
             else:
-              logger.info(f"URL processing completed - no charges per pricing model")
+              logger.info("URL processing completed - no charges per pricing model")
 
         except Exception as e:
           logger.warning(f"Failed to complete charge {charge_id}: {e}")
