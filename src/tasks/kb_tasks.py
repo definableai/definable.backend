@@ -643,19 +643,19 @@ def process_document_task(
           from models import TransactionModel, WalletModel, TransactionStatus, TransactionType
 
           if source_type_name == "file":
-            actual_page_count = 1
-            content_chars = len(content) if content else 0
-            if content_chars > 0:
-              actual_page_count = max(1, int(content_chars / 2500))
-              logger.info(f"Charging for {actual_page_count} pages")
-
             transaction = session.get(TransactionModel, UUID(charge_id))
             if transaction:
               original_held_amount = transaction.credits
               current_metadata = transaction.transaction_metadata or {}
 
-              final_page_count = current_metadata.get("estimated_pages", actual_page_count)
-              charge_amount = final_page_count * 5
+              # Get file size from transaction metadata (set during FastAPI charge creation)
+              file_size_bytes = current_metadata.get("file_size_bytes", 0)
+              file_size_mb = max(1, int((file_size_bytes / (1024 * 1024)) + 0.5))  # Round up
+
+              # Charge 5 credits per MB
+              charge_amount = file_size_mb * 5
+              
+              logger.info(f"Charging for {file_size_mb} MB ({file_size_bytes} bytes)")
 
               # Finalize transaction
               transaction.type = TransactionType.DEBIT
@@ -664,7 +664,8 @@ def process_document_task(
               transaction.description = "Credits used for pdf_extraction"
 
               current_metadata.update({
-                "pages": final_page_count,
+                "file_size_mb": file_size_mb,
+                "file_size_bytes": file_size_bytes,
                 "content_chars": len(content) if content else 0,
                 "processing_method": source_type_name,
                 "processing_status": "completed",
@@ -681,53 +682,32 @@ def process_document_task(
                 wallet.credits_spent += charge_amount
 
                 session.commit()
-                logger.info(f"Processing charge completed for {final_page_count} pages ({charge_amount} credits)")
+                logger.info(f"Processing charge completed for {file_size_mb} MB ({charge_amount} credits)")
               else:
                 logger.warning(f"Wallet not found for transaction {charge_id}")
             else:
               logger.warning(f"Transaction {charge_id} not found")
 
           elif source_type_name == "url":
+            # URL processing is now limit-based per subscription tier (0/50/500 pages per month)
+            # Release any held transaction since URLs are no longer charged
             transaction = session.get(TransactionModel, UUID(charge_id))
-            if transaction:
-              original_held_amount = transaction.credits
-              current_metadata = dict(transaction.transaction_metadata or {})
-
-              charge_qty = current_metadata.get("charge_qty", 1)
-              charge_amount = charge_qty * 1
-
-              # Finalize transaction
-              transaction.type = TransactionType.DEBIT
-              transaction.status = TransactionStatus.COMPLETED
-              transaction.credits = charge_amount
-              transaction.description = "Credits used for url_extraction"
-
-              current_metadata.update({
-                "operation": doc.source_metadata.get("operation", "scrape"),
-                "url": doc.source_metadata.get("url", ""),
-                "content_chars": len(content) if content else 0,
-                "processing_method": "url_extraction",
-                "processing_status": "completed",
-                "job_id": str(job_id),
-                "job_status": "completed",
-              })
-              transaction.transaction_metadata = current_metadata
-
-              # Update wallet balance and release hold
+            if transaction and transaction.status == TransactionStatus.PENDING:
+              # Release the held amount back to wallet
               wallet = session.query(WalletModel).filter_by(organization_id=transaction.organization_id).first()
               if wallet:
-                wallet.balance -= charge_amount
-                wallet.hold = max(0, wallet.hold - original_held_amount)
-                wallet.credits_spent += charge_amount
-
-                session.commit()
-                logger.info(
-                  f"URL processing charge completed for operation '{doc.source_metadata.get('operation', 'scrape')}' ({charge_amount} credits)"
-                )
-              else:
-                logger.warning(f"Wallet not found for transaction {charge_id}")
+                wallet.hold = max(0, wallet.hold - transaction.credits)
+                
+              # Complete the transaction and release the hold
+              transaction.type = TransactionType.RELEASE
+              transaction.status = TransactionStatus.COMPLETED
+              transaction.description = "URL processing - no charge per pricing model"
+              transaction.credits = 0
+              
+              session.commit()
+              logger.info(f"Released held transaction for URL processing - no charges per pricing model")
             else:
-              logger.warning(f"Transaction {charge_id} not found")
+              logger.info(f"URL processing completed - no charges per pricing model")
 
         except Exception as e:
           logger.warning(f"Failed to complete charge {charge_id}: {e}")
@@ -1033,23 +1013,7 @@ def index_documents_task(
 
       logger.info(f"Knowledge base found: {kb_model.name}")
 
-      # Set up additive indexing charges - separate from processing charges
-      indexing_charge = None
-      if initial_charge_id:
-        try:
-          # Set up additive charging - we'll charge per document as they succeed
-          indexing_charge = {"kb_model": kb_model, "total_credits": 0, "documents_charged": 0, "total_chunks": 0, "job_id": str(job_id)}
-
-        except Exception as e:
-          logger.error(
-            f"Failed to setup indexing charges: {str(e)}",
-            extra={
-              "kb_id": str(kb_id),
-              "job_id": str(job_id),
-              "error": str(e),
-            },
-          )
-          indexing_charge = None
+      # Indexing is now limit-based per subscription tier, not charge-based
 
       # Process documents one by one
       logger.info("Starting document processing for indexing")
@@ -1233,43 +1197,7 @@ def index_documents_task(
               session.commit()
               logger.info(f"Document {doc_model.id} changes committed to database")
 
-              # Apply additive indexing charge - only charge for what actually worked
-              if indexing_charge and actual_chunks > 0:
-                try:
-                  # Base charge: 2 credits per chunk we successfully created
-                  chunk_charge = actual_chunks * 2
-
-                  # Size bonus: larger chunks need more processing power
-                  total_tokens = sum(len(chunk.page_content.split()) for chunk in chunks)
-                  avg_tokens_per_chunk = total_tokens / actual_chunks if actual_chunks > 0 else 0
-
-                  if avg_tokens_per_chunk < 500:
-                    size_charge = 5  # Small chunks
-                  elif avg_tokens_per_chunk < 1000:
-                    size_charge = 10  # Medium chunks
-                  else:
-                    size_charge = 15  # Large chunks
-
-                  # Model premium: better models cost more
-                  model_rates = {
-                    "text-embedding-3-small": 10,
-                    "text-embedding-ada-002": 20,
-                    "text-embedding-3-large": 30,
-                  }
-                  model_charge = model_rates.get(indexing_charge["kb_model"].embedding_model, 20)
-
-                  # Add it all up for this document
-                  document_charge = chunk_charge + size_charge + model_charge
-
-                  # Track totals across all documents
-                  indexing_charge["total_credits"] += document_charge
-                  indexing_charge["documents_charged"] += 1
-                  indexing_charge["total_chunks"] += actual_chunks
-
-                  logger.info(f"Charged {document_charge} credits for document {doc_model.id} ({actual_chunks} chunks)")
-
-                except Exception as e:
-                  logger.warning(f"Failed to calculate indexing charge for document {doc_model.id}: {e}")
+              # Document indexed successfully - no charges per pricing model
 
             except Exception as embed_error:
               logger.error(
@@ -1305,100 +1233,9 @@ def index_documents_task(
           session.commit()
           logger.info(f"Document {doc_model.id} status updated to FAILED")
 
-          # Document failed - no charge for failed work, fair billing
-          if indexing_charge:
-            logger.info(f"Document {doc_model.id} failed indexing - no charge applied")
+          # Document failed - no additional action needed
 
-      # Final additive indexing charge summary and application
-      if indexing_charge and indexing_charge.get("total_credits", 0) > 0:
-        try:
-          total_credits = indexing_charge["total_credits"]
-          docs_charged = indexing_charge["documents_charged"]
-          total_chunks = indexing_charge["total_chunks"]
-
-          # Log final indexing charge summary
-          logger.info(f"Indexing complete: {docs_charged}/{total_docs} documents, {total_chunks} chunks, {int(total_credits)} credits charged")
-
-          try:
-            # Update existing transaction with combined processing + indexing charges
-            from models import WalletModel, TransactionModel
-
-            indexing_credits = int(total_credits)
-            charge_id = job.context.get("charge_id") if job and job.context else None
-
-            # Fallback to initial_charge_id if charge_id not found
-            if not charge_id and job and job.context:
-              charge_id = job.context.get("initial_charge_id")
-
-            if charge_id:
-              # Get the original processing transaction
-              original_transaction = session.get(TransactionModel, UUID(charge_id))
-              if original_transaction:
-                original_amount = original_transaction.credits or 0
-                combined_total = original_amount + indexing_credits
-
-                # Update transaction with combined charges
-                original_transaction.credits = combined_total
-
-                # Preserve existing metadata and add indexing details
-                metadata = dict(original_transaction.transaction_metadata or {})
-                metadata.update({
-                  "processing_credits": original_amount,
-                  "indexing_credits": indexing_credits,
-                  "total_credits": combined_total,
-                  "charge_breakdown": "processing + indexing",
-                  "indexing_details": {
-                    "documents_indexed": docs_charged,
-                    "total_chunks": total_chunks,
-                    "embedding_model": indexing_charge["kb_model"].embedding_model,
-                    "job_id": str(job_id),
-                  },
-                })
-                original_transaction.transaction_metadata = metadata
-
-                # Deduct indexing credits from wallet
-                wallet = session.query(WalletModel).filter_by(organization_id=UUID(org_id)).first()
-                if wallet and wallet.balance >= indexing_credits:
-                  original_wallet_balance = wallet.balance
-                  wallet.balance -= indexing_credits
-                  wallet.credits_spent += indexing_credits
-
-                  # Atomic commit: transaction update + wallet deduction
-                  session.commit()
-
-                  logger.info(f"Successfully updated transaction {charge_id} with combined charges: {combined_total} credits")
-                  logger.info(f"Indexing charges added: {indexing_credits} credits")
-                  logger.info(f"Old balance: {original_wallet_balance}, new balance: {wallet.balance}")
-
-                else:
-                  logger.warning(f"Insufficient credits for indexing. Required: {indexing_credits}, Available: {wallet.balance if wallet else 'N/A'}")
-
-              else:
-                logger.warning(f"Original transaction {charge_id} not found, falling back to direct wallet deduction")
-
-                # Fallback: direct wallet deduction without transaction update
-                wallet = session.query(WalletModel).filter_by(organization_id=UUID(org_id)).first()
-                if wallet and wallet.balance >= indexing_credits:
-                  wallet.balance -= indexing_credits
-                  wallet.credits_spent += indexing_credits
-                  session.commit()
-                  logger.info(f"Fallback: deducted {indexing_credits} credits directly from wallet")
-
-            else:
-              logger.warning("No charge_id found in job context, cannot update transaction")
-
-          except Exception as charge_error:
-            logger.error(f"Failed to update transaction with indexing charges: {str(charge_error)}")
-            try:
-              session.rollback()
-            except Exception as rollback_error:
-              logger.error(f"Rollback failed: {rollback_error}")
-            # Continue execution - indexing succeeded, billing is separate concern
-
-        except Exception as e:
-          logger.warning(f"Failed to log final indexing charge summary: {e}")
-      else:
-        logger.info("No indexing charges - no documents were successfully indexed")
+      # Indexing completed - no charges per pricing model (limit-based)
 
       # Update job status to completed
       if job:
