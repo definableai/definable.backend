@@ -1,6 +1,6 @@
 import hashlib
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from fastapi import Depends, HTTPException, Request, status
@@ -13,11 +13,13 @@ from dependencies.security import RBAC
 from libs.stytch.v1 import stytch_base
 from models import (
   APIKeyModel,
+  InvitationModel,
   OrganizationMemberModel,
   OrganizationModel,
   RoleModel,
   UserModel,
 )
+from models.invitations_model import InvitationStatus
 from services.__base.acquire import Acquire
 from services.api_keys.schema import VerifyAPIKeyRequest, VerifyAPIKeyResponse
 from utils import verify_svix_signature
@@ -44,7 +46,7 @@ class AuthService:
     self.logger = acquire.logger
 
   async def post(self, request: Request, db: AsyncSession = Depends(get_db)) -> JSONResponse:
-    """Post request."""
+    """Post request - Enhanced to handle invitations."""
     signature = request.headers["svix-signature"]
     svix_id = request.headers["svix-id"]
     svix_timestamp = request.headers["svix-timestamp"]
@@ -60,28 +62,21 @@ class AuthService:
     if data["action"] == "CREATE":
       user = data["user"]
 
+      # Skip temp users
       if user["untrusted_metadata"].get("temp"):
         return JSONResponse(content={"message": "User created from temp"})
 
       if len(user["emails"]) == 0:
         return JSONResponse(content={"message": "No email found"})
 
-      db_user = await self._create_new_user(
-        StytchUser(
-          email=user["emails"][0]["email"],
-          stytch_id=user["user_id"],
-          first_name=user["name"]["first_name"],
-          last_name=user["name"]["last_name"],
-          metadata=data,
-        ),
-        db,
-      )
-      if db_user:
-        await stytch_base.update_user(
-          user["user_id"],
-          str(db_user.id),
-        )
-      return JSONResponse(content={"message": "User created successfully"})
+      # Check if this is an invitation-based user creation
+      metadata = user.get("untrusted_metadata", {})
+      if metadata.get("type") == "invitation":
+        self.logger.info("Processing invitation-based user creation")
+        return await self._process_invitation_user(user, metadata, db)
+      else:
+        # Regular user creation (existing logic)
+        return await self._process_regular_user(user, db)
     else:
       return JSONResponse(content={"message": "Invalid action"})
 
@@ -160,27 +155,27 @@ class AuthService:
 
   async def _create_new_user(self, user_data: StytchUser, session: AsyncSession) -> UserModel | None:
     """Create a new user."""
-    user = await session.execute(select(UserModel).where(UserModel.stytch_id == user_data.stytch_id))
-    results = user.unique().scalar_one_or_none()
-    if results:
+    query_result = await session.execute(select(UserModel).where(UserModel.stytch_id == user_data.stytch_id))
+    existing_user = query_result.unique().scalar_one_or_none()
+    if existing_user:
       return None
     else:
-      user = UserModel(
+      new_user = UserModel(
         email=user_data.email,
         stytch_id=user_data.stytch_id,
         first_name=user_data.first_name,
         last_name=user_data.last_name,
         _metadata=user_data.metadata,
       )
-      session.add(user)
+      session.add(new_user)
       await session.flush()
 
       # Generate default auth token as API key after user is created and org is set up
-      org = await self._setup_default_organization(user, session)
-      await self._create_default_auth_token(user.id, org.id, session)
+      org = await self._setup_default_organization(new_user, session)
+      await self._create_default_auth_token(new_user.id, org.id, session)
       await session.commit()
-      await session.refresh(user)
-      return user
+      await session.refresh(new_user)
+      return new_user
 
   async def _setup_default_organization(self, user: UserModel, session: AsyncSession) -> OrganizationModel:
     """
@@ -324,3 +319,106 @@ class AuthService:
     except Exception as e:
       self.logger.error(f"Error in verify_api_key: {str(e)}")
       return VerifyAPIKeyResponse(valid=False, message="Token verification failed")
+
+  async def _process_invitation_user(self, user: dict, metadata: dict, db: AsyncSession) -> JSONResponse:
+    """Process user creation from invitation acceptance."""
+    try:
+      invitation_id = UUID(metadata["invitation_id"])
+      organization_id = UUID(metadata["organization_id"])
+      role_id = UUID(metadata["role_id"])
+
+      # 1. Find and validate invitation
+      invitation = await db.get(InvitationModel, invitation_id)
+      if not invitation:
+        self.logger.error(f"Invitation not found: {invitation_id}")
+        return JSONResponse(content={"message": "Invalid invitation"})
+
+      if invitation.status != InvitationStatus.PENDING:
+        self.logger.warning(f"Invitation already processed: {invitation_id}")
+        return JSONResponse(content={"message": "Invitation already processed"})
+
+      if invitation.expiry_time < datetime.now(timezone.utc):
+        self.logger.warning(f"Invitation expired: {invitation_id}")
+        invitation.status = InvitationStatus.EXPIRED
+        await db.commit()
+        return JSONResponse(content={"message": "Invitation expired"})
+
+      # 2. Create internal user (without default org setup)
+      db_user = await self._create_invited_user(
+        StytchUser(
+          email=user["emails"][0]["email"],
+          stytch_id=user["user_id"],
+          first_name=user["name"]["first_name"],
+          last_name=user["name"]["last_name"],
+          metadata=metadata,
+        ),
+        db,
+      )
+
+      if not db_user:
+        return JSONResponse(content={"message": "User already exists"})
+
+      # 3. Add user to organization with specified role
+      member = OrganizationMemberModel(
+        organization_id=organization_id, user_id=db_user.id, role_id=role_id, invited_by=invitation.invited_by, status="active"
+      )
+      db.add(member)
+
+      # 4. Mark invitation as accepted
+      invitation.status = InvitationStatus.ACCEPTED
+
+      # 5. Link Stytch user to internal user
+      await stytch_base.update_user(user["user_id"], str(db_user.id))
+
+      await db.commit()
+
+      self.logger.info(f"Invitation processed successfully for user {db_user.id}")
+      return JSONResponse(
+        content={
+          "message": "User created and added to organization successfully",
+          "user_id": str(db_user.id),
+          "organization_id": str(organization_id),
+        }
+      )
+
+    except Exception as e:
+      self.logger.error(f"Error processing invitation user: {str(e)}", exc_info=True)
+      await db.rollback()
+      return JSONResponse(content={"message": "Failed to process invitation"})
+
+  async def _process_regular_user(self, user: dict, db: AsyncSession) -> JSONResponse:
+    """Process regular user creation (existing logic)."""
+    db_user = await self._create_new_user(
+      StytchUser(
+        email=user["emails"][0]["email"],
+        stytch_id=user["user_id"],
+        first_name=user["name"]["first_name"],
+        last_name=user["name"]["last_name"],
+        metadata=user.get("untrusted_metadata", {}),
+      ),
+      db,
+    )
+    if db_user:
+      await stytch_base.update_user(user["user_id"], str(db_user.id))
+      return JSONResponse(content={"message": "User created successfully"})
+    else:
+      return JSONResponse(content={"message": "User already exists"})
+
+  async def _create_invited_user(self, user_data: StytchUser, session: AsyncSession) -> UserModel | None:
+    """Create a new invited user (without default organization setup)."""
+    query_result = await session.execute(select(UserModel).where(UserModel.stytch_id == user_data.stytch_id))
+    existing_user = query_result.unique().scalar_one_or_none()
+    if existing_user:
+      return None
+    else:
+      new_user = UserModel(
+        email=user_data.email,
+        stytch_id=user_data.stytch_id,
+        first_name=user_data.first_name,
+        last_name=user_data.last_name,
+        _metadata=user_data.metadata,
+      )
+      session.add(new_user)
+      await session.flush()
+      await session.refresh(new_user)
+      return new_user

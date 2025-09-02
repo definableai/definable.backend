@@ -176,6 +176,9 @@ alembic.ini
 junk/
 .claude
 CLAUDE.md
+.cursorignore
+.cursorrules
+.cursor
 
 # For pgAdmin
 *pgadmin*
