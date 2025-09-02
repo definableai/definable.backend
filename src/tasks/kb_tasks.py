@@ -6,14 +6,15 @@ import time
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-import httpx
 from sqlalchemy import select
 
 from common.logger import logger
 from common.q import task
-from config.settings import settings
 from database import sync_session
+from libs.firebase.v1 import get_rtdb
 from models import JobModel, JobStatus
+
+RTDB = get_rtdb()
 
 
 def _safe_status_value(status_field):
@@ -123,7 +124,7 @@ def send_job_update(
   url_details: Optional[Dict[str, Any]] = None,
   file_details: Optional[Dict[str, Any]] = None,
 ) -> bool:
-  """Send job status update via HTTP to the job update endpoint.
+  """Send job status update via Firebase to the kb_write path.
 
   Args:
       org_id: Organization UUID
@@ -158,7 +159,7 @@ def send_job_update(
     }
     numeric_status = status_mapping.get(status, 1)  # Default to PROCESSING if unknown
 
-    # Prepare simplified payload for job update endpoint
+    # Prepare simplified payload for Firebase
     payload = {
       "org_id": str(org_id),
       "job_id": str(job_id),
@@ -177,39 +178,25 @@ def send_job_update(
       },
     }
 
-    # Prepare headers with internal token authentication
-    headers = {
-      "Content-Type": "application/json",
-      "x-internal-token": settings.internal_token,
-    }
-
     logger.info(f"Sending job update for {job_id}: status={status}, progress={progress}%")
     logger.debug(f"Update payload: {payload}")
 
-    # Send HTTP request to job update endpoint using httpx
-    with httpx.Client(timeout=timeout) as client:
-      response = client.post(url=settings.job_update_url, headers=headers, json=payload)
+    # Write to Firebase at org_id/kb_write/ path using sync operations
+    firebase_path = f"{org_id}/kb_write/"
 
-    # Check response status
-    if response.status_code == 200:
-      response_data = response.json()
-      logger.info(f"Job update sent successfully for {job_id}: {response_data.get('message', 'Success')}")
+    # Use synchronous Firebase operations to avoid event loop issues
+    try:
+      ref = RTDB.child(firebase_path)
+      ref.set(payload)
+
+      logger.info(f"Job update written successfully to Firebase for {job_id}: {firebase_path}")
       return True
-    else:
-      logger.error(f"Job update failed for {job_id}: HTTP {response.status_code} - {response.text}")
+    except Exception as firebase_error:
+      logger.error(f"Job update failed for {job_id}: Firebase error - {str(firebase_error)}")
       return False
 
-  except httpx.TimeoutException as e:
-    logger.error(f"Job update request timed out for {job_id} after {timeout} seconds: {str(e)}")
-    return False
-  except httpx.ConnectError as e:
-    logger.error(f"Job update connection failed for {job_id} - service may be unavailable: {str(e)}")
-    return False
-  except httpx.RequestError as e:
-    logger.error(f"Job update request failed for {job_id}: {str(e)}")
-    return False
   except Exception as e:
-    logger.error(f"Unexpected error sending job update for {job_id}: {str(e)}")
+    logger.error(f"Unexpected error sending job update to Firebase for {job_id}: {str(e)}")
     return False
 
 
@@ -1587,7 +1574,7 @@ def process_url_task(
   self,
   url: str,
   operation: str,
-  settings: Dict[str, Any],
+  settings: Dict[str, Any],  # noqa: F811
   org_id: str,
   job_id: str,
   doc_id: str,
@@ -1647,7 +1634,7 @@ def process_url_task(
 
 async def _process_url_scrape(
   url: str,
-  settings: Dict[str, Any],
+  settings: Dict[str, Any],  # noqa: F811
   org_id: str,
   job_id: str,
   doc_id: str,
@@ -1859,7 +1846,7 @@ async def _process_url_scrape(
 
 async def _process_url_crawl(
   url: str,
-  settings: Dict[str, Any],
+  settings: Dict[str, Any],  # noqa: F811
   org_id: str,
   job_id: str,
   doc_id: str,
@@ -2301,7 +2288,7 @@ async def _process_url_crawl(
 
 async def _process_url_map(
   url: str,
-  settings: Dict[str, Any],
+  settings: Dict[str, Any],  # noqa: F811
   org_id: str,
   job_id: str,
   doc_id: str,

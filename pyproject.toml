@@ -54,6 +54,7 @@ dependencies = [
     "pillow>=10.0.0",
     "easyocr>=1.7.0",
     "pypdf>=6.0.0",
+    "firebase-admin>=7.1.0",
 ]
 
 [dependency-groups]

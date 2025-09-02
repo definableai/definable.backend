@@ -781,13 +781,23 @@ class KnowledgeBaseService:
       raise HTTPException(status_code=404, detail="Knowledge base not found")
 
     try:
-      # Query vector store for all chunks with matching doc_id
+      # First, get the total count of chunks for this document
+      count_query = text("""
+        SELECT COUNT(*)
+        FROM langchain_pg_embedding
+        WHERE collection_id = :collection_id
+        AND cmetadata->>'doc_id' = :doc_id
+      """)
+      count_result = await session.execute(count_query, {"collection_id": kb_model.collection_id, "doc_id": str(doc_id)})
+      total_chunks: int = int(count_result.scalar() or 0)
+
+      # Query vector store for chunks with matching doc_id, sorted by chunk_id as integer
       query = text("""
         SELECT id, document, embedding, cmetadata
         FROM langchain_pg_embedding
         WHERE collection_id = :collection_id
         AND cmetadata->>'doc_id' = :doc_id
-        ORDER BY cmetadata->>'chunk_id'
+        ORDER BY CAST(cmetadata->>'chunk_id' AS INTEGER)
         LIMIT :limit OFFSET :offset
       """)
       result = await session.execute(query, {"collection_id": kb_model.collection_id, "doc_id": str(doc_id), "limit": limit, "offset": offset})
@@ -797,7 +807,7 @@ class KnowledgeBaseService:
         chunk = DocumentChunk(id=row.id, chunk_id=row.cmetadata.get("chunk_id"), content=row.document, metadata=row.cmetadata)
         chunks.append(chunk)
 
-      return KBDocumentChunksResponse(document_id=doc_id, title=doc_model.title, chunks=chunks, total_chunks=len(chunks))
+      return KBDocumentChunksResponse(document_id=doc_id, title=doc_model.title, chunks=chunks, total_chunks=total_chunks)
 
     except Exception as e:
       raise HTTPException(status_code=500, detail=f"Failed to fetch document chunks: {str(e)}")

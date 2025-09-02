@@ -22,6 +22,8 @@ class Settings(BaseSettings):
   resend_api_key: str
   frontend_url: str
   backend_url: str
+  firebase_creds: str
+  firebase_rtdb: str
   stripe_secret_key: str
   stripe_publishable_key: str
   stripe_webhook_secret: str
