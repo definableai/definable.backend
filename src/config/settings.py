@@ -21,6 +21,7 @@ class Settings(BaseSettings):
   database_url: str
   resend_api_key: str
   frontend_url: str
+  backend_url: str
   stripe_secret_key: str
   stripe_publishable_key: str
   stripe_webhook_secret: str
