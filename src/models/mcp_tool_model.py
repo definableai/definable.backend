@@ -1,5 +1,6 @@
-from sqlalchemy import Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import ForeignKey, Integer, String
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database.models import Base
 
@@ -10,4 +11,5 @@ class MCPToolModel(Base):
   name: Mapped[str] = mapped_column(String, nullable=False)
   slug: Mapped[str] = mapped_column(String, nullable=False)
   description: Mapped[str] = mapped_column(String, nullable=True)
-  toolkit: Mapped[str] = mapped_column(String, nullable=False)
+  toolkit_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("mcp_toolkits.id"), nullable=False)
+  toolkit_rel = relationship("MCPToolkitModel", backref="tools")
