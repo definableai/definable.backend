@@ -19,11 +19,26 @@ depends_on: str | None = None
 
 def upgrade():
   op.create_table(
+    "mcp_toolkits",
+    sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+    sa.Column("name", sa.String(), nullable=False),
+    sa.Column("slug", sa.String(), nullable=False),
+    sa.Column("logo", sa.String(), nullable=True),
+    sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+    sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), onupdate=sa.func.now()),
+  )
+
+  op.create_unique_constraint("uq_mcp_toolkits_name", "mcp_toolkits", ["name"])
+  op.create_unique_constraint("uq_mcp_toolkits_slug", "mcp_toolkits", ["slug"])
+
+  op.create_table(
     "mcp_servers",
     sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
     sa.Column("name", sa.String(), nullable=False),
-    sa.Column("mcp_url", sa.String(), nullable=False),
     sa.Column("toolkits", postgresql.JSONB, nullable=True),
+    sa.Column("auth_config_ids", postgresql.JSONB, nullable=True),
+    sa.Column("auth_scheme", sa.String(), nullable=True),
+    sa.Column("expected_input_fields", postgresql.JSONB, nullable=True),
     sa.Column("allowed_tools", postgresql.JSONB, nullable=True),
     sa.Column("server_instance_count", sa.Integer(), nullable=False, default=0),
     sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
@@ -36,7 +51,7 @@ def upgrade():
     sa.Column("name", sa.String(), nullable=False),
     sa.Column("slug", sa.String(), nullable=False),
     sa.Column("description", sa.String(), nullable=True),
-    sa.Column("toolkit", sa.String(), nullable=False),
+    sa.Column("toolkit_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("mcp_toolkits.id"), nullable=False),
   )
 
   op.create_table(
@@ -44,12 +59,28 @@ def upgrade():
     sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
     sa.Column("instance_id", sa.String(), nullable=False),
     sa.Column("mcp_server_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("mcp_servers.id"), nullable=False),
+    sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=True),
+    sa.Column("org_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("organizations.id"), nullable=True),
+    sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+    sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), onupdate=sa.func.now()),
+  )
+
+  op.create_table(
+    "mcp_users",
+    sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+    sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=False),
+    sa.Column("server_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("mcp_servers.id"), nullable=False),
+    sa.Column("composio_user_id", sa.String(), nullable=False),
+    sa.Column("connected_account_id", sa.String(), nullable=True),
+    sa.Column("connection_status", sa.String(), nullable=False, default="pending"),
     sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), onupdate=sa.func.now()),
   )
 
 
 def downgrade():
+  op.drop_table("mcp_users")
   op.drop_table("mcp_sessions")
-  op.drop_table("mcp_servers")
   op.drop_table("mcp_tools")
+  op.drop_table("mcp_servers")
+  op.drop_table("mcp_toolkits")
