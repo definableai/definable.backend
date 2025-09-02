@@ -3,17 +3,10 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 
-class MCPServerCreate(BaseModel):
-  name: str
-  toolkit: str
-  allowed_tools: Optional[List[str]] = None
-
-
 class MCPServerResponse(BaseModel):
   id: str
   name: str
   allowed_tools: Optional[List[str]] = None
-  mcp_url: str
   toolkits: Optional[List[str]] = None
   updated_at: str
   created_at: str
@@ -22,6 +15,7 @@ class MCPServerResponse(BaseModel):
 
 class MCPInstanceCreate(BaseModel):
   server_id: str
+  connected_account_id: str
 
 
 class MCPInstanceResponse(BaseModel):
@@ -33,7 +27,7 @@ class MCPInstanceResponse(BaseModel):
 
 
 class MCPConnectedAccountCreate(BaseModel):
-  toolkit: str
+  server_id: str
 
 
 class MCPConnectedAccountResponse(BaseModel):
@@ -41,6 +35,16 @@ class MCPConnectedAccountResponse(BaseModel):
   status: str
   redirect_url: str
   connectionData: Dict[str, Any]
+
+
+class MCPGenerateUrlRequest(BaseModel):
+  server_id: str
+  account_id: str
+
+
+class MCPGenerateUrlResponse(BaseModel):
+  mcp_url: str
+  status: str
 
 
 class MCPServerListResponse(BaseModel):
@@ -51,7 +55,6 @@ class MCPServerWithToolsResponse(BaseModel):
   id: str
   name: str
   allowed_tools: Optional[List[str]] = None
-  mcp_url: str
   toolkits: Optional[List[str]] = None
   updated_at: str
   created_at: str
