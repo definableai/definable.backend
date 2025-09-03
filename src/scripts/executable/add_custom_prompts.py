@@ -7,7 +7,7 @@ It populates both prompt_categories and prompts tables with structured, categori
 import asyncio
 import os
 import sys
-from typing import List, Optional, Tuple, Union, cast
+from typing import List, Optional, Tuple
 from dataclasses import dataclass
 
 import aiohttp
@@ -413,9 +413,10 @@ async def populate_prompt_categories_and_prompts(base_url: str, db: AsyncSession
         ]
 
         await db.execute(
-          text(
-            "INSERT INTO prompts (title, content, description, category_id, creator_id, organization_id) VALUES (:title, :content, :description, :category_id, :creator_id, :organization_id)"
-          ),
+          text("""
+            INSERT INTO prompts (title, content, description, category_id, creator_id, organization_id) 
+            VALUES (:title, :content, :description, :category_id, :creator_id, :organization_id)
+          """),
           prompt_data,
         )
         logger.info("Prompts inserted successfully")
@@ -483,9 +484,9 @@ class AddCustomPromptsScript(BaseScript):
 
       # Delete prompts associated with cursor.directory categories first (foreign key constraint)
       delete_prompts_query = text("""
-                DELETE FROM prompts 
+                DELETE FROM prompts
                 WHERE category_id IN (
-                    SELECT id FROM prompt_categories 
+                    SELECT id FROM prompt_categories
                     WHERE description LIKE 'Custom instructions for %'
                     OR icon_url LIKE '/rules/%'
                 )
@@ -495,7 +496,7 @@ class AddCustomPromptsScript(BaseScript):
 
       # Delete cursor.directory categories
       delete_categories_query = text("""
-                DELETE FROM prompt_categories 
+                DELETE FROM prompt_categories
                 WHERE description LIKE 'Custom instructions for %'
                 OR icon_url LIKE '/rules/%'
             """)
@@ -533,7 +534,7 @@ class AddCustomPromptsScript(BaseScript):
       # Check 1: Verify categories were inserted
       category_result = await db.execute(
         text("""
-                SELECT COUNT(*) FROM prompt_categories 
+                SELECT COUNT(*) FROM prompt_categories
                 WHERE description LIKE 'Custom instructions for %'
             """)
       )
