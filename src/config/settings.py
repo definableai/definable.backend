@@ -52,6 +52,7 @@ class Settings(BaseSettings):
   razorpay_key_secret: str
   composio_api_key: str
   gmail_auth_config: str
+  composio_base_url: str
 
   # API Key Configuration
   api_key_length: int = 32
