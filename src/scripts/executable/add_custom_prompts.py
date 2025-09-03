@@ -414,7 +414,7 @@ async def populate_prompt_categories_and_prompts(base_url: str, db: AsyncSession
 
         await db.execute(
           text("""
-            INSERT INTO prompts (title, content, description, category_id, creator_id, organization_id) 
+            INSERT INTO prompts (title, content, description, category_id, creator_id, organization_id)
             VALUES (:title, :content, :description, :category_id, :creator_id, :organization_id)
           """),
           prompt_data,
