@@ -21,7 +21,7 @@ class Settings(BaseSettings):
   database_url: str
   resend_api_key: str
   frontend_url: str
-  backend_url: str
+  composio_callback_url: str
   firebase_creds: str
   firebase_rtdb: str
   stripe_secret_key: str

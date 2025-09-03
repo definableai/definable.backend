@@ -37,19 +37,9 @@ class MCPSessionModel(Base):
   id: Mapped[uuid_pkg.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
   instance_id: Mapped[str] = mapped_column(String, nullable=False)
   mcp_server_id: Mapped[uuid_pkg.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("mcp_servers.id"), nullable=False)
-  user_id: Mapped[uuid_pkg.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-  org_id: Mapped[uuid_pkg.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True)
-  created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-  updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-
-
-class MCPUserModel(Base):
-  __tablename__ = "mcp_users"
-  id: Mapped[uuid_pkg.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
   user_id: Mapped[uuid_pkg.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-  server_id: Mapped[uuid_pkg.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("mcp_servers.id"), nullable=False)
-  composio_user_id: Mapped[str] = mapped_column(String, nullable=False)
-  connected_account_id: Mapped[str] = mapped_column(String, nullable=True)
-  connection_status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+  org_id: Mapped[uuid_pkg.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+  connected_account_id: Mapped[str] = mapped_column(String, nullable=False)
+  status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
   created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now(timezone.utc))
   updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now(timezone.utc))
