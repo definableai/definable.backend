@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
@@ -137,27 +137,50 @@ class UserService:
         self.logger.error(f"Role '{user_data.role}' not found")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
 
-      # 3. Create invitation record with proper role ID
+      # 3. Create user entry immediately (will be activated when invitation is accepted)
+      invited_user = UserModel(
+        email=email,
+        first_name=user_data.first_name,
+        last_name=user_data.last_name,
+      )
+      session.add(invited_user)
+      await session.flush()  # Get the user ID
+      self.logger.info(f"Created invited user: {invited_user.id}")
+
+      # 4. Create invitation record with proper role ID
       invitation = InvitationModel(
         invitee_email=email,
-        invited_by=token_payload["id"],
         organization_id=org_id,
-        role_id=role.id,  # Use role.id instead of user_data.role
-        expiry_time=datetime.now(timezone.utc) + timedelta(days=30),
+        role_id=role.id,
+        expiry_time=datetime.now(timezone.utc) + timedelta(days=7),
       )
       session.add(invitation)
+      await session.flush()  # Get the invitation ID
+
+      # 5. Create organization member entry with "invited" status
+      org_member = OrganizationMemberModel(
+        organization_id=org_id,
+        user_id=invited_user.id,
+        role_id=role.id,
+        invited_by=token_payload["id"],  # Track who invited this user
+        invite_id=invitation.id,  # Link to the invitation record
+        status="invited",  # Mark as invited until acceptance
+      )
+      session.add(org_member)
+
       await session.commit()
       await session.refresh(invitation)
+      await session.refresh(invited_user)
+      await session.refresh(org_member)
       self.logger.info(f"Invitation record created: {invitation}")
+      self.logger.info(f"Organization member created with invited status: {org_member.id}")
 
-      # 4. Send Stytch invitation with organization context
+      # 6. Send Stytch invitation with user ID and invitation flag
       user = await stytch_base.invite_user_for_organization(
         email=email,
         first_name=user_data.first_name,
         last_name=user_data.last_name,
-        invitation_id=str(invitation.id),
-        organization_id=str(org_id),
-        role_id=str(role.id),  # Use role.id instead of user_data.role
+        external_user_id=str(invited_user.id),  # Send the newly created user ID
       )
       self.logger.info(f"Stytch user with organization context: {user}")
       self.logger.info("Stytch invitation sent with organization context")
@@ -168,20 +191,18 @@ class UserService:
       self.logger.info(f"User invitation process completed successfully for {email}")
 
       return InviteResponse(
+        id=str(invitation.id),
         email=email,
         first_name=user_data.first_name,
         last_name=user_data.last_name,
         full_name=f"{user_data.first_name} {user_data.last_name}",
-        invite_id=str(invitation.id),
-        organizations=[
-          {
-            "id": str(org_id),  # Convert UUID to string
-            "name": org.name,
-            "slug": org.slug,
-            "role_name": role.name,
-            "role_id": str(role.id),  # Convert UUID to string
-          }
-        ],
+        organizations=OrganizationInfo(
+          id=org_id,
+          name=org.name,
+          slug=org.slug,
+          role_name=role.name,
+          role_id=role.id,
+        ),
       )
 
     except Exception as e:
@@ -190,6 +211,58 @@ class UserService:
 
       print_exc()
       raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+  async def delete(
+    self,
+    user_id: UUID,
+    org_id: UUID,
+    session: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(RBAC("users", "delete")),
+  ) -> dict:
+    """Delete a user from organization (soft delete via organization member status)."""
+    try:
+      self.logger.info(f"Attempting to remove user {user_id} from organization {org_id}")
+
+      # Get the user to verify they exist
+      user_to_delete = await session.get(UserModel, user_id)
+      if not user_to_delete:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+      # Find the organization member record
+      member_query = select(OrganizationMemberModel).where(
+        and_(OrganizationMemberModel.user_id == user_id, OrganizationMemberModel.organization_id == org_id)
+      )
+      member_result = await session.execute(member_query)
+      org_member = member_result.scalar_one_or_none()
+
+      if not org_member:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User is not a member of this organization")
+
+      # Check if user is already deleted from this organization
+      if org_member.status == "deleted":
+        self.logger.warning(f"User {user_id} is already deleted from organization {org_id}")
+        return {"message": "User is already deleted from this organization", "user_id": str(user_id), "organization_id": str(org_id)}
+
+      # Soft delete: mark organization member as deleted and track who deleted them
+      org_member.status = "deleted"
+      org_member.deleted_by = current_user["id"]
+
+      await session.commit()
+      await session.refresh(org_member)
+
+      self.logger.info(f"User {user_id} removed from organization {org_id} successfully")
+      return {
+        "message": "User removed from organization successfully",
+        "user_id": str(user_id),
+        "organization_id": str(org_id),
+        "deleted_by": str(current_user["id"]),
+        "deleted_at": datetime.now(timezone.utc).isoformat(),
+      }
+
+    except Exception as e:
+      self.logger.error(f"Error removing user {user_id} from organization {org_id}: {str(e)}", exc_info=True)
+      await session.rollback()
+      raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to remove user: {str(e)}")
 
   ### PRIVATE METHODS ###
   async def _get_user_details(self, user_id: UUID, session: AsyncSession) -> UserDetailResponse:

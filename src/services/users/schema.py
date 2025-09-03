@@ -59,14 +59,15 @@ class InviteSignup(BaseModel):
 class InviteResponse(BaseModel):
   """Invite response schema."""
 
-  id: Optional[str] = None
+  id: str
   email: EmailStr
   first_name: str = ""
   last_name: str = ""
   full_name: str = ""
-  invite_id: str
-  organizations: list[dict]
+  organizations: OrganizationInfo
 
+  class Config:
+    from_attributes = True
 
 class StytchUser(BaseModel):
   """Stytch user schema."""
