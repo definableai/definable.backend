@@ -1,260 +1,198 @@
 #!/usr/bin/env python3
 """
 Populates MCP servers from Composio into the database.
-Uses the script_run_tracker table to track execution.
-Enhanced with click commands for rerun and rollback functionality.
 """
 
-import asyncio
 import os
 import sys
 import uuid
-from typing import Optional
 
-import click
 import httpx
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Add the parent directory to the path so we can import from src
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.append(parent_dir)
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if parent_dir not in sys.path:
+  sys.path.insert(0, parent_dir)
 
 from common.logger import log as logger
 from config.settings import settings
-from database.postgres import async_session
 from models.mcp_model import MCPServerModel, MCPToolkitModel
 from models.mcp_tool_model import MCPToolModel
-
-SCRIPT_NAME = "populate_mcp_servers"
-
-
-async def check_script_executed(db: AsyncSession, script_name: str) -> bool:
-  """Checks if this script has already been executed successfully."""
-  result = await db.execute(
-    text("SELECT status FROM script_run_tracker WHERE script_name = :script_name ORDER BY updated_at DESC LIMIT 1"),
-    {"script_name": script_name},
-  )
-  row = result.fetchone()
-  return row[0] == "success" if row else False
+from scripts.core.base_script import BaseScript
 
 
-async def log_script_execution(db: AsyncSession, script_name: str, status: str, error_message: Optional[str] = None):
-  """Logs the script execution with status."""
-  try:
-    # Check if entry exists
-    result = await db.execute(text("SELECT 1 FROM script_run_tracker WHERE script_name = :script_name"), {"script_name": script_name})
-    exists = result.scalar()
+class PopulateMCPServersScript(BaseScript):
+  """Script to populate MCP servers from Composio."""
 
-    if exists:
-      # Update existing record
-      await db.execute(
-        text("""
-                    UPDATE script_run_tracker
-                    SET status = :status, error_message = :error_message, updated_at = NOW()
-                    WHERE script_name = :script_name
-                    """),
-        {"script_name": script_name, "status": status, "error_message": error_message},
-      )
-    else:
-      # Insert new record
-      await db.execute(
-        text("""
-                    INSERT INTO script_run_tracker (script_name, status, error_message, executed_at, updated_at)
-                    VALUES (:script_name, :status, :error_message, NOW(), NOW())
-                    """),
-        {"script_name": script_name, "status": status, "error_message": error_message},
-      )
-    await db.commit()
-  except Exception as e:
-    logger.error(f"Failed to log script execution: {e}")
+  def __init__(self):
+    super().__init__("populate_mcp_servers")
 
-
-async def get_auth_config_details(auth_config_id: str) -> dict:
-  """Get auth config details from Composio API."""
-  try:
-    response = httpx.get(
-      f"https://backend.composio.dev/api/v3/auth_configs/{auth_config_id}",
-      headers={"x-api-key": settings.composio_api_key},
-    )
-    response.raise_for_status()
-    return response.json()
-  except Exception as e:
-    logger.error(f"Failed to get auth config details for {auth_config_id}: {e}")
-    return {}
-
-
-async def populate_mcp_servers(db: AsyncSession, force: bool = False) -> bool:
-  """Populate MCP servers from Composio."""
-  try:
-    # Check if script has already been executed
-    if not force and await check_script_executed(db, SCRIPT_NAME):
-      logger.info(f"Script {SCRIPT_NAME} has already been executed successfully. Use --force to rerun.")
-      return True
-
+  async def execute(self, db: AsyncSession) -> None:
+    """Main script execution logic."""
     logger.info("Starting MCP servers population...")
 
     # Get MCP servers from Composio API
-    response = httpx.get(
-      "https://backend.composio.dev/api/v3/mcp/servers",
-      headers={"x-api-key": settings.composio_api_key},
-    )
-    response.raise_for_status()
-    mcp_data = response.json()
+    async with httpx.AsyncClient() as client:
+      response = await client.get(
+        "https://backend.composio.dev/api/v3/mcp/servers",
+        headers={"x-api-key": settings.composio_api_key},
+      )
+      response.raise_for_status()
+      mcp_data = response.json()
 
     logger.info(f"Found {len(mcp_data.get('items', []))} MCP servers to process")
 
-    created_servers = []
-    created_toolkits = []
-    created_tools = []
+    servers_created = 0
+    toolkits_created = 0
+    tools_created = 0
 
     for mcp_item in mcp_data.get("items", []):
       try:
         logger.info(f"Processing MCP server: {mcp_item.get('name')}")
 
-        # Get auth config details for the first auth config
-        auth_scheme = None
-        expected_input_fields = []
+        # Extract server data
+        server_id = mcp_item.get("id")
+        name = mcp_item.get("name")
+        toolkits = mcp_item.get("toolkits", [])
         auth_config_ids = mcp_item.get("auth_config_ids", [])
-        if auth_config_ids:
-          auth_config_details = await get_auth_config_details(auth_config_ids[0])
-          auth_scheme = auth_config_details.get("auth_scheme")
-          expected_input_fields = auth_config_details.get("expected_input_fields", [])
+        auth_scheme = mcp_item.get("auth_scheme")
+        expected_input_fields = mcp_item.get("expected_input_fields", [])
+        allowed_tools = mcp_item.get("allowed_tools", [])
+        server_instance_count = mcp_item.get("server_instance_count", 0)
 
-        # Create MCP server (removed mcp_url)
+        # Check if server already exists
+        existing_server = await db.execute(select(MCPServerModel).where(MCPServerModel.id == server_id))
+        if existing_server.scalar_one_or_none():
+          logger.info(f"Server {name} already exists, skipping...")
+          continue
+
+        # Create MCP server
         server = MCPServerModel(
-          id=mcp_item.get("id"),
-          name=mcp_item.get("name"),
-          toolkits=mcp_item.get("toolkits", []),
+          id=server_id,
+          name=name,
+          toolkits=toolkits,
           auth_config_ids=auth_config_ids,
           auth_scheme=auth_scheme,
           expected_input_fields=expected_input_fields,
-          allowed_tools=mcp_item.get("allowed_tools", []),
-          server_instance_count=mcp_item.get("server_instance_count", 0),
+          allowed_tools=allowed_tools,
+          server_instance_count=server_instance_count,
         )
         db.add(server)
-        created_servers.append(mcp_item.get("id"))
+        servers_created += 1
 
-        # Process toolkits
-        for toolkit_name in mcp_item.get("toolkits", []):
-          # Check if toolkit already exists
-          result = await db.execute(select(MCPToolkitModel).where(MCPToolkitModel.slug == toolkit_name))
-          existing_toolkit = result.scalar_one_or_none()
-
-          if not existing_toolkit:
-            toolkit = MCPToolkitModel(
-              id=uuid.uuid4(),
-              name=toolkit_name,
-              slug=toolkit_name,
-              logo=mcp_item.get("toolkit_icons", {}).get(toolkit_name),
-            )
-            db.add(toolkit)
-            created_toolkits.append(toolkit_name)
-
-            # Get toolkit ID for tool creation
-            await db.flush()  # Flush to get the ID
-            toolkit_id = toolkit.id
-          else:
-            toolkit_id = existing_toolkit.id
-
-          # Process tools for this toolkit
-          toolkit_tools = [tool for tool in mcp_item.get("allowed_tools", []) if toolkit_name in tool.lower()]
-          for tool_slug in toolkit_tools:
-            # Check if tool already exists
-            result = await db.execute(select(MCPToolModel).where((MCPToolModel.slug == tool_slug) & (MCPToolModel.toolkit_id == toolkit_id)))
-            existing_tool = result.scalar_one_or_none()
-
-            if not existing_tool:
-              tool = MCPToolModel(
-                name=tool_slug.replace("_", " ").title(),
-                slug=tool_slug,
-                description=f"Tool for {toolkit_name}: {tool_slug}",
-                toolkit_id=toolkit_id,
+        # Process toolkits for this server
+        for toolkit_slug in toolkits:
+          try:
+            # Get toolkit details from Composio
+            async with httpx.AsyncClient() as toolkit_client:
+              toolkit_response = await toolkit_client.get(
+                f"https://backend.composio.dev/api/v3/toolkits/{toolkit_slug}",
+                headers={"x-api-key": settings.composio_api_key},
               )
-              db.add(tool)
-              created_tools.append(tool_slug)
 
-        await db.commit()
-        logger.info(f"Successfully processed MCP server: {mcp_item.get('name')}")
+              if toolkit_response.status_code == 200:
+                toolkit_data = toolkit_response.json()
 
-      except Exception as e:
-        logger.error(f"Failed to process MCP server {mcp_item.get('name')}: {e}")
-        await db.rollback()
+                # Check if toolkit already exists
+                existing_toolkit = await db.execute(select(MCPToolkitModel).where(MCPToolkitModel.slug == toolkit_slug))
+
+                if not existing_toolkit.scalar_one_or_none():
+                  # Create toolkit
+                  toolkit = MCPToolkitModel(
+                    id=uuid.uuid4(),
+                    name=toolkit_data.get("name", toolkit_slug),
+                    slug=toolkit_slug,
+                    logo=toolkit_data.get("logo"),
+                  )
+                  db.add(toolkit)
+                  await db.flush()  # Get the ID
+                  toolkits_created += 1
+
+                  # Process tools for this toolkit
+                  for tool_data in toolkit_data.get("tools", []):
+                    try:
+                      # Check if tool already exists
+                      existing_tool = await db.execute(
+                        select(MCPToolModel).where(MCPToolModel.name == tool_data.get("name"), MCPToolModel.toolkit_id == toolkit.id)
+                      )
+
+                      if not existing_tool.scalar_one_or_none():
+                        # Create tool
+                        tool = MCPToolModel(
+                          id=uuid.uuid4(),
+                          toolkit_id=toolkit.id,
+                          name=tool_data.get("name"),
+                          slug=tool_data.get("name", "").lower().replace(" ", "_"),
+                          description=tool_data.get("description", ""),
+                        )
+                        db.add(tool)
+                        tools_created += 1
+
+                    except Exception as tool_error:
+                      logger.warning(f"Failed to process tool {tool_data.get('name', 'unknown')}: {tool_error}")
+                      continue
+
+              else:
+                logger.warning(f"Failed to fetch toolkit {toolkit_slug}: {toolkit_response.status_code}")
+
+          except Exception as toolkit_error:
+            logger.warning(f"Failed to process toolkit {toolkit_slug}: {toolkit_error}")
+            continue
+
+      except Exception as server_error:
+        logger.error(f"Failed to process server {mcp_item.get('name', 'unknown')}: {server_error}")
         continue
 
-    # Log successful execution
-    await log_script_execution(
-      db, SCRIPT_NAME, "success", f"Created {len(created_servers)} servers, {len(created_toolkits)} toolkits, {len(created_tools)} tools"
-    )
+    # Commit all changes
+    await db.commit()
 
-    logger.info("✅ MCP servers population completed successfully!")
-    logger.info(f"   - Servers created: {len(created_servers)}")
-    logger.info(f"   - Toolkits created: {len(created_toolkits)}")
-    logger.info(f"   - Tools created: {len(created_tools)}")
+    logger.info(f"Successfully processed {servers_created} servers, {toolkits_created} toolkits, and {tools_created} tools")
 
-    return True
+  async def rollback(self, db: AsyncSession) -> None:
+    """Rollback the script execution by deleting created MCP data."""
+    logger.info("Rolling back MCP servers population...")
 
-  except Exception as e:
-    logger.error(f"❌ MCP servers population failed: {e}")
-    await log_script_execution(db, SCRIPT_NAME, "failed", str(e))
-    await db.rollback()
-    return False
+    # Delete in reverse order due to foreign key constraints
+    # Delete tools first
+    from sqlalchemy import text
 
+    tools_result = await db.execute(text("DELETE FROM mcp_tools"))
+    tools_deleted = getattr(tools_result, "rowcount", 0)
 
-async def rollback_mcp_servers(db: AsyncSession) -> bool:
-  """Rollback MCP servers population by deleting created entries."""
-  try:
-    logger.info("Starting MCP servers rollback...")
+    # Delete toolkits
+    toolkits_result = await db.execute(text("DELETE FROM mcp_toolkits"))
+    toolkits_deleted = getattr(toolkits_result, "rowcount", 0)
 
-    # Delete all MCP data in reverse order
-    await db.execute(text("DELETE FROM mcp_tools"))
-    await db.execute(text("DELETE FROM mcp_toolkits"))
-    await db.execute(text("DELETE FROM mcp_servers"))
+    # Delete servers
+    servers_result = await db.execute(text("DELETE FROM mcp_servers"))
+    servers_deleted = getattr(servers_result, "rowcount", 0)
 
     await db.commit()
 
-    # Log rollback execution
-    await log_script_execution(db, SCRIPT_NAME, "rolled_back", "Deleted all MCP servers, toolkits, and tools")
+    logger.info(f"Deleted {tools_deleted} tools, {toolkits_deleted} toolkits, and {servers_deleted} servers during rollback")
 
-    logger.info("✅ MCP servers rollback completed successfully!")
+  async def verify(self, db: AsyncSession) -> bool:
+    """Verify script execution was successful."""
+    # Check if any servers were created
+    result = await db.execute(select(MCPServerModel))
+    servers = result.scalars().all()
+
+    if not servers:
+      logger.error("No MCP servers found after execution")
+      return False
+
+    logger.info(f"Verification passed: Found {len(servers)} MCP servers")
     return True
 
-  except Exception as e:
-    logger.error(f"❌ MCP servers rollback failed: {e}")
-    await db.rollback()
-    return False
 
-
-@click.group()
-def cli():
-  """MCP Servers Population Script."""
-  pass
-
-
-@cli.command()
-@click.option("--force", is_flag=True, help="Force rerun even if script has already been executed")
-def run(force):
-  """Run the MCP servers population script."""
-
-  async def _run():
-    async with async_session() as db:
-      success = await populate_mcp_servers(db, force=force)
-      sys.exit(0 if success else 1)
-
-  asyncio.run(_run())
-
-
-@cli.command()
-def rollback():
-  """Rollback the MCP servers population."""
-
-  async def _rollback():
-    async with async_session() as db:
-      success = await rollback_mcp_servers(db)
-      sys.exit(0 if success else 1)
-
-  asyncio.run(_rollback())
+def main():
+  """Entry point for backward compatibility."""
+  script = PopulateMCPServersScript()
+  script.main()
 
 
 if __name__ == "__main__":
-  cli()
+  script = PopulateMCPServersScript()
+  script.run_cli()
