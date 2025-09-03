@@ -1,14 +1,15 @@
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel
 
 
 class MCPPlaygroundMessage(BaseModel):
   """MCP Playground message schema."""
 
   content: str
-  mcp_url: Optional[HttpUrl] = None  # Optional - if not provided, continues current session
+  mcp_server_id: Optional[UUID] = None  # Optional - if not provided, continues current session
+  model_id: Optional[UUID] = None  # Optional - if not provided, uses default model
 
 
 class MCPPlaygroundResponse(BaseModel):

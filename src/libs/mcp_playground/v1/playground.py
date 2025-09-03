@@ -1,17 +1,29 @@
 import contextlib
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Type, Union
 from uuid import UUID
 
 from agno.agent import Agent, RunResponse
+from agno.models.anthropic import Claude
+from agno.models.deepseek import DeepSeek
 from agno.models.openai import OpenAIChat
 from agno.storage.postgres import PostgresStorage
 from agno.tools.mcp import MCPTools
 
 from config.settings import settings
 
+# Define a type alias for model classes
+ModelClass = Union[Type[OpenAIChat], Type[Claude], Type[DeepSeek]]
+
 
 class MCPPlaygroundFactory:
   """Factory for creating MCP playground sessions with conversation persistence."""
+
+  # Map provider names to their model classes (same as chat service)
+  PROVIDER_MODELS: dict[str, ModelClass] = {
+    "openai": OpenAIChat,
+    "anthropic": Claude,
+    "deepseek": DeepSeek,
+  }
 
   def __init__(self):
     # Configure storage for conversation persistence (same as chat service)
@@ -19,15 +31,20 @@ class MCPPlaygroundFactory:
     self.storage = PostgresStorage(table_name="__agno_chat_sessions", db_url=db_url, schema="public")
     self.storage.create()
 
+  def get_model_class(self, provider: str) -> ModelClass:
+    """Get the model class for a given provider name."""
+    if provider not in self.PROVIDER_MODELS:
+      raise ValueError(f"Unsupported provider: {provider}")
+    return self.PROVIDER_MODELS[provider]
+
   async def chat(
     self,
     session_id: str | UUID,
     mcp_url: str,
     message: str,
-    openai_api_key: str,
+    llm: str,
+    provider: str,
     memory_size: int = 50,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
   ) -> AsyncGenerator[RunResponse, None]:
     """
     Stream chat responses with MCP tools integration.
@@ -36,10 +53,9 @@ class MCPPlaygroundFactory:
         session_id: Unique ID for the chat session
         mcp_url: The MCP server URL to connect to
         message: User's input message
-        openai_api_key: OpenAI API key for the model
+        llm: The LLM model identifier
+        provider: The model provider (openai, anthropic, deepseek)
         memory_size: Number of previous messages to include
-        temperature: Model temperature parameter
-        max_tokens: Maximum tokens to generate
 
     Yields:
         Streaming response tokens
@@ -56,15 +72,13 @@ class MCPPlaygroundFactory:
       # Connect to the MCP server
       await mcp_tools.connect()
 
+      # Get the appropriate model class for the provider
+      model_class = self.get_model_class(provider)
+
       # Create agent with MCP tools and storage for memory retention
       agent = Agent(
         name="MCP Playground Assistant",
-        model=OpenAIChat(
-          id="gpt-4o-mini",
-          api_key=openai_api_key,
-          temperature=temperature,
-          max_tokens=max_tokens,
-        ),
+        model=model_class(id=llm),  # type: ignore
         tools=[mcp_tools],
         storage=self.storage,
         markdown=True,
