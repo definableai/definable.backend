@@ -1,7 +1,6 @@
 import uuid
 from http import HTTPStatus
 
-import httpx
 from fastapi import Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
@@ -10,8 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config.settings import settings
 from database import get_db
 from dependencies.security import RBAC
+from libs.composio.v1 import composio
 from models.auth_model import UserModel
-from models.mcp_model import MCPServerModel, MCPSessionModel, MCPToolkitModel, MCPUserModel
+from models.mcp_model import MCPServerModel, MCPSessionModel, MCPToolkitModel
 from models.mcp_tool_model import MCPToolModel
 from services.__base.acquire import Acquire
 from services.mcp.schema import (
@@ -19,7 +19,6 @@ from services.mcp.schema import (
   MCPConnectedAccountResponse,
   MCPGenerateUrlRequest,
   MCPGenerateUrlResponse,
-  MCPInstanceCreate,
   MCPInstanceResponse,
   MCPServerListResponse,
   MCPServerResponse,
@@ -30,7 +29,6 @@ from services.mcp.schema import (
 
 class MCPService:
   http_exposed = [
-    "post=create_instance",
     "post=connect_account",
     "post=generate_url",
     "get=list_servers",
@@ -54,53 +52,6 @@ class MCPService:
 
     raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail=f"No auth config found for server: {server_id}")
 
-  async def post_create_instance(
-    self,
-    data: MCPInstanceCreate,
-    user: dict = Depends(RBAC("mcp", "write")),
-    session: AsyncSession = Depends(get_db),
-  ) -> MCPInstanceResponse:
-    try:
-      user_id = user.get("id")
-      server_id = data.server_id
-
-      # Find the MCP user connection
-      mcp_user_query = select(MCPUserModel).where(MCPUserModel.connected_account_id == data.connected_account_id)
-      result = await session.execute(mcp_user_query)
-      mcp_user = result.scalar_one_or_none()
-
-      if not mcp_user:
-        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="No connection found. Please connect your account first.")
-
-      if mcp_user.connection_status != "active":
-        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Account connection is not active. Please complete the connection first.")
-
-      # Create instance using stored composio_user_id
-      url = f"https://backend.composio.dev/api/v3/mcp/servers/{server_id}/instances"
-      payload = {"user_id": mcp_user.composio_user_id}
-      headers = {"x-api-key": settings.composio_api_key, "Content-Type": "application/json"}
-      response = httpx.post(url, json=payload, headers=headers)
-      response.raise_for_status()
-      instance = response.json()
-
-      # Store instance in sessions table
-      db_instance = MCPSessionModel(
-        id=instance["id"],
-        instance_id=instance["instance_id"],
-        mcp_server_id=instance["mcp_server_id"],
-        user_id=user_id,
-        org_id=user.get("org_id"),
-      )
-      session.add(db_instance)
-      await session.commit()
-      await session.refresh(db_instance)
-
-      return MCPInstanceResponse(**instance)
-    except Exception as e:
-      await session.rollback()
-      self.logger.error(f"Error creating MCP instance: {e}")
-      raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Error creating MCP instance")
-
   async def post_connect_account(
     self,
     data: MCPConnectedAccountCreate,
@@ -110,34 +61,31 @@ class MCPService:
     try:
       auth_config_id = await self._get_auth_config(data.server_id, session)
       user_id = user.get("id")
-
-      # Generate random composio user ID
+      org_id = user.get("org_id")
 
       composio_user_id = str(uuid.uuid4())
 
       # Prepare connection payload with backend callback URL
-      callback_url = f"{settings.backend_url}/api/mcp/callback?mcp_server_id={data.server_id}&mcp_session_id={composio_user_id}"
-      connection_payload = {"user_id": composio_user_id, "callback_url": callback_url}
+      callback_url = f"{settings.composio_callback_url}?mcp_server_id={data.server_id}&mcp_session_id={composio_user_id}"
 
       # Create connected account using Composio API
-      response = httpx.post(
-        "https://backend.composio.dev/api/v3/connected_accounts",
-        headers={"x-api-key": settings.composio_api_key},
-        json={"auth_config": {"id": auth_config_id}, "connection": connection_payload},
+      result = await composio.create_connected_account(
+        auth_config_id=auth_config_id,
+        user_id=composio_user_id,
+        callback_url=callback_url,
       )
-      response.raise_for_status()
-      result = response.json()
 
-      # Store the connection attempt in our database
-      mcp_user = MCPUserModel(
+      # Store the connection attempt in our database with pending status
+      mcp_session = MCPSessionModel(
         id=uuid.uuid4(),
+        instance_id=composio_user_id,  # Same as composio_user_id
+        mcp_server_id=data.server_id,
         user_id=user_id,
-        server_id=data.server_id,
-        composio_user_id=composio_user_id,
+        org_id=org_id,
         connected_account_id=result["id"],
-        connection_status="pending",
+        status="pending",
       )
-      session.add(mcp_user)
+      session.add(mcp_session)
       await session.commit()
 
       return MCPConnectedAccountResponse(**result)
@@ -153,20 +101,19 @@ class MCPService:
     session: AsyncSession = Depends(get_db),
   ) -> MCPGenerateUrlResponse:
     try:
-      mcp_user_query = select(MCPUserModel).where((MCPUserModel.connected_account_id == data.account_id) & (MCPUserModel.server_id == data.server_id))
-      result = await session.execute(mcp_user_query)
-      mcp_user = result.scalar_one_or_none()
+      mcp_session_query = select(MCPSessionModel).where(
+        (MCPSessionModel.connected_account_id == data.account_id) & (MCPSessionModel.mcp_server_id == data.server_id)
+      )
+      result = await session.execute(mcp_session_query)
+      mcp_session = result.scalar_one_or_none()
 
-      if not mcp_user:
+      if not mcp_session:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="No connection attempt found. Please connect your account first.")
 
-      generate_response = httpx.post(
-        "https://backend.composio.dev/api/v3/mcp/servers/generate",
-        headers={"x-api-key": settings.composio_api_key},
-        json={"mcp_server_id": data.server_id, "user_ids": [mcp_user.composio_user_id]},
+      url_data = await composio.generate_mcp_url(
+        server_id=data.server_id,
+        user_ids=[mcp_session.instance_id],  # instance_id is same as composio_user_id
       )
-      generate_response.raise_for_status()
-      url_data = generate_response.json()
 
       if not url_data.get("user_ids_url"):
         raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Failed to generate MCP URL")
@@ -308,23 +255,43 @@ class MCPService:
     mcp_session_id: str,
     session: AsyncSession = Depends(get_db),
   ) -> RedirectResponse:
-    """Handle OAuth callback, update connection status to active, and redirect to frontend."""
+    """Handle OAuth callback, update status to active and auto-create instance."""
     try:
       # Find the connection attempt for this server and session
-      mcp_user_query = select(MCPUserModel).where((MCPUserModel.server_id == mcp_server_id) & (MCPUserModel.composio_user_id == mcp_session_id))
-      result = await session.execute(mcp_user_query)
-      mcp_user = result.scalar_one_or_none()
+      mcp_session_query = select(MCPSessionModel).where(
+        (MCPSessionModel.mcp_server_id == mcp_server_id) & (MCPSessionModel.instance_id == mcp_session_id)
+      )
+      result = await session.execute(mcp_session_query)
+      mcp_session = result.scalar_one_or_none()
       frontend_redirect_url = f"{settings.frontend_url}/mcp/callback?mcp_server_id={mcp_server_id}&mcp_session_id={mcp_session_id}"
 
-      if not mcp_user:
+      if not mcp_session:
         self.logger.warning(f"No connection attempt found for server {mcp_server_id} and session {mcp_session_id}")
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Connection attempt not found")
 
-      # Update connection status to active
-      mcp_user.connection_status = "active"
-      await session.commit()
+      # Update status to active and auto-create instance
+      mcp_session.status = "active"
 
-      self.logger.info(f"Successfully activated connection for server {mcp_server_id}, session {mcp_session_id}")
+      # Automatically create MCP instance
+      try:
+        instance = await composio.create_mcp_instance(
+          server_id=mcp_server_id,
+          user_id=mcp_session_id,  # instance_id is same as composio_user_id
+        )
+
+        # Update the session with instance info from Composio
+        # The instance_id should already be the same, but we can update the ID if needed
+        if instance.get("id"):
+          mcp_session.id = instance["id"]
+
+        await session.commit()
+
+        self.logger.info(f"Successfully activated connection and created instance for server {mcp_server_id}, session {mcp_session_id}")
+
+      except Exception as instance_error:
+        self.logger.error(f"Failed to create instance after OAuth success: {instance_error}")
+        # Still mark as active even if instance creation fails
+        await session.commit()
 
       # Redirect to frontend with parameters
       return RedirectResponse(url=frontend_redirect_url)
