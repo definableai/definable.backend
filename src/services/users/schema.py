@@ -69,6 +69,7 @@ class InviteResponse(BaseModel):
   class Config:
     from_attributes = True
 
+
 class StytchUser(BaseModel):
   """Stytch user schema."""
 
