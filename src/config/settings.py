@@ -21,6 +21,7 @@ class Settings(BaseSettings):
   database_url: str
   resend_api_key: str
   frontend_url: str
+  composio_callback_url: str
   firebase_creds: str
   firebase_rtdb: str
   stripe_secret_key: str
@@ -49,6 +50,8 @@ class Settings(BaseSettings):
   razorpay_key_id: str
   razorpay_webhook_secret: str
   razorpay_key_secret: str
+  composio_api_key: str
+  composio_base_url: str
 
   # API Key Configuration
   api_key_length: int = 32
