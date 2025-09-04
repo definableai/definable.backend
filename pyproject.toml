@@ -55,6 +55,7 @@ dependencies = [
     "easyocr>=1.7.0",
     "pypdf>=6.0.0",
     "firebase-admin>=7.1.0",
+    "mcp>=1.13.1",
 ]
 
 [dependency-groups]
