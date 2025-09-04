@@ -51,7 +51,6 @@ class Settings(BaseSettings):
   razorpay_webhook_secret: str
   razorpay_key_secret: str
   composio_api_key: str
-  gmail_auth_config: str
   composio_base_url: str
 
   # API Key Configuration
