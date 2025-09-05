@@ -64,10 +64,13 @@ class MCPPlaygroundService:
         user_ids=[mcp_session.instance_id],
       )
 
-      if not url_data.get("user_ids_url"):
+      if not url_data.success:
+        raise HTTPException(status_code=500, detail=f"Failed to generate MCP URL: {url_data.errors}")
+
+      if not url_data.data.get("user_ids_url"):
         raise HTTPException(status_code=500, detail="Failed to generate MCP URL")
 
-      mcp_url = url_data["user_ids_url"][0]
+      mcp_url = url_data.data["user_ids_url"][0]
       self.logger.info(f"Generated MCP URL for server {mcp_server_id} and user {user_id}")
       return mcp_url
 
