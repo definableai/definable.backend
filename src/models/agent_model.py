@@ -3,7 +3,7 @@ from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, func, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import CRUD, Base
@@ -54,6 +54,7 @@ class AgentModel(CRUD):
   is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
   settings: Mapped[dict] = mapped_column(JSONB, nullable=False)
   version: Mapped[str] = mapped_column(String(255), nullable=False)
+  tags: Mapped[Optional[list[str]]] = mapped_column(ARRAY(String), nullable=True, default=[])
   updated_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now(), nullable=False)
 
   category: Mapped["AgentCategoryModel"] = relationship("AgentCategoryModel", back_populates="agents")

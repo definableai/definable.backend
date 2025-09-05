@@ -1,7 +1,7 @@
 import json
+import mimetypes
 import os
 import re
-import mimetypes
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config.settings import settings
 from database import get_db
 from dependencies.security import RBAC, JWTBearer
-from libs.chats.v1 import LLMFactory, generate_chat_name, generate_prompts_stream, extract_file_content
+from libs.chats.v1 import LLMFactory, extract_file_content, generate_chat_name, generate_prompts_stream
 from libs.s3.v1 import S3Client
 from libs.speech.v1 import transcribe
 from models import ChatModel, ChatUploadModel, LLMModel, MessageModel
@@ -407,6 +407,14 @@ class ChatService:
             detail="LLM model not found",
           )
 
+        # Check if model is active
+        if not llm_model.is_active:
+          raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail=f"The model '{llm_model.name}' is no longer available. "
+            f"It has been deprecated or deactivated. Please choose an active model from the marketplace.",
+          )
+
         # Initialize billing - simple HOLD with qty=1
         try:
           # Create a more descriptive transaction message
@@ -554,7 +562,7 @@ Use the above context to answer the user's question when relevant. If the contex
           self.logger.debug(f"Sending message to {llm_model.provider} {llm_model.version}")
 
           # Analyze user intent to determine if image generation is needed
-          from libs.chats.v1.intent_analysis import get_intent_service, UserIntent
+          from libs.chats.v1.intent_analysis import UserIntent, get_intent_service
 
           intent_service = get_intent_service()
 

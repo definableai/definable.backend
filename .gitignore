@@ -188,3 +188,6 @@ servers.json
 input.json
 agno-sample-agent/
 src/servers/my_agent/
+
+# For development folders
+api-types/
