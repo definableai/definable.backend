@@ -44,7 +44,7 @@ class Composio:
     }
 
     try:
-      async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10)) as client:
+      async with httpx.AsyncClient(timeout=httpx.Timeout(10)) as client:
         response = await client.post(
           f"{self.base_url}/connected_accounts",
           headers=self.headers,
@@ -73,7 +73,7 @@ class Composio:
     payload = {"user_id": user_id}
 
     try:
-      async with httpx.AsyncClient() as client:
+      async with httpx.AsyncClient(timeout=httpx.Timeout(10)) as client:
         response = await client.post(
           f"{self.base_url}/mcp/servers/{server_id}/instances",
           headers=self.headers,
@@ -105,7 +105,7 @@ class Composio:
     }
 
     try:
-      async with httpx.AsyncClient() as client:
+      async with httpx.AsyncClient(timeout=httpx.Timeout(10)) as client:
         response = await client.post(
           f"{self.base_url}/mcp/servers/generate",
           headers=self.headers,
@@ -127,7 +127,7 @@ class Composio:
         LibResponse[Dict[str, Any]]: List of instances
     """
     try:
-      async with httpx.AsyncClient() as client:
+      async with httpx.AsyncClient(timeout=httpx.Timeout(10)) as client:
         response = await client.get(
           f"{self.base_url}/mcp/servers/{server_id}/instances",
           headers=self.headers,
