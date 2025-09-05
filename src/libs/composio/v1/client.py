@@ -44,7 +44,7 @@ class Composio:
     }
 
     try:
-      async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10)) as client:
+      async with httpx.AsyncClient() as client:
         response = await client.post(
           f"{self.base_url}/connected_accounts",
           headers=self.headers,
