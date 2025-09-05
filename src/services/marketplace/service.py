@@ -52,7 +52,7 @@ class MarketplaceService:
     category: Optional[str] = None,
     search: Optional[str] = None,
     offset: int = 0,
-    limit: int = 20,
+    limit: Optional[int] = None,
     session: AsyncSession = Depends(get_db),
     user: dict = Depends(RBAC("marketplace", "read")),
   ) -> MarketplaceAssistantsResponse:
@@ -109,7 +109,10 @@ class MarketplaceService:
       total = total_result.scalar() or 0
 
       # Apply pagination
-      paginated_query = query.offset(offset).limit(limit)
+      paginated_query = query.offset(offset)
+      if limit is not None:
+        paginated_query = paginated_query.limit(limit)
+
       result = await session.execute(paginated_query)
       marketplace_assistants = result.scalars().all()
 
@@ -119,7 +122,7 @@ class MarketplaceService:
         assistant_item = await self._create_assistant_item(marketplace_assistant, session)
         assistants.append(assistant_item)
 
-      has_more = offset + limit < total
+      has_more = limit is not None and offset + limit < total
 
       return MarketplaceAssistantsResponse(assistants=assistants, total=total, has_more=has_more)
 
@@ -246,7 +249,7 @@ class MarketplaceService:
           .where(
             MarketplaceAssistantModel.is_published,
             MarketplaceAssistantModel.assistant_type == "llm_model",
-            MarketplaceAssistantModel.rating_count >= 5,  # Minimum reviews for statistical significance
+            MarketplaceAssistantModel.rating_count >= 4,  # Minimum reviews for statistical significance
           )
           .order_by(desc("featured_score"))
           .limit(3)
