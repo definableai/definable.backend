@@ -105,7 +105,7 @@ class MCPService:
     data: MCPGenerateUrlRequest,
     user: dict = Depends(RBAC("mcp", "write")),
     session: AsyncSession = Depends(get_db),
-        # Check if instance creation was successful
+    # Check if instance creation was successful
   ) -> MCPGenerateUrlResponse:
     try:
       mcp_session_query = select(MCPSessionModel).where(
@@ -158,7 +158,6 @@ class MCPService:
             name=server.name,
             allowed_tools=server.allowed_tools or [],
             toolkits=server.toolkits or [],
-            updated_at=server.updated_at.isoformat() if server.updated_at else None,
             created_at=server.created_at.isoformat() if server.created_at else None,
             server_instance_count=server.server_instance_count,
           )
@@ -211,7 +210,6 @@ class MCPService:
         name=server.name,
         allowed_tools=server.allowed_tools or [],
         toolkits=server.toolkits or [],
-        updated_at=server.updated_at.isoformat() if server.updated_at else None,
         created_at=server.created_at.isoformat() if server.created_at else None,
         server_instance_count=server.server_instance_count,
         tools=tools_list,
@@ -250,7 +248,6 @@ class MCPService:
             instance_id=db_session.instance_id,
             mcp_server_id=str(db_session.mcp_server_id),
             created_at=db_session.created_at.isoformat() if db_session.created_at else None,
-            updated_at=db_session.updated_at.isoformat() if db_session.updated_at else None,
           )
         )
 
