@@ -20,12 +20,11 @@ depends_on: str | None = None
 def upgrade():
   op.create_table(
     "mcp_toolkits",
-    sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+    sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
     sa.Column("name", sa.String(), nullable=False),
     sa.Column("slug", sa.String(), nullable=False),
     sa.Column("logo", sa.String(), nullable=True),
-    sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
-    sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), onupdate=sa.func.now()),
+    sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP")),
   )
 
   op.create_unique_constraint("uq_mcp_toolkits_name", "mcp_toolkits", ["name"])
@@ -33,7 +32,7 @@ def upgrade():
 
   op.create_table(
     "mcp_servers",
-    sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+    sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
     sa.Column("name", sa.String(), nullable=False),
     sa.Column("toolkits", postgresql.JSONB, nullable=True),
     sa.Column("auth_config_ids", postgresql.JSONB, nullable=True),
@@ -41,13 +40,12 @@ def upgrade():
     sa.Column("expected_input_fields", postgresql.JSONB, nullable=True),
     sa.Column("allowed_tools", postgresql.JSONB, nullable=True),
     sa.Column("server_instance_count", sa.Integer(), nullable=False, default=0),
-    sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
-    sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), onupdate=sa.func.now()),
+    sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP")),
   )
 
   op.create_table(
     "mcp_tools",
-    sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+    sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
     sa.Column("name", sa.String(), nullable=False),
     sa.Column("slug", sa.String(), nullable=False),
     sa.Column("description", sa.String(), nullable=True),
@@ -56,15 +54,14 @@ def upgrade():
 
   op.create_table(
     "mcp_sessions",
-    sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+    sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
     sa.Column("instance_id", sa.String(), nullable=False),
     sa.Column("mcp_server_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("mcp_servers.id"), nullable=False),
     sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=False),
     sa.Column("org_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("organizations.id"), nullable=False),
     sa.Column("connected_account_id", sa.String(), nullable=False),
     sa.Column("status", sa.String(), nullable=False, default="pending"),
-    sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
-    sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), onupdate=sa.func.now()),
+    sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP")),
   )
 
 
