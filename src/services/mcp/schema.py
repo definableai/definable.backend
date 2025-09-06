@@ -8,7 +8,6 @@ class MCPServerResponse(BaseModel):
   name: str
   allowed_tools: Optional[List[str]] = None
   toolkits: Optional[List[str]] = None
-  updated_at: str
   created_at: str
   server_instance_count: int
 
@@ -23,7 +22,6 @@ class MCPInstanceResponse(BaseModel):
   instance_id: str
   mcp_server_id: str
   created_at: str
-  updated_at: str
 
 
 class MCPConnectedAccountCreate(BaseModel):
@@ -56,7 +54,6 @@ class MCPServerWithToolsResponse(BaseModel):
   name: str
   allowed_tools: Optional[List[str]] = None
   toolkits: Optional[List[str]] = None
-  updated_at: str
   created_at: str
   server_instance_count: int
   tools: List[Dict[str, Any]]
