@@ -73,8 +73,8 @@ async def check_existing_cursor_data(db: AsyncSession) -> bool:
   try:
     result = await db.execute(
       text("""
-      SELECT COUNT(*) FROM prompt_categories 
-      WHERE description LIKE 'Custom instructions for %' 
+      SELECT COUNT(*) FROM prompt_categories
+      WHERE description LIKE 'Custom instructions for %'
       OR icon_url LIKE '/rules/%'
     """)
     )
@@ -133,7 +133,7 @@ async def create_new_organization_user(db: AsyncSession) -> Tuple[Optional[str],
       admin_first_name = "Admin"
 
       query = text("""
-          INSERT INTO users (email, stytch_id, first_name) 
+          INSERT INTO users (email, stytch_id, first_name)
           VALUES (:email, :stytch_id, :first_name)
           RETURNING id
       """)
@@ -426,8 +426,8 @@ class AddCustomPromptsScript(BaseScript):
       delete_org_members_query = text("""
                 DELETE FROM organization_members
                 WHERE user_id IN (
-                    SELECT id FROM users 
-                    WHERE email = 'temp-admin@definable.ai' 
+                    SELECT id FROM users
+                    WHERE email = 'temp-admin@definable.ai'
                     AND stytch_id LIKE 'user-test-%'
                 )
             """)
@@ -436,7 +436,7 @@ class AddCustomPromptsScript(BaseScript):
 
       delete_user_query = text("""
                 DELETE FROM users
-                WHERE email = 'temp-admin@definable.ai' 
+                WHERE email = 'temp-admin@definable.ai'
                 AND stytch_id LIKE 'user-test-%'
             """)
       users_result = await db.execute(delete_user_query)
@@ -445,7 +445,8 @@ class AddCustomPromptsScript(BaseScript):
       await db.commit()
 
       logger.info(
-        f"Rollback completed: removed {prompts_deleted_count} prompts, {categories_deleted_count} categories, {users_deleted_count} temp admin users, and {org_members_deleted_count} organization memberships"
+        f"Rollback completed: removed {prompts_deleted_count} prompts, {categories_deleted_count} categories, "
+        f"{users_deleted_count} temp admin users, and {org_members_deleted_count} organization memberships"
       )
       logger.info(
         f"Database state: {initial_categories - categories_deleted_count} categories, {initial_prompts - prompts_deleted_count} prompts remaining"
@@ -470,7 +471,7 @@ class AddCustomPromptsScript(BaseScript):
             JOIN prompt_categories pc ON p.category_id = pc.id
             WHERE pc.description LIKE 'Custom instructions for %'
           )
-          SELECT 
+          SELECT
             (SELECT COUNT(*) FROM prompt_categories WHERE description LIKE 'Custom instructions for %') as categories,
             (SELECT COUNT(*) FROM cursor_data) as prompts,
             (SELECT COUNT(*) FROM cursor_data WHERE content IS NULL OR content = '' OR LENGTH(TRIM(content)) < {MIN_PROMPT_LENGTH}) as empty_content,
