@@ -233,7 +233,7 @@ async def extract_categories_from_html(html_content: str) -> List[CategoryInfo]:
   return categories
 
 
-async def extract_prompts_from_category(session: aiohttp.ClientSession, category: CategoryInfo, base_url: str) -> Optional[str]:
+async def extract_prompts_from_category(session: aiohttp.ClientSession, category: CategoryInfo, base_url: str) -> Optional[List[str]]:
   """
   Extract prompts content for a specific category.
 
@@ -243,7 +243,7 @@ async def extract_prompts_from_category(session: aiohttp.ClientSession, category
       base_url: Base URL for requests
 
   Returns:
-      Optional[str]: Combined prompt content or None if failed
+      Optional[List[str]]: List of individual prompt contents or None if failed
   """
   prompt_url = base_url + category.icon_url
   logger.info(f"Processing category: {category.name}")
@@ -281,7 +281,7 @@ async def extract_prompts_from_category(session: aiohttp.ClientSession, category
 
   if final_prompts:
     logger.info(f"Extracted {len(final_prompts)} prompts from category: {category.name}")
-    return "\n".join(final_prompts)
+    return final_prompts
   else:
     logger.warning(f"No prompts found in category: {category.name}")
     return None
@@ -353,7 +353,7 @@ async def populate_prompt_categories_and_prompts(base_url: str, db: AsyncSession
       logger.info("Processing prompts with parallel HTTP requests...")
 
       # Step 3a: Parallel HTTP requests to fetch prompt content
-      async def fetch_category_content(category: CategoryInfo) -> Optional[Tuple[CategoryInfo, str]]:
+      async def fetch_category_content(category: CategoryInfo) -> Optional[Tuple[CategoryInfo, List[str]]]:
         """Fetch content for a single category (HTTP only, no DB access)."""
         prompt_content = await extract_prompts_from_category(session, category, base_url)
         if prompt_content:
@@ -363,7 +363,7 @@ async def populate_prompt_categories_and_prompts(base_url: str, db: AsyncSession
       # Use semaphore to limit concurrent HTTP requests
       semaphore = asyncio.Semaphore(PARALLEL_REQUESTS)
 
-      async def fetch_with_semaphore(category: CategoryInfo) -> Optional[Tuple[CategoryInfo, str]]:
+      async def fetch_with_semaphore(category: CategoryInfo) -> Optional[Tuple[CategoryInfo, List[str]]]:
         async with semaphore:
           # Add polite delay between requests to avoid overwhelming the server
           await asyncio.sleep(REQUEST_DELAY)
@@ -396,7 +396,7 @@ async def populate_prompt_categories_and_prompts(base_url: str, db: AsyncSession
           failed_count += 1
           continue
 
-        category, prompt_content = fetch_result
+        category, prompt_content_list = fetch_result
 
         try:
           # Sequential database access (one at a time)
@@ -410,9 +410,12 @@ async def populate_prompt_categories_and_prompts(base_url: str, db: AsyncSession
             failed_count += 1
             continue
 
-          successful_prompts.append(
-            PromptInfo(title=category.name, content=prompt_content, description=category.description, category_id=category_id)
-          )
+          # Create separate PromptInfo for each individual prompt in the category
+          for i, individual_prompt_content in enumerate(prompt_content_list, 1):
+            prompt_title = f"{category.name} - Prompt {i}"
+            successful_prompts.append(
+              PromptInfo(title=prompt_title, content=individual_prompt_content, description=category.description, category_id=category_id)
+            )
 
         except Exception as e:
           logger.error(f"Database error processing category {category.name}: {e}")
@@ -532,9 +535,30 @@ class AddCustomPromptsScript(BaseScript):
       categories_result = await db.execute(delete_categories_query)
       categories_deleted_count = getattr(categories_result, "rowcount", 0) or 0
 
+      # Delete temporary admin user from organization_members table first (due to foreign key constraint)
+      delete_org_members_query = text("""
+                DELETE FROM organization_members
+                WHERE user_id IN (
+                    SELECT id FROM users 
+                    WHERE email = 'temp-admin@definable.ai' 
+                    AND stytch_id LIKE 'user-test-%'
+                )
+            """)
+      org_members_result = await db.execute(delete_org_members_query)
+      org_members_deleted_count = getattr(org_members_result, "rowcount", 0) or 0
+
+      # Delete temporary admin user from users table
+      delete_user_query = text("""
+                DELETE FROM users
+                WHERE email = 'temp-admin@definable.ai' 
+                AND stytch_id LIKE 'user-test-%'
+            """)
+      users_result = await db.execute(delete_user_query)
+      users_deleted_count = getattr(users_result, "rowcount", 0) or 0
+
       await db.commit()
 
-      logger.info(f"Rollback completed: removed {prompts_deleted_count} prompts and {categories_deleted_count} categories")
+      logger.info(f"Rollback completed: removed {prompts_deleted_count} prompts, {categories_deleted_count} categories, {users_deleted_count} temp admin users, and {org_members_deleted_count} organization memberships")
       logger.info(
         f"Database state: {initial_categories - categories_deleted_count} categories, {initial_prompts - prompts_deleted_count} prompts remaining"
       )
@@ -553,6 +577,8 @@ class AddCustomPromptsScript(BaseScript):
     2. Each category has associated prompts
     3. All prompts have valid content
     4. Data integrity is maintained
+    5. Organization and user references are valid
+    6. Script tracker shows success status
 
     Returns:
         bool: True if verification passes, False otherwise
@@ -633,6 +659,23 @@ class AddCustomPromptsScript(BaseScript):
       if invalid_refs_count > 0:
         logger.error(f"Verification failed: {invalid_refs_count} prompts missing creator or organization references")
         return False
+
+      # Check 6: Verify script tracker shows success status
+      script_tracker_result = await db.execute(
+        text("""
+                SELECT status FROM script_tracker 
+                WHERE script_name = 'add_custom_prompts'
+                ORDER BY executed_at DESC 
+                LIMIT 1
+            """)
+      )
+      script_status = script_tracker_result.scalar_one_or_none()
+
+      if script_status != 'success':
+        logger.error(f"Verification failed: Script tracker shows status '{script_status}' instead of 'success'")
+        return False
+
+      logger.info(f"Script tracker verification passed: status is '{script_status}'")
 
       logger.info("All verification checks passed successfully!")
       logger.info(f"Summary: {category_count} categories, {prompt_count} prompts, {empty_content_count} with minimal content")
