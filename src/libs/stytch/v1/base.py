@@ -70,18 +70,21 @@ class StytchBase:
     email: str,
     first_name: str | None = None,
     last_name: str | None = None,
-    invitation_id: str | None = None,
-    organization_id: str | None = None,
-    role_id: str | None = None,
+    external_user_id: str | None = None,
   ) -> LibResponse[InviteResponse] | LibResponse[None]:
     """Invite user with organization context for webhook processing."""
     try:
       name = Name(first_name=first_name, last_name=last_name)
 
-      # Include invitation context in untrusted_metadata
-      invitation_context = {"type": "invitation", "invitation_id": invitation_id, "organization_id": organization_id, "role_id": role_id}
+      # Include minimal trusted metadata (secure)
+      trusted_metadata = {"external_user_id": external_user_id, "is_invited": True}
 
-      response = await self.client.magic_links.email.invite_async(email, name=name, untrusted_metadata=invitation_context)
+      # Include type in untrusted_metadata for webhook processing
+      untrusted_metadata = {"type": "invitation"}
+
+      response = await self.client.magic_links.email.invite_async(
+        email, name=name, trusted_metadata=trusted_metadata, untrusted_metadata=untrusted_metadata
+      )
       return LibResponse.success_response(response)
     except Exception as e:
       return LibResponse.error_response([{"message": str(e)}])

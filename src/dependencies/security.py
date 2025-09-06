@@ -102,19 +102,24 @@ class APIKeyAuth:
       member_query = (
         select(OrganizationMemberModel, RoleModel)
         .join(RoleModel, OrganizationMemberModel.role_id == RoleModel.id)
-        .where(
-          and_(
-            OrganizationMemberModel.user_id == user_id, OrganizationMemberModel.organization_id == org_id, OrganizationMemberModel.status == "active"
-          )
-        )
+        .where(and_(OrganizationMemberModel.user_id == user_id, OrganizationMemberModel.organization_id == org_id))
       )
       member_result = await session.execute(member_query)
       member_data = member_result.first()
 
       if not member_data:
-        raise HTTPException(status_code=403, detail="User not found in organization")
+        raise HTTPException(status_code=403, detail="User is not a member of this organization")
 
       member, role = member_data
+      # Check organization member status
+      if member.status == "deleted":
+        raise HTTPException(status_code=403, detail="User has been removed from this organization")
+      if member.status == "suspended":
+        raise HTTPException(status_code=403, detail="User access has been suspended in this organization")
+      if member.status == "invited":
+        raise HTTPException(status_code=403, detail="User invitation is still pending")
+      if member.status != "active":
+        raise HTTPException(status_code=403, detail=f"User is not active in this organization (status: {member.status})")
 
       # Check if user has owner role
       if role.name.lower() != "owner":
@@ -227,15 +232,22 @@ class RBAC:
 
       # Get user's role in organization
       member_query = select(OrganizationMemberModel).where(
-        and_(
-          OrganizationMemberModel.user_id == user_id, OrganizationMemberModel.organization_id == org_id, OrganizationMemberModel.status == "active"
-        )
+        and_(OrganizationMemberModel.user_id == user_id, OrganizationMemberModel.organization_id == org_id)
       )
       members = await session.execute(member_query)
       member = members.unique().scalar_one_or_none()
 
       if not member:
-        raise HTTPException(status_code=403, detail="User not active in organization")
+        raise HTTPException(status_code=403, detail="User is not a member of this organization")
+      # Check organization member status with specific error messages
+      if member.status == "deleted":
+        raise HTTPException(status_code=403, detail="Access denied: User has been removed from this organization")
+      if member.status == "suspended":
+        raise HTTPException(status_code=403, detail="Access denied: User access has been suspended in this organization")
+      if member.status == "invited":
+        raise HTTPException(status_code=403, detail="Access denied: User invitation is still pending acceptance")
+      if member.status != "active":
+        raise HTTPException(status_code=403, detail=f"Access denied: User is not active in this organization (status: {member.status})")
 
       # Get role permissions
       role_perms_query = (

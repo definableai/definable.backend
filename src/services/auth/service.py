@@ -9,7 +9,6 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from dependencies.security import RBAC
 from libs.stytch.v1 import stytch_base
 from models import (
   APIKeyModel,
@@ -25,14 +24,13 @@ from services.api_keys.schema import VerifyAPIKeyRequest, VerifyAPIKeyResponse
 from utils import verify_svix_signature
 from utils.auth_util import create_access_token  # Add this line
 
-from .schema import InviteSignup, StytchUser, TestLogin, TestResponse, TestSignup
+from .schema import StytchUser, TestLogin, TestResponse, TestSignup
 
 
 class AuthService:
   """Authentication service."""
 
   http_exposed = [
-    "post=signup_invite",
     "post=test_signup",
     "post=test_login",
     "post=verify_api_key",
@@ -79,16 +77,6 @@ class AuthService:
         return await self._process_regular_user(user, db)
     else:
       return JSONResponse(content={"message": "Invalid action"})
-
-  async def post_signup_invite(
-    self,
-    user_data: InviteSignup,
-    token_payload: dict = Depends(RBAC("kb", "write")),
-    session: AsyncSession = Depends(get_db),
-  ) -> JSONResponse:
-    """Post signup invite."""
-    print(token_payload)
-    return JSONResponse(content={"status": "success"})
 
   async def post_test_signup(self, test_signup: TestSignup, db: AsyncSession = Depends(get_db)) -> TestResponse:
     """Post test signup."""
@@ -321,53 +309,67 @@ class AuthService:
       return VerifyAPIKeyResponse(valid=False, message="Token verification failed")
 
   async def _process_invitation_user(self, user: dict, metadata: dict, db: AsyncSession) -> JSONResponse:
-    """Process user creation from invitation acceptance."""
+    """Process user creation from invitation acceptance - New flow with pre-created users."""
     try:
-      invitation_id = UUID(metadata["invitation_id"])
-      organization_id = UUID(metadata["organization_id"])
-      role_id = UUID(metadata["role_id"])
+      # Get external_user_id from trusted metadata
+      trusted_metadata = user.get("trusted_metadata", {})
+      external_user_id = trusted_metadata.get("external_user_id")
+      is_invited = trusted_metadata.get("is_invited")
 
-      # 1. Find and validate invitation
-      invitation = await db.get(InvitationModel, invitation_id)
+      if not external_user_id or not is_invited:
+        self.logger.error("Missing external_user_id or is_invited in trusted metadata")
+        return JSONResponse(content={"message": "Invalid invitation data"})
+
+      # 1. Find the pre-created user by external_user_id
+      user_id = UUID(external_user_id)
+      db_user = await db.get(UserModel, user_id)
+      if not db_user:
+        self.logger.error(f"Pre-created user not found: {user_id}")
+        return JSONResponse(content={"message": "User not found"})
+
+      # 2. Find the organization member record with "invited" status
+      member_query = select(OrganizationMemberModel).where(
+        and_(OrganizationMemberModel.user_id == user_id, OrganizationMemberModel.status == "invited")
+      )
+      member_result = await db.execute(member_query)
+      org_member = member_result.scalar_one_or_none()
+
+      if not org_member:
+        self.logger.error(f"No invited organization member found for user: {user_id}")
+        return JSONResponse(content={"message": "No pending invitation found for user"})
+
+      # 3. Find the invitation record
+      if not org_member.invite_id:
+        self.logger.error(f"No invitation ID linked to organization member: {org_member.id}")
+        return JSONResponse(content={"message": "No invitation linked to membership"})
+
+      invitation = await db.get(InvitationModel, org_member.invite_id)
       if not invitation:
-        self.logger.error(f"Invitation not found: {invitation_id}")
-        return JSONResponse(content={"message": "Invalid invitation"})
+        self.logger.error(f"Invitation not found: {org_member.invite_id}")
+        return JSONResponse(content={"message": "Invitation record not found"})
 
+      # 4. Validate invitation status and expiry
       if invitation.status != InvitationStatus.PENDING:
-        self.logger.warning(f"Invitation already processed: {invitation_id}")
+        self.logger.warning(f"Invitation already processed: {invitation.id}")
         return JSONResponse(content={"message": "Invitation already processed"})
 
       if invitation.expiry_time < datetime.now(timezone.utc):
-        self.logger.warning(f"Invitation expired: {invitation_id}")
+        self.logger.warning(f"Invitation expired: {invitation.id}")
         invitation.status = InvitationStatus.EXPIRED
+        org_member.status = "suspended"  # Mark member as suspended for expired invitation
         await db.commit()
         return JSONResponse(content={"message": "Invitation expired"})
 
-      # 2. Create internal user (without default org setup)
-      db_user = await self._create_invited_user(
-        StytchUser(
-          email=user["emails"][0]["email"],
-          stytch_id=user["user_id"],
-          first_name=user["name"]["first_name"],
-          last_name=user["name"]["last_name"],
-          metadata=metadata,
-        ),
-        db,
-      )
+      # 5. Activate the user by setting Stytch ID
+      db_user.stytch_id = user["user_id"]
 
-      if not db_user:
-        return JSONResponse(content={"message": "User already exists"})
+      # 6. Update organization member status to active
+      org_member.status = "active"
 
-      # 3. Add user to organization with specified role
-      member = OrganizationMemberModel(
-        organization_id=organization_id, user_id=db_user.id, role_id=role_id, invited_by=invitation.invited_by, status="active"
-      )
-      db.add(member)
-
-      # 4. Mark invitation as accepted
+      # 7. Mark invitation as accepted
       invitation.status = InvitationStatus.ACCEPTED
 
-      # 5. Link Stytch user to internal user
+      # 8. Link Stytch user to internal user
       await stytch_base.update_user(user["user_id"], str(db_user.id))
 
       await db.commit()
@@ -375,9 +377,9 @@ class AuthService:
       self.logger.info(f"Invitation processed successfully for user {db_user.id}")
       return JSONResponse(
         content={
-          "message": "User created and added to organization successfully",
+          "message": "User activated and organization membership activated successfully",
           "user_id": str(db_user.id),
-          "organization_id": str(organization_id),
+          "organization_id": str(org_member.organization_id),
         }
       )
 
@@ -403,22 +405,3 @@ class AuthService:
       return JSONResponse(content={"message": "User created successfully"})
     else:
       return JSONResponse(content={"message": "User already exists"})
-
-  async def _create_invited_user(self, user_data: StytchUser, session: AsyncSession) -> UserModel | None:
-    """Create a new invited user (without default organization setup)."""
-    query_result = await session.execute(select(UserModel).where(UserModel.stytch_id == user_data.stytch_id))
-    existing_user = query_result.unique().scalar_one_or_none()
-    if existing_user:
-      return None
-    else:
-      new_user = UserModel(
-        email=user_data.email,
-        stytch_id=user_data.stytch_id,
-        first_name=user_data.first_name,
-        last_name=user_data.last_name,
-        _metadata=user_data.metadata,
-      )
-      session.add(new_user)
-      await session.flush()
-      await session.refresh(new_user)
-      return new_user

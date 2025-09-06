@@ -1,5 +1,8 @@
+from uuid import UUID
+
 from sqlalchemy import Boolean, Enum, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import CRUD
@@ -25,11 +28,16 @@ class OrganizationMemberModel(CRUD):
   __tablename__ = "organization_members"
   __table_args__ = (UniqueConstraint("organization_id", "user_id", name="uq_org_member"),)
 
-  organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
-  user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-  role_id: Mapped[str] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"), nullable=True)
-  invited_by: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+  organization_id: Mapped[UUID] = mapped_column(PGUUID, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+  user_id: Mapped[UUID] = mapped_column(PGUUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+  role_id: Mapped[UUID | None] = mapped_column(PGUUID, ForeignKey("roles.id", ondelete="CASCADE"), nullable=True)
+  invited_by: Mapped[UUID | None] = mapped_column(PGUUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+  invite_id: Mapped[UUID | None] = mapped_column(PGUUID, ForeignKey("invites.id", ondelete="SET NULL"), nullable=True, index=True)
+  deleted_by: Mapped[UUID | None] = mapped_column(PGUUID, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
   status: Mapped[str] = mapped_column(
-    Enum("invited", "active", "suspended", name="member_status"),
+    Enum("invited", "active", "suspended", "deleted", name="member_status"),
     nullable=False,
   )
+
+  # Relationships
+  invitation_used = relationship("InvitationModel", foreign_keys=[invite_id])
