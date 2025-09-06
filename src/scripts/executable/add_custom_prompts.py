@@ -14,6 +14,8 @@ import aiohttp
 from bs4 import BeautifulSoup, Tag
 from sqlalchemy.sql import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid import uuid4
+
 
 # Add the parent directory to the path so we can import from src
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -23,9 +25,7 @@ if parent_dir not in sys.path:
 from scripts.core.base_script import BaseScript
 from common.logger import log as logger
 
-# ============================================================================
 # CONFIGURATION CONSTANTS
-# ============================================================================
 
 # Target website configuration
 BASE_URL = "https://cursor.directory"
@@ -137,27 +137,56 @@ async def fetch_html_content(session: aiohttp.ClientSession, url: str, max_retri
   return None
 
 
-async def get_organization_info(db: AsyncSession) -> Tuple[Optional[str], Optional[str]]:
+async def create_new_organization_user(db: AsyncSession) -> Tuple[Optional[str], Optional[str]]:
   """
-  Retrieve organization and user ID from database.
+  Create a new organization and user.
 
   Returns:
       Tuple[Optional[str], Optional[str]]: (organization_id, user_id)
   """
+
   try:
-    result = await db.execute(text("SELECT organization_id, user_id FROM organization_members LIMIT 1"))
-    row = result.fetchone()
+    # 1. Get the org_id and role_id
+    result = await db.execute(text("SELECT id FROM organizations WHERE name = 'Default Org' UNION SELECT id FROM roles WHERE name = 'admin'"))
+    row = result.scalars().all()
 
     if row:
-      org_id, user_id = row[0], row[1]
-      logger.info(f"Using organization_id: {org_id}, user_id: {user_id}")
-      return str(org_id), str(user_id)
+      org_id = str(row[0])
+      role_id = str(row[1])
+
+      # 2. Create a new user
+      admin_email = "temp-admin@definable.ai"
+      admin_stytch_id = f"user-test-{uuid4()}"
+      admin_first_name = "Admin"
+
+      query = text("""
+          INSERT INTO users (email, stytch_id, first_name) 
+          VALUES (:email, :stytch_id, :first_name)
+          RETURNING id
+      """)
+
+      result = await db.execute(query, {"email": admin_email, "stytch_id": admin_stytch_id, "first_name": admin_first_name})
+      admin_user_id = result.scalar_one()
+      await db.commit()
+
+      # 3. Add the user into organization table
+      query = text("""
+        INSERT INTO organization_members (organization_id, user_id, role_id, status)
+        VALUES
+        (:organization_id, :user_id, :role_id, :status)
+      """)
+
+      await db.execute(query, {"organization_id": org_id, "user_id": admin_user_id, "role_id": role_id, "status": "active"})
+      await db.commit()
+
+      return org_id, admin_user_id
+
     else:
-      logger.error("No organization members found in database")
+      logger.error("No organization found in database")
       return None, None
 
   except Exception as e:
-    logger.error(f"Failed to retrieve organization info: {e}")
+    logger.error(f"Failed to create new organization and user: {e}")
     return None, None
 
 
@@ -277,7 +306,7 @@ async def populate_prompt_categories_and_prompts(base_url: str, db: AsyncSession
     return
 
   # Get organization information
-  organization_id, user_id = await get_organization_info(db)
+  organization_id, user_id = await create_new_organization_user(db)
   if not organization_id or not user_id:
     raise Exception("No organization_id or user_id found in database")
 
