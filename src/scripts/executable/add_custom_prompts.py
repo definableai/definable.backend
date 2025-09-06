@@ -71,11 +71,13 @@ class PromptInfo:
 async def check_existing_cursor_data(db: AsyncSession) -> bool:
   """Check if cursor.directory data already exists to prevent duplicates."""
   try:
-    result = await db.execute(text("""
+    result = await db.execute(
+      text("""
       SELECT COUNT(*) FROM prompt_categories 
       WHERE description LIKE 'Custom instructions for %' 
       OR icon_url LIKE '/rules/%'
-    """))
+    """)
+    )
     return (result.scalar() or 0) > 0
 
   except Exception as e:
@@ -280,11 +282,11 @@ async def populate_prompt_categories_and_prompts(base_url: str, db: AsyncSession
     logger.info("Processing prompts with parallel HTTP requests...")
 
     async def fetch_category_content(category: CategoryInfo) -> Optional[Tuple[CategoryInfo, List[str]]]:
-        """Fetch content for a single category."""
-        prompt_content = await extract_prompts_from_category(session, category, base_url)
-        if prompt_content:
-          return (category, prompt_content)
-        return None
+      """Fetch content for a single category."""
+      prompt_content = await extract_prompts_from_category(session, category, base_url)
+      if prompt_content:
+        return (category, prompt_content)
+      return None
 
     semaphore = asyncio.Semaphore(PARALLEL_REQUESTS)
 
@@ -476,30 +478,30 @@ class AddCustomPromptsScript(BaseScript):
             (SELECT COUNT(*) FROM cursor_data WHERE creator_id IS NULL OR organization_id IS NULL) as invalid_refs
         """)
       )
-      
+
       row = result.fetchone()
       if not row:
         logger.error("Verification failed: Unable to fetch verification data")
         return False
-      
+
       categories, prompts, empty_content, orphaned, invalid_refs = row
-      
+
       # Check all conditions
       failures = [
         (categories == 0, "No cursor.directory categories found"),
         (prompts == 0, "No prompts found for cursor.directory categories"),
         (orphaned > 0, f"{orphaned} orphaned prompts found"),
-        (invalid_refs > 0, f"{invalid_refs} prompts missing creator or organization references")
+        (invalid_refs > 0, f"{invalid_refs} prompts missing creator or organization references"),
       ]
-      
+
       for condition, message in failures:
         if condition:
           logger.error(f"Verification failed: {message}")
           return False
-      
+
       if empty_content > prompts * MAX_EMPTY_PROMPTS_RATIO:
         logger.warning(f"Verification warning: {empty_content} prompts have minimal content (< {MIN_PROMPT_LENGTH} chars)")
-      
+
       logger.info("All verification checks passed successfully!")
       logger.info(f"Summary: {categories} categories, {prompts} prompts, {empty_content} with minimal content")
       return True
