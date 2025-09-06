@@ -7,22 +7,21 @@ It populates both prompt_categories and prompts tables with structured, categori
 import asyncio
 import os
 import sys
-from typing import List, Optional, Tuple
 from dataclasses import dataclass
+from typing import List, Optional, Tuple
+from uuid import uuid4
 
 import aiohttp
 from bs4 import BeautifulSoup, Tag
-from sqlalchemy.sql import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from uuid import uuid4
-
+from sqlalchemy.sql import text
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if parent_dir not in sys.path:
   sys.path.insert(0, parent_dir)
 
-from scripts.core.base_script import BaseScript
 from common.logger import log as logger
+from scripts.core.base_script import BaseScript
 
 # CONFIGURATION CONSTANTS
 
@@ -121,12 +120,18 @@ async def create_new_organization_user(db: AsyncSession) -> Tuple[Optional[str],
   """Create a new organization and user."""
 
   try:
-    result = await db.execute(text("SELECT id FROM organizations WHERE name = 'Default Org' UNION SELECT id FROM roles WHERE name = 'admin'"))
-    row = result.scalars().all()
+    result = await db.execute(
+      text("""SELECT
+    (SELECT id FROM organizations WHERE name = 'Default Org') AS org_id,
+    (SELECT id FROM roles WHERE name = 'admin') AS role_id;""")
+    )
+    row = result.first()
+    print(row)
 
     if row:
-      org_id = str(row[0])
-      role_id = str(row[1])
+      org_id, role_id = row
+
+      print(org_id, role_id)
 
       admin_email = "temp-admin@definable.ai"
       admin_stytch_id = f"user-test-{uuid4()}"
