@@ -197,12 +197,12 @@ def downgrade():
     """)
 
   # Drop indexes
-  op.drop_index("ix_billing_plans_is_active", table_name="billing_plans")
-  op.drop_index("ix_transactions_stripe_payment_intent_id", table_name="transactions")
-  op.drop_index("ix_transactions_user_id", table_name="transactions")
-  op.drop_index("ix_transactions_organization_id", table_name="transactions")
-  op.drop_index("ix_transactions_user_id_organization_id", table_name="transactions")
-  op.drop_index("ix_wallets_organization_id", table_name="wallets")
+  op.execute("DROP INDEX IF EXISTS ix_billing_plans_is_active")
+  op.execute("DROP INDEX IF EXISTS ix_transactions_stripe_payment_intent_id")
+  op.execute("DROP INDEX IF EXISTS ix_transactions_user_id")
+  op.execute("DROP INDEX IF EXISTS ix_transactions_organization_id")
+  op.execute("DROP INDEX IF EXISTS ix_transactions_user_id_organization_id")
+  op.execute("DROP INDEX IF EXISTS ix_wallets_organization_id")
 
   # Drop tables in reverse order
   op.drop_table("billing_plans")
