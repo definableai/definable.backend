@@ -120,23 +120,36 @@ async def create_new_organization_user(db: AsyncSession) -> Tuple[Optional[str],
   """Create a new organization and user."""
 
   try:
-    result = await db.execute(
-      text("""SELECT
-    (SELECT id FROM organizations WHERE name = 'Default Org') AS org_id,
-    (SELECT id FROM roles WHERE name = 'admin') AS role_id;""")
-    )
-    row = result.first()
-    print(row)
+    # First get the organization (created by migration 006)
+    org_result = await db.execute(text("SELECT id FROM organizations WHERE name = 'Default' LIMIT 1"))
+    org_id = org_result.scalar_one_or_none()
 
-    if row:
-      org_id, role_id = row
+    if not org_id:
+      logger.error("No default organization found in database")
+      return None, None
 
-      print(org_id, role_id)
+    # Then get the admin role for this organization (roles are organization-scoped)
+    role_result = await db.execute(text("SELECT id FROM roles WHERE name = 'admin' AND organization_id = :org_id"), {"org_id": org_id})
+    role_id = role_result.scalar_one_or_none()
 
-      admin_email = "temp-admin@definable.ai"
+    if not role_id:
+      logger.error("No admin role found for default organization")
+      return None, None
+
+    print(f"Found org_id: {org_id}, role_id: {role_id}")
+
+    admin_email = "temp-admin@definable.ai"
+    admin_first_name = "Admin"
+
+    # Check if temp admin user already exists
+    existing_user_result = await db.execute(text("SELECT id FROM users WHERE email = :email LIMIT 1"), {"email": admin_email})
+    admin_user_id = existing_user_result.scalar_one_or_none()
+
+    if admin_user_id:
+      logger.info(f"Using existing temp admin user: {admin_user_id}")
+    else:
+      # Create new temp admin user
       admin_stytch_id = f"user-test-{uuid4()}"
-      admin_first_name = "Admin"
-
       query = text("""
           INSERT INTO users (email, stytch_id, first_name)
           VALUES (:email, :stytch_id, :first_name)
@@ -146,7 +159,16 @@ async def create_new_organization_user(db: AsyncSession) -> Tuple[Optional[str],
       result = await db.execute(query, {"email": admin_email, "stytch_id": admin_stytch_id, "first_name": admin_first_name})
       admin_user_id = result.scalar_one()
       await db.commit()
+      logger.info(f"Created new temp admin user: {admin_user_id}")
 
+    # Check if organization membership already exists
+    membership_result = await db.execute(
+      text("SELECT id FROM organization_members WHERE organization_id = :org_id AND user_id = :user_id"),
+      {"org_id": org_id, "user_id": admin_user_id},
+    )
+    existing_membership = membership_result.scalar_one_or_none()
+
+    if not existing_membership:
       query = text("""
         INSERT INTO organization_members (organization_id, user_id, role_id, status)
         VALUES
@@ -155,12 +177,11 @@ async def create_new_organization_user(db: AsyncSession) -> Tuple[Optional[str],
 
       await db.execute(query, {"organization_id": org_id, "user_id": admin_user_id, "role_id": role_id, "status": "active"})
       await db.commit()
-
-      return org_id, admin_user_id
-
+      logger.info(f"Created organization membership for user: {admin_user_id}")
     else:
-      logger.error("No organization found in database")
-      return None, None
+      logger.info(f"Using existing organization membership: {existing_membership}")
+
+    return org_id, admin_user_id
 
   except Exception as e:
     logger.error(f"Failed to create new organization and user: {e}")
@@ -361,14 +382,16 @@ async def populate_prompt_categories_and_prompts(base_url: str, db: AsyncSession
           "category_id": prompt.category_id,
           "creator_id": user_id,
           "organization_id": organization_id,
+          "is_public": True,
+          "is_featured": True,
         }
         for prompt in successful_prompts
       ]
 
       await db.execute(
         text("""
-          INSERT INTO prompts (title, content, description, category_id, creator_id, organization_id)
-          VALUES (:title, :content, :description, :category_id, :creator_id, :organization_id)
+          INSERT INTO prompts (title, content, description, category_id, creator_id, organization_id, is_public, is_featured)
+          VALUES (:title, :content, :description, :category_id, :creator_id, :organization_id, :is_public, :is_featured)
         """),
         prompt_data,
       )
