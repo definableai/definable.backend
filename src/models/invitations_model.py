@@ -29,14 +29,12 @@ class InvitationModel(CRUD):
   organization_id: Mapped[UUID] = mapped_column(PGUUID, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
   role_id: Mapped[UUID] = mapped_column(PGUUID, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
   invitee_email: Mapped[str] = mapped_column(String(255), nullable=False)
-  invited_by: Mapped[UUID] = mapped_column(PGUUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
   status: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=InvitationStatus.PENDING)
   expiry_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
   # Relationships
   organization = relationship("OrganizationModel", back_populates="invitations")
   role = relationship("RoleModel", back_populates="invitations")
-  inviter = relationship("UserModel", foreign_keys=[invited_by], back_populates="sent_invitations")
 
   def __repr__(self) -> str:
     return f"<InvitationModel(id={self.id}, email={self.invitee_email}, status={self.status})>"
