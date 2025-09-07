@@ -196,7 +196,7 @@ def downgrade():
       DROP TRIGGER IF EXISTS update_{table}_updated_at ON {table};
     """)
 
-  # Drop indexes (using IF EXISTS to handle cases where later migrations may have already dropped them)
+  # Drop indexes
   op.execute("DROP INDEX IF EXISTS ix_billing_plans_is_active")
   op.execute("DROP INDEX IF EXISTS ix_transactions_stripe_payment_intent_id")
   op.execute("DROP INDEX IF EXISTS ix_transactions_user_id")
