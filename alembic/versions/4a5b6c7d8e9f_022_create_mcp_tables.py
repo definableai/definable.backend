@@ -1,4 +1,5 @@
-"""
+"""022_create_mcp_tables
+
 Revision ID: 4a5b6c7d8e9f
 Revises: 3c4d5e6f7g8h
 Create Date: 2025-08-29
