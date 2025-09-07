@@ -55,10 +55,12 @@ dependencies = [
     "easyocr>=1.7.0",
     "pypdf>=6.0.0",
     "firebase-admin>=7.1.0",
+    "mcp>=1.13.1",
+    "html5lib>=1.1",
 ]
 
 [dependency-groups]
 dev = [
     "mypy>=1.15.0",
-    "types-aiofiles>=24.1.0.20250809",
+    "types-aiofiles>=24.1.0.20250809"
 ]

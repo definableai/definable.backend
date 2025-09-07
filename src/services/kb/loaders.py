@@ -1,7 +1,7 @@
+import tempfile
 from pathlib import Path
 from typing import AsyncIterator, List
 from uuid import UUID, uuid4
-import tempfile
 
 from docling.chunking import HybridChunker
 from docling.datamodel.base_models import InputFormat
@@ -107,8 +107,27 @@ class DoclingFileLoader:
       self.file_path = temp_path
       file_ext = self.document.source_metadata.get("file_type", "").lower()
 
-      # Try Docling for supported formats
-      if file_ext in ["pdf", "docx", "xlsx", "pptx", "html", "htm", "md", "asciidoc", "adoc", "csv", "xml", "nxml", "uspto"]:
+      # Try Docling for supported formats (including images)
+      if file_ext in [
+        "pdf",
+        "docx",
+        "xlsx",
+        "pptx",
+        "html",
+        "htm",
+        "md",
+        "asciidoc",
+        "adoc",
+        "csv",
+        "xml",
+        "nxml",
+        "uspto",
+        "jpg",
+        "jpeg",
+        "png",
+        "tiff",
+        "bmp",
+      ]:
         try:
           print(f"Using Docling for {file_ext}")
           async for doc in self._load_with_docling():

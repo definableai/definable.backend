@@ -20,11 +20,14 @@ class OrganizationInfo(BaseModel):
 class UserDetailResponse(BaseModel):
   """User detail response schema."""
 
-  id: UUID
+  id: UUID | None = None  # None for pending invitations
   email: EmailStr
   first_name: str
   last_name: str
   full_name: str
+  status: str = "active"  # "active", "pending", "expired"
+  invite_id: str | None = None  # For pending invitations
+  invited_at: str | None = None  # ISO datetime string
   organizations: list[OrganizationInfo]
 
   class Config:
@@ -47,10 +50,22 @@ class InviteSignup(BaseModel):
   first_name: str
   last_name: str
   email: EmailStr
-  role: str
+  role: UUID
 
   class Config:
     from_attributes = True
+
+
+class InviteResponse(BaseModel):
+  """Invite response schema."""
+
+  id: Optional[str] = None
+  email: EmailStr
+  first_name: str = ""
+  last_name: str = ""
+  full_name: str = ""
+  invite_id: str
+  organizations: list[dict]
 
 
 class StytchUser(BaseModel):
