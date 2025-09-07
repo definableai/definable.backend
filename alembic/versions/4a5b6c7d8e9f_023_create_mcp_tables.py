@@ -1,6 +1,7 @@
-"""
+"""023_create_mcp_tables
+
 Revision ID: 4a5b6c7d8e9f
-Revises: 3c4d5e6f7g8h
+Revises: 4d5e6f7g8h9i
 Create Date: 2025-08-29
 
 """
@@ -12,7 +13,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "4a5b6c7d8e9f"
-down_revision = "3c4d5e6f7g8h"
+down_revision = "4d5e6f7g8h9i"
 branch_labels: str | None = None
 depends_on: str | None = None
 

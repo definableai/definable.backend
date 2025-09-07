@@ -1,7 +1,7 @@
-"""023_create_customer
+"""024_create_customer
 
 Revision ID: 5e6f7g8h9i0j
-Revises: 4d5e6f7g8h9i
+Revises: 4a5b6c7d8e9f
 Create Date: 2025-01-30 10:30:00.000000
 
 """
@@ -15,7 +15,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "5e6f7g8h9i0j"
-down_revision: Union[str, None] = "4d5e6f7g8h9i"
+down_revision: Union[str, None] = "4a5b6c7d8e9f"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
