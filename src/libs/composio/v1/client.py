@@ -1,4 +1,4 @@
-from typing import Any, List
+from typing import Any, Dict, List
 
 import httpx
 
@@ -23,7 +23,7 @@ class Composio:
     auth_config_id: str,
     user_id: str,
     callback_url: str,
-  ) -> LibResponse[Any]:
+  ) -> LibResponse[Dict[str, Any]]:
     """
     Create a connected account for a user.
 
@@ -33,7 +33,7 @@ class Composio:
         callback_url: Callback URL for OAuth flow
 
     Returns:
-        LibResponse[Any]: Connected account response
+        LibResponse[Dict[str, Any]]: Connected account response
     """
     payload = {
       "auth_config": {"id": auth_config_id},
@@ -44,7 +44,7 @@ class Composio:
     }
 
     try:
-      async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10)) as client:
+      async with httpx.AsyncClient(timeout=httpx.Timeout(30)) as client:
         response = await client.post(
           f"{self.base_url}/connected_accounts",
           headers=self.headers,
@@ -59,7 +59,7 @@ class Composio:
     self,
     server_id: str,
     user_id: str,
-  ) -> LibResponse[Any]:
+  ) -> LibResponse[Dict[str, Any]]:
     """
     Create an MCP server instance for a user.
 
@@ -68,12 +68,12 @@ class Composio:
         user_id: The user ID (composio_user_id)
 
     Returns:
-        LibResponse[Any]: Instance creation response
+        LibResponse[Dict[str, Any]]: Instance creation response
     """
     payload = {"user_id": user_id}
 
     try:
-      async with httpx.AsyncClient() as client:
+      async with httpx.AsyncClient(timeout=httpx.Timeout(10)) as client:
         response = await client.post(
           f"{self.base_url}/mcp/servers/{server_id}/instances",
           headers=self.headers,
@@ -88,7 +88,7 @@ class Composio:
     self,
     server_id: str,
     user_ids: List[str],
-  ) -> LibResponse[Any]:
+  ) -> LibResponse[Dict[str, Any]]:
     """
     Generate MCP URL for given server and users.
 
@@ -97,7 +97,7 @@ class Composio:
         user_ids: List of user IDs
 
     Returns:
-        LibResponse[Any]: URL generation response
+        LibResponse[Dict[str, Any]]: URL generation response
     """
     payload = {
       "mcp_server_id": server_id,
@@ -105,7 +105,7 @@ class Composio:
     }
 
     try:
-      async with httpx.AsyncClient() as client:
+      async with httpx.AsyncClient(timeout=httpx.Timeout(30)) as client:
         response = await client.post(
           f"{self.base_url}/mcp/servers/generate",
           headers=self.headers,
@@ -116,7 +116,7 @@ class Composio:
     except httpx.HTTPStatusError as e:
       return LibResponse.error_response(errors=[{"message": str(e)}])
 
-  async def list_mcp_instances(self, server_id: str) -> LibResponse[Any]:
+  async def list_mcp_instances(self, server_id: str) -> LibResponse[Dict[str, Any]]:
     """
     List MCP instances for a server.
 
@@ -124,10 +124,10 @@ class Composio:
         server_id: The MCP server ID
 
     Returns:
-        LibResponse[Any]: List of instances
+        LibResponse[Dict[str, Any]]: List of instances
     """
     try:
-      async with httpx.AsyncClient() as client:
+      async with httpx.AsyncClient(timeout=httpx.Timeout(30)) as client:
         response = await client.get(
           f"{self.base_url}/mcp/servers/{server_id}/instances",
           headers=self.headers,

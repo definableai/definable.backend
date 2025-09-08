@@ -75,6 +75,9 @@ class MCPService:
         callback_url=callback_url,
       )
 
+      if not result.success:
+        raise Exception(f"Failed to create connected account: {result.errors}")
+
       # Store the connection attempt in our database with pending status
       mcp_session = MCPSessionModel(
         id=uuid.uuid4(),
@@ -82,23 +85,27 @@ class MCPService:
         mcp_server_id=data.server_id,
         user_id=user_id,
         org_id=org_id,
-        connected_account_id=result["id"],
+        connected_account_id=result.data["id"],
         status="pending",
       )
       session.add(mcp_session)
       await session.commit()
 
-      return MCPConnectedAccountResponse(**result)
+      return MCPConnectedAccountResponse(**result.data)
     except Exception as e:
       await session.rollback()
+      import traceback
+
       self.logger.error(f"Error creating connected account: {e}")
-      raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Error creating connected account")
+      self.logger.error(f"Full traceback: {traceback.format_exc()}")
+      raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=f"Error creating connected account: {str(e)}")
 
   async def post_generate_url(
     self,
     data: MCPGenerateUrlRequest,
     user: dict = Depends(RBAC("mcp", "write")),
     session: AsyncSession = Depends(get_db),
+    # Check if instance creation was successful
   ) -> MCPGenerateUrlResponse:
     try:
       mcp_session_query = select(MCPSessionModel).where(
@@ -115,10 +122,13 @@ class MCPService:
         user_ids=[mcp_session.instance_id],  # instance_id is same as composio_user_id
       )
 
-      if not url_data.get("user_ids_url"):
+      if not url_data.success:
+        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=f"Failed to generate MCP URL: {url_data.errors}")
+
+      if not url_data.data.get("user_ids_url"):
         raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Failed to generate MCP URL")
 
-      mcp_url = url_data["user_ids_url"][0]
+      mcp_url = url_data.data["user_ids_url"][0]
       await session.commit()
 
       return MCPGenerateUrlResponse(mcp_url=mcp_url, status="success")
@@ -148,7 +158,6 @@ class MCPService:
             name=server.name,
             allowed_tools=server.allowed_tools or [],
             toolkits=server.toolkits or [],
-            updated_at=server.updated_at.isoformat() if server.updated_at else None,
             created_at=server.created_at.isoformat() if server.created_at else None,
             server_instance_count=server.server_instance_count,
           )
@@ -201,7 +210,6 @@ class MCPService:
         name=server.name,
         allowed_tools=server.allowed_tools or [],
         toolkits=server.toolkits or [],
-        updated_at=server.updated_at.isoformat() if server.updated_at else None,
         created_at=server.created_at.isoformat() if server.created_at else None,
         server_instance_count=server.server_instance_count,
         tools=tools_list,
@@ -240,7 +248,6 @@ class MCPService:
             instance_id=db_session.instance_id,
             mcp_server_id=str(db_session.mcp_server_id),
             created_at=db_session.created_at.isoformat() if db_session.created_at else None,
-            updated_at=db_session.updated_at.isoformat() if db_session.updated_at else None,
           )
         )
 
@@ -279,10 +286,13 @@ class MCPService:
           user_id=mcp_session_id,  # instance_id is same as composio_user_id
         )
 
+        if not instance.success:
+          raise Exception(f"Failed to create MCP instance: {instance.errors}")
+
         # Update the session with instance info from Composio
         # The instance_id should already be the same, but we can update the ID if needed
-        if instance.get("id"):
-          mcp_session.id = instance["id"]
+        if instance.data and instance.data.get("id"):
+          mcp_session.id = instance.data["id"]
 
         await session.commit()
 
