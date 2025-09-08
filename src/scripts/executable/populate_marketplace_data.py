@@ -129,8 +129,9 @@ class PopulateMarketplaceDataScript(BaseScript):
       await db.execute(
         text("""
                 INSERT INTO models (name, provider, version, is_active, config, props, model_metadata)
-                SELECT :name, :provider, :version, :is_active, '{}', '{}', '{}'::jsonb
-                WHERE NOT EXISTS (SELECT 1 FROM models WHERE name = :name);
+                SELECT CAST(:name AS text), CAST(:provider AS text), CAST(:version AS text), CAST(:is_active AS boolean),
+                       CAST('{}' AS jsonb), CAST('{}' AS jsonb), CAST('{}' AS jsonb)
+                WHERE NOT EXISTS (SELECT 1 FROM models WHERE name = CAST(:name AS text));
             """),
         {"name": name, "provider": provider, "version": version, "is_active": is_active},
       )

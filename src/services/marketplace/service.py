@@ -531,6 +531,7 @@ class MarketplaceService:
 
     return MarketplaceAssistantItem(
       id=str(marketplace_assistant.id),
+      assistant_id=str(marketplace_assistant.assistant_id),
       name=name,
       description=description,
       type="core" if marketplace_assistant.assistant_type == "llm_model" else "agent",

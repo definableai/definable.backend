@@ -103,6 +103,7 @@ class MarketplaceAssistantBase(BaseModel):
   """Base marketplace assistant schema."""
 
   id: str
+  assistant_id: str  # ID of the underlying LLM model or agent
   name: str
   description: str
   type: str  # 'core' | 'agent'

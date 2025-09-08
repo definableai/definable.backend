@@ -1,17 +1,13 @@
-"""020_add_marketplace_tables_clean
+"""024_add_marketplace_tables
 
-Revision ID: 2b3c4d5e6f7g
-Revises: 1a2b3c4d5e6f
-Create Date: 2025-01-30 12:00:00.000000
-
-This migration only contains schema changes (tables, indexes, triggers).
-Data population is handled by separate scripts:
-- src/scripts/populate_marketplace_data.py
-- src/scripts/update_model_specifications.py
+Revision ID: bf55e877b87c
+Revises: 94d74fb48263
+Create Date: 2025-09-08 17:38:42.101549
 
 """
 
 from typing import Sequence, Union
+from uuid import uuid4
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
@@ -19,8 +15,8 @@ from sqlalchemy.dialects import postgresql
 from alembic import op  # type: ignore
 
 # revision identifiers, used by Alembic.
-revision: str = "2b3c4d5e6f7g"
-down_revision: Union[str, None] = "1a2b3c4d5e6f"
+revision: str = "bf55e877b87c"
+down_revision: Union[str, None] = "94d74fb48263"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -153,6 +149,53 @@ def upgrade() -> None:
     ('research-models', 'Models optimized for research and analysis tasks', 5, true),
     ('creative-models', 'Models focused on creative writing and content generation', 6, true);
   """)
+
+  # Create marketplace permissions
+  marketplace_permissions = [
+    ("marketplace_read", "View marketplace assistants and reviews", "marketplace", "read"),
+    ("marketplace_write", "Create reviews and manage marketplace content", "marketplace", "write"),
+    ("marketplace_delete", "Delete marketplace reviews and content", "marketplace", "delete"),
+  ]
+
+  permission_ids = {}
+  for name, desc, resource, action in marketplace_permissions:
+    perm_id = str(uuid4())
+    op.execute(f"""
+      INSERT INTO permissions (id, name, description, resource, action, created_at)
+      VALUES ('{perm_id}', '{name}', '{desc}', '{resource}', '{action}', CURRENT_TIMESTAMP)
+    """)
+    permission_ids[name] = perm_id
+
+  # Assign marketplace permissions to existing roles
+  # Get existing role IDs
+  conn = op.get_bind()
+  result = conn.execute(sa.text("SELECT id, name FROM roles WHERE is_system_role = true"))
+  roles = {row[1]: row[0] for row in result.fetchall()}
+
+  # Assign permissions to roles
+  for role_name, role_id in roles.items():
+    if role_name == "owner":
+      # Owner gets all marketplace permissions (read, write, delete)
+      for perm_id in permission_ids.values():
+        op.execute(f"""
+          INSERT INTO role_permissions (id, role_id, permission_id, created_at)
+          VALUES ('{str(uuid4())}', '{role_id}', '{perm_id}', CURRENT_TIMESTAMP)
+        """)
+    elif role_name == "admin":
+      # Admin gets all marketplace permissions (read, write, delete)
+      for perm_id in permission_ids.values():
+        op.execute(f"""
+          INSERT INTO role_permissions (id, role_id, permission_id, created_at)
+          VALUES ('{str(uuid4())}', '{role_id}', '{perm_id}', CURRENT_TIMESTAMP)
+        """)
+    elif role_name == "dev":
+      # Dev gets only read and write permissions (no delete)
+      for perm_name, perm_id in permission_ids.items():
+        if "delete" not in perm_name:
+          op.execute(f"""
+            INSERT INTO role_permissions (id, role_id, permission_id, created_at)
+            VALUES ('{str(uuid4())}', '{role_id}', '{perm_id}', CURRENT_TIMESTAMP)
+          """)
 
   # Create database triggers for automatic cache updates
 
@@ -375,9 +418,10 @@ def upgrade() -> None:
     FOR EACH ROW EXECUTE FUNCTION auto_track_marketplace_usage();
   """)
 
-  # NOTE: Data population is handled by separate scripts:
-  # 1. Run: python src/scripts/populate_marketplace_data.py
-  # 2. Run: python src/scripts/update_model_specifications.py
+
+# NOTE: Data population is handled by separate scripts:
+# 1. Run: python src/scripts/populate_marketplace_data.py
+# 2. Run: python src/scripts/update_model_specifications.py
 
 
 def downgrade() -> None:
@@ -392,31 +436,43 @@ def downgrade() -> None:
   op.execute("DROP TRIGGER IF EXISTS trigger_update_rating_cache_update ON marketplace_reviews;")
   op.execute("DROP TRIGGER IF EXISTS trigger_update_rating_cache_insert ON marketplace_reviews;")
 
+  # Remove marketplace permissions
+  # First remove role_permissions for marketplace
+  conn = op.get_bind()
+  result = conn.execute(sa.text("SELECT id FROM permissions WHERE resource = 'marketplace'"))
+  marketplace_perm_ids = [row[0] for row in result.fetchall()]
+
+  for perm_id in marketplace_perm_ids:
+    op.execute(f"DELETE FROM role_permissions WHERE permission_id = '{perm_id}'")
+
+  # Then remove the permissions themselves
+  op.execute("DELETE FROM permissions WHERE resource = 'marketplace'")
+
   # Drop trigger functions
   op.execute("DROP FUNCTION IF EXISTS auto_track_marketplace_usage();")
   op.execute("DROP FUNCTION IF EXISTS sync_llm_marketplace();")
   op.execute("DROP FUNCTION IF EXISTS update_marketplace_usage_cache();")
   op.execute("DROP FUNCTION IF EXISTS update_marketplace_rating_cache();")
 
-  # Drop indexes
-  op.drop_index("idx_marketplace_usage_count")
-  op.drop_index("idx_marketplace_usage_assistant")
-  op.drop_index("idx_marketplace_reviews_assistant")
-  op.drop_index("idx_marketplace_assistants_rating")
-  op.drop_index("idx_marketplace_assistants_published")
-  op.drop_index("idx_llm_model_categories_primary")
-  op.drop_index("idx_llm_model_categories_category")
-  op.drop_index("idx_llm_model_categories_model")
-  op.drop_index("idx_llm_category_name")
-  op.drop_index("idx_llm_category_active")
+  # Drop indexes (use IF EXISTS to avoid errors)
+  op.execute("DROP INDEX IF EXISTS idx_marketplace_usage_count")
+  op.execute("DROP INDEX IF EXISTS idx_marketplace_usage_assistant")
+  op.execute("DROP INDEX IF EXISTS idx_marketplace_reviews_assistant")
+  op.execute("DROP INDEX IF EXISTS idx_marketplace_assistants_rating")
+  op.execute("DROP INDEX IF EXISTS idx_marketplace_assistants_published")
+  op.execute("DROP INDEX IF EXISTS idx_llm_model_categories_primary")
+  op.execute("DROP INDEX IF EXISTS idx_llm_model_categories_category")
+  op.execute("DROP INDEX IF EXISTS idx_llm_model_categories_model")
+  op.execute("DROP INDEX IF EXISTS idx_llm_category_name")
+  op.execute("DROP INDEX IF EXISTS idx_llm_category_active")
 
-  # Drop tables (in correct order due to foreign keys)
-  op.drop_table("marketplace_usage")
-  op.drop_table("marketplace_reviews")
-  op.drop_table("marketplace_assistants")
-  op.drop_table("llm_model_categories")
-  op.drop_table("llm_category")
+  # Drop tables (in correct order due to foreign keys, use IF EXISTS to avoid errors)
+  op.execute("DROP TABLE IF EXISTS marketplace_usage")
+  op.execute("DROP TABLE IF EXISTS marketplace_reviews")
+  op.execute("DROP TABLE IF EXISTS marketplace_assistants")
+  op.execute("DROP TABLE IF EXISTS llm_model_categories")
+  op.execute("DROP TABLE IF EXISTS llm_category")
 
-  # Remove tags columns from existing tables
-  op.drop_column("agents", "tags")
-  op.drop_column("models", "tags")
+  # Remove tags columns from existing tables (use IF EXISTS to avoid errors)
+  op.execute("ALTER TABLE agents DROP COLUMN IF EXISTS tags")
+  op.execute("ALTER TABLE models DROP COLUMN IF EXISTS tags")
