@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Script to synchronize USD billing plans with Stripe plans.
-First attempts to match existing Stripe plans by name, amount, and currency.
+First attempts to match existing Stripe plans by name, amount, currency, and cycle.
 If no match is found, creates new plans in Stripe.
 """
 
@@ -17,23 +17,33 @@ if parent_dir not in sys.path:
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from scripts.core.base_script import BaseScript
 from common.logger import log as logger
 from libs.payments.stripe.v1.engine import engine as stripe_engine
+from scripts.core.base_script import BaseScript
 
 
-async def fetch_billing_plans(db: AsyncSession) -> List[Tuple[str, str, float, int, str]]:
-  """Fetch all USD billing plans from the database."""
+async def fetch_billing_plans(db: AsyncSession) -> List[Tuple[str, str, float, int, str, str]]:
+  """Fetch all USD billing plans from the database with cycle information."""
   result = await db.execute(
     text("""
-            SELECT id, name, amount, credits, currency
+            SELECT id, name, amount, credits, currency, cycle
             FROM billing_plans
             WHERE currency = 'USD' AND is_active = true
-            ORDER BY amount ASC
+            ORDER BY cycle ASC, amount ASC
         """)
   )
   plans = result.fetchall()
   logger.info(f"Found {len(plans)} USD billing plans in database")
+
+  # Log breakdown of free vs paid plans and cycle distribution
+  free_count = sum(1 for plan in plans if plan[2] <= 0)
+  paid_count = len(plans) - free_count
+  monthly_count = sum(1 for plan in plans if plan[5] == "MONTHLY")
+  yearly_count = sum(1 for plan in plans if plan[5] == "YEARLY")
+
+  logger.info(f"Plan breakdown: {paid_count} paid plans, {free_count} free plans")
+  logger.info(f"Cycle breakdown: {monthly_count} monthly plans, {yearly_count} yearly plans")
+
   return [tuple(row) for row in plans]
 
 
@@ -47,10 +57,12 @@ async def check_stripe_plan_exists(db: AsyncSession, billing_plan_id: str) -> Op
   return row[0] if row and row[0] else None
 
 
-async def find_matching_stripe_plan(plan_name: str, amount: float, currency: str) -> Optional[str]:
-  """Find existing Stripe plan that matches database plan details."""
+async def find_matching_stripe_plan(plan_name: str, amount: float, currency: str, cycle: str) -> Optional[str]:
+  """Find existing Stripe plan that matches database plan details including cycle."""
   try:
-    logger.info(f"Searching for existing Stripe plan matching: {plan_name}, {amount} {currency}")
+    # Create cycle-aware plan name for matching
+    stripe_plan_name = f"{plan_name}_{cycle.lower()}" if cycle == "YEARLY" else plan_name
+    logger.info(f"Searching for existing Stripe plan matching: {stripe_plan_name}, {amount} {currency}, {cycle.lower()} billing")
 
     # Fetch all plans from Stripe
     response = stripe_engine.fetch_all_plans(count=100)
@@ -62,19 +74,27 @@ async def find_matching_stripe_plan(plan_name: str, amount: float, currency: str
     stripe_plans = response.data
     amount_in_cents = int(amount * 100)  # Convert to cents for comparison
 
-    # Search for matching plan by name, amount, and currency
+    # Search for matching plan by name, amount, currency, and billing cycle
     for plan in stripe_plans:
       stripe_name = plan.get("name", "")
       stripe_amount = plan.get("amount", 0)
       stripe_currency = plan.get("currency", "")
+      recurring_interval = plan.get("recurring", {}).get("interval", "")
 
-      # Match by name, amount, and currency
-      if stripe_name == plan_name and stripe_amount == amount_in_cents and stripe_currency.upper() == currency.upper():
+      # Expected billing interval based on cycle
+      expected_interval = "month" if cycle == "MONTHLY" else "year"
+
+      if (
+        stripe_name == stripe_plan_name
+        and stripe_amount == amount_in_cents
+        and stripe_currency.upper() == currency.upper()
+        and recurring_interval == expected_interval
+      ):
         plan_id = plan.get("id")
-        logger.info(f"Found matching Stripe plan: {plan_id} for '{plan_name}'")
+        logger.info(f"Found matching Stripe plan: {plan_id} for '{stripe_plan_name}' ({cycle.lower()})")
         return plan_id
 
-    logger.info(f"No matching Stripe plan found for '{plan_name}' with amount {amount} {currency}")
+    logger.info(f"No matching Stripe plan found for '{stripe_plan_name}' with amount {amount} {currency} ({cycle.lower()} billing)")
     return None
 
   except Exception as e:
@@ -82,197 +102,158 @@ async def find_matching_stripe_plan(plan_name: str, amount: float, currency: str
     return None
 
 
-async def update_billing_plan_with_stripe_id(db: AsyncSession, billing_plan_id: str, stripe_plan_id: str):
-  """Update billing plan with Stripe plan ID."""
-  await db.execute(
-    text("""
-            UPDATE billing_plans
-            SET plan_id = :stripe_plan_id,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = :billing_plan_id
-        """),
-    {"billing_plan_id": billing_plan_id, "stripe_plan_id": stripe_plan_id},
-  )
-  await db.commit()
-  logger.info(f"Updated billing plan {billing_plan_id} with Stripe plan ID: {stripe_plan_id}")
+async def create_stripe_plan(plan_name: str, plan_description: str, amount: float, _credits: int, currency: str, cycle: str) -> Optional[str]:
+  """Create a new plan in Stripe and return its ID (cycle-aware)."""
+  try:
+    # Create cycle-aware plan name and billing period
+    stripe_plan_name = f"{plan_name}_{cycle.lower()}" if cycle == "YEARLY" else plan_name
+    period = "month" if cycle == "MONTHLY" else "year"
+
+    # Update description for yearly plans
+    description = plan_description or f"{_credits} credits for ${amount}"
+    if cycle == "YEARLY":
+      description += " (Yearly billing with discount)"
+
+    logger.info(f"Creating new Stripe plan: {stripe_plan_name} - ${amount} {currency} ({_credits} credits, {period}ly billing)")
+
+    # Convert amount to cents (Stripe expects integers)
+    amount_in_cents = int(round(amount * 100))
+
+    response = stripe_engine.create_plan(
+      name=stripe_plan_name,
+      amount=amount_in_cents,
+      currency=currency.lower(),
+      period=period,
+      interval=1,
+      description=description,
+    )
+
+    if response.is_successful():
+      plan_id = response.data["id"]
+      logger.info(f"Successfully created Stripe plan: {plan_id} for {cycle.lower()} billing")
+      return plan_id
+    else:
+      logger.error(f"Failed to create Stripe plan '{stripe_plan_name}': {response.errors}")
+      return None
+
+  except Exception as e:
+    logger.error(f"Error creating Stripe plan '{stripe_plan_name}': {str(e)}")
+    return None
+
+
+async def update_billing_plan_with_stripe_id(db: AsyncSession, billing_plan_id: str, stripe_plan_id: str, plan_name: str, cycle: str):
+  """Update billing plan with Stripe plan ID (cycle-aware)."""
+  try:
+    await db.execute(
+      text("UPDATE billing_plans SET plan_id = :stripe_plan_id WHERE id = :billing_plan_id"),
+      {"stripe_plan_id": stripe_plan_id, "billing_plan_id": billing_plan_id},
+    )
+    logger.info(f"Updated billing plan {billing_plan_id} ({plan_name} {cycle.lower()}) with Stripe plan ID: {stripe_plan_id}")
+
+  except Exception as e:
+    logger.error(f"Failed to update billing plan {billing_plan_id} ({plan_name} {cycle.lower()}) with Stripe ID: {str(e)}")
+    raise
 
 
 class CreateStripePlansScript(BaseScript):
-  """Script to synchronize USD billing plans with Stripe plans."""
+  """Script to sync USD billing plans with Stripe."""
 
   def __init__(self):
     super().__init__("create_stripe_plans")
+    self.description = "Synchronize USD billing plans with Stripe"
 
-  async def execute(self, db: AsyncSession) -> None:
-    """Create or match Stripe plans for all USD billing plans."""
+  async def execute(self, session: AsyncSession, *args, **kwargs):
+    """Execute the script to sync plans with Stripe."""
+    logger.info("Starting Stripe plans synchronization for USD billing plans...")
+
+    # Counters
+    already_synced = 0
+    matched_existing = 0
+    created_new = 0
+    failed = 0
+
     try:
-      billing_plans = await fetch_billing_plans(db)
+      # Fetch all USD billing plans from database
+      billing_plans = await fetch_billing_plans(session)
 
       if not billing_plans:
-        logger.info("No USD billing plans found. Nothing to process.")
+        logger.warning("No USD billing plans found in database")
         return
-
-      created_plans = 0
-      matched_plans = 0
-      skipped_plans = 0
 
       logger.info(f"Processing {len(billing_plans)} USD billing plans...")
 
-      for plan_id, plan_name, amount, plan_credits, currency in billing_plans:
-        # Skip if plan is not USD currency (extra safety check)
-        if currency != "USD":
-          logger.warning(f"Skipping non-USD plan: {plan_name} ({currency})")
-          skipped_plans += 1
+      for billing_plan_id, plan_name, amount, _credits, currency, cycle in billing_plans:
+        logger.info(f"Processing plan: {plan_name} ({cycle.lower()}) - ${amount} - {_credits} credits")
+
+        # Check if billing plan already has a Stripe plan ID
+        existing_stripe_id = await check_stripe_plan_exists(session, billing_plan_id)
+
+        if existing_stripe_id:
+          logger.info(f"Billing plan '{plan_name}' ({cycle.lower()}) already has Stripe ID: {existing_stripe_id}")
+          already_synced += 1
           continue
 
-        # Check if database already has plan_id
-        existing_stripe_plan_id = await check_stripe_plan_exists(db, plan_id)
-
-        if existing_stripe_plan_id:
-          logger.info(f"Database already has Stripe plan ID for '{plan_name}': {existing_stripe_plan_id}")
-          skipped_plans += 1
-          continue
-
-        # First, try to find matching plan in Stripe
-        logger.info(f"Checking for existing Stripe plan matching '{plan_name}': USD {amount}")
-        matching_plan_id = await find_matching_stripe_plan(plan_name, float(amount), currency)
+        # Try to find matching plan in Stripe (cycle-aware)
+        matching_plan_id = await find_matching_stripe_plan(plan_name, amount, currency, cycle)
 
         if matching_plan_id:
-          # Found matching plan, update database with the plan_id
-          logger.info(f"Found matching Stripe plan: {matching_plan_id} for '{plan_name}'")
-          await update_billing_plan_with_stripe_id(db, plan_id, matching_plan_id)
-          matched_plans += 1
+          logger.info(f"Found matching Stripe plan for '{plan_name}' ({cycle.lower()}): {matching_plan_id}")
+          await update_billing_plan_with_stripe_id(session, billing_plan_id, matching_plan_id, plan_name, cycle)
+          matched_existing += 1
+
         else:
-          # No matching plan found, create new one
-          amount_in_cents = int(amount * 100)
-          description = f"{plan_name} plan - {plan_credits} credits for USD {amount}"
+          logger.info(f"No matching plan found. Creating new Stripe plan for '{plan_name}' ({cycle.lower()})...")
 
-          logger.info(f"Creating new Stripe plan for '{plan_name}': USD {amount} ({amount_in_cents} cents)")
-
-          # Create plan using Stripe engine
-          response = stripe_engine.create_plan(
-            name=plan_name,
-            amount=amount_in_cents,
-            currency=currency.lower(),
-            period="month",  # Default to monthly billing
-            interval=1,
-            description=description,
+          new_stripe_id = await create_stripe_plan(
+            plan_name=plan_name,
+            plan_description=f"{_credits} credits for ${amount}",
+            amount=amount,
+            _credits=_credits,
+            currency=currency,
+            cycle=cycle,
           )
 
-          if response.is_successful() and response.data:
-            stripe_plan_id = response.data.get("id")
-            logger.info(f"Successfully created Stripe plan: {stripe_plan_id}")
-
-            # Update billing plan with Stripe plan ID
-            await update_billing_plan_with_stripe_id(db, plan_id, stripe_plan_id)
-            created_plans += 1
-
+          if new_stripe_id:
+            await update_billing_plan_with_stripe_id(session, billing_plan_id, new_stripe_id, plan_name, cycle)
+            created_new += 1
+            logger.info(f"Successfully created and linked new Stripe plan for '{plan_name}' ({cycle.lower()}): {new_stripe_id}")
           else:
-            error_details = response.errors[0] if response.errors else {"message": "Unknown error"}
-            logger.error(f"Failed to create Stripe plan for '{plan_name}': {error_details.get('message')}")
-            raise Exception(f"Stripe plan creation failed: {error_details.get('message')}")
+            failed += 1
+            logger.error(f"Failed to create Stripe plan for '{plan_name}' ({cycle.lower()})")
 
-      logger.info(f"Plan processing summary: {created_plans} created, {matched_plans} matched, {skipped_plans} skipped")
+      # Summary
+      logger.info("Stripe plans synchronization completed!")
+      logger.info(f"Results: {already_synced} already synced, {matched_existing} matched existing, {created_new} created new, {failed} failed")
+
+      # Verify results
+      logger.info("Verification: Checking all USD plans for Stripe synchronization...")
+      verification_plans = await fetch_billing_plans(session)
+      total_plans = len(verification_plans)
+      synced_plans = 0
+      monthly_plans = sum(1 for p in verification_plans if p[5] == "MONTHLY")
+      yearly_plans = sum(1 for p in verification_plans if p[5] == "YEARLY")
+
+      for billing_plan_id, plan_name, amount, _credits, currency, cycle in verification_plans:
+        stripe_id = await check_stripe_plan_exists(session, billing_plan_id)
+        if stripe_id:
+          synced_plans += 1
+          logger.info(f"  ✓ {plan_name} ({cycle.lower()}): ${amount} → {_credits} credits [Stripe ID: {stripe_id}]")
+        else:
+          logger.info(f"  ✗ {plan_name} ({cycle.lower()}): ${amount} → {_credits} credits [No Stripe ID]")
+
+      logger.info(f"Final result: {synced_plans}/{total_plans} USD plans synchronized with Stripe")
+      logger.info(f"Plan distribution: {monthly_plans} monthly, {yearly_plans} yearly")
 
     except Exception as e:
       logger.error(f"Error processing Stripe plans: {str(e)}")
       raise
 
-  async def rollback(self, db: AsyncSession) -> None:
-    """Rollback the script execution by deactivating Stripe plans and clearing plan IDs."""
-    logger.info("Rolling back Stripe plans...")
-
-    # Get all Stripe plan IDs that need to be deactivated
-    stripe_plan_ids = await get_created_stripe_plan_ids(db)
-
-    if stripe_plan_ids:
-      logger.info(f"Deactivating {len(stripe_plan_ids)} Stripe plans...")
-      deactivated_count = await deactivate_stripe_plans(stripe_plan_ids)
-      logger.info(f"Successfully deactivated {deactivated_count}/{len(stripe_plan_ids)} Stripe plans")
-
-    # Clear Stripe plan IDs from billing plans
-    result = await db.execute(
-      text("""
-                UPDATE billing_plans
-                SET plan_id = NULL,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE currency = 'USD' AND plan_id IS NOT NULL
-            """)
-    )
-
-    cleared_count = getattr(result, "rowcount", 0)
-    await db.commit()
-    logger.info(f"Cleared Stripe plan IDs from {cleared_count} billing plans")
-
-  async def verify(self, db: AsyncSession) -> bool:
-    """Verify that all USD billing plans have associated Stripe plan IDs."""
-    result = await db.execute(
-      text("""
-            SELECT COUNT(*) as total_plans,
-                   COUNT(plan_id) as plans_with_stripe_id
-            FROM billing_plans
-            WHERE currency = 'USD' AND is_active = true
-        """)
-    )
-    row = result.fetchone()
-
-    if row:
-      total_plans, plans_with_stripe_id = row
-      logger.info(f"Verification: {plans_with_stripe_id}/{total_plans} USD billing plans have Stripe plan IDs")
-
-      if total_plans == plans_with_stripe_id:
-        logger.info("All USD billing plans have been synchronized with Stripe")
-        return True
-      else:
-        missing_count = total_plans - plans_with_stripe_id
-        logger.warning(f"{missing_count} billing plans are missing Stripe plan IDs")
-        return False
-
-    return False
-
-
-async def get_created_stripe_plan_ids(db: AsyncSession) -> List[str]:
-  """Get all Stripe plan IDs that were created by this script."""
-  result = await db.execute(
-    text("""
-            SELECT plan_id
-            FROM billing_plans
-            WHERE currency = 'USD' AND plan_id IS NOT NULL AND is_active = true
-        """)
-  )
-  plan_ids = [row[0] for row in result.fetchall() if row[0]]
-  logger.info(f"Found {len(plan_ids)} Stripe plan IDs in database")
-  return plan_ids
-
-
-async def deactivate_stripe_plans(plan_ids: List[str]) -> int:
-  """Deactivate Stripe plans using the Stripe engine."""
-  deactivated_count = 0
-
-  for plan_id in plan_ids:
-    try:
-      logger.info(f"Deactivating Stripe plan: {plan_id}")
-      response = stripe_engine.deactivate_plan(plan_id)
-
-      if response.is_successful():
-        logger.info(f"Successfully deactivated Stripe plan: {plan_id}")
-        deactivated_count += 1
-      else:
-        error_details = response.errors[0] if response.errors else {"message": "Unknown error"}
-        logger.error(f"Failed to deactivate Stripe plan {plan_id}: {error_details.get('message')}")
-
-    except Exception as e:
-      logger.error(f"Error deactivating Stripe plan {plan_id}: {str(e)}")
-
-  return deactivated_count
-
 
 def main():
-  """Entry point for backward compatibility - synchronizes USD billing plans with Stripe."""
+  """Main entry point."""
   script = CreateStripePlansScript()
-  script.main()
+  script.run_cli()
 
 
 if __name__ == "__main__":
-  script = CreateStripePlansScript()
-  script.run_cli()
+  main()

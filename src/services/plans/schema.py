@@ -13,19 +13,38 @@ class CurrencyType(str, Enum):
   INR = "INR"
 
 
+class BillingCycleType(str, Enum):
+  MONTHLY = "MONTHLY"
+  YEARLY = "YEARLY"
+
+
 class BillingPlanBaseSchema(BaseModel):
   """Base schema for billing plan operations."""
 
   name: str = Field(..., description="Name of the billing plan")
+  description: Optional[str] = Field(None, description="Description of the billing plan")
   amount: float = Field(..., description="Cost of the plan in currency units")
   credits: int = Field(..., description="Number of credits provided by this plan")
   discount_percentage: float = Field(default=0.0, description="Discount percentage (0-100)")
   currency: CurrencyType = Field(default=CurrencyType.USD, description="Currency code (e.g., USD, EUR, INR)")
+  cycle: BillingCycleType = Field(default=BillingCycleType.MONTHLY, description="Billing cycle (MONTHLY, YEARLY)")
 
   @field_validator("discount_percentage")
   def validate_discount_percentage(cls, v):
     if v < 0 or v > 100:
       raise ValueError("Discount percentage must be between 0 and 100")
+    return v
+
+  @field_validator("amount")
+  def validate_amount(cls, v):
+    if v < 0:
+      raise ValueError("Amount must be non-negative")
+    return v
+
+  @field_validator("credits")
+  def validate_credits(cls, v):
+    if v < 0:
+      raise ValueError("Credits must be non-negative")
     return v
 
 
@@ -39,11 +58,13 @@ class BillingPlanUpdateSchema(BaseModel):
   """Schema for updating an existing billing plan."""
 
   name: Optional[str] = Field(None, description="Name of the billing plan")
+  description: Optional[str] = Field(None, description="Description of the billing plan")
   amount: Optional[float] = Field(None, description="Cost of the plan in currency units")
   credits: Optional[int] = Field(None, description="Number of credits provided by this plan")
   discount_percentage: Optional[float] = Field(None, description="Discount percentage (0-100)")
   is_active: Optional[bool] = Field(None, description="Whether this plan is active")
   currency: Optional[CurrencyType] = Field(None, description="Currency code (e.g., USD, EUR, INR)")
+  cycle: Optional[BillingCycleType] = Field(None, description="Billing cycle (MONTHLY, YEARLY)")
 
   @field_validator("discount_percentage")
   def validate_discount_percentage(cls, v):
@@ -51,8 +72,30 @@ class BillingPlanUpdateSchema(BaseModel):
       raise ValueError("Discount percentage must be between 0 and 100")
     return v
 
+  @field_validator("amount")
+  def validate_amount(cls, v):
+    if v is not None and v < 0:
+      raise ValueError("Amount must be non-negative")
+    return v
+
+  @field_validator("credits")
+  def validate_credits(cls, v):
+    if v is not None and v < 0:
+      raise ValueError("Credits must be non-negative")
+    return v
+
   class Config:
-    json_schema_extra = {"example": {"name": "Pro Plan", "amount": 29.99, "credits": 30000, "discount_percentage": 0.0, "is_active": True}}
+    json_schema_extra = {
+      "example": {
+        "name": "Pro Plan",
+        "description": "Best for growing teams and businesses",
+        "amount": 29.99,
+        "credits": 30000,
+        "discount_percentage": 0.0,
+        "is_active": True,
+        "cycle": "MONTHLY",
+      }
+    }
 
 
 class BillingPlanResponseSchema(BillingPlanBaseSchema):
@@ -62,6 +105,13 @@ class BillingPlanResponseSchema(BillingPlanBaseSchema):
   is_active: bool
   created_at: datetime
   updated_at: Optional[datetime] = None
+  plan_id: Optional[str] = Field(None, description="External payment provider plan ID")
+
+  # Computed fields from model properties
+  is_yearly: bool = Field(..., description="Whether this is a yearly billing cycle")
+  is_monthly: bool = Field(..., description="Whether this is a monthly billing cycle")
+  effective_amount: float = Field(..., description="Effective amount after applying discount")
+  monthly_equivalent: float = Field(..., description="Monthly equivalent amount")
 
   class Config:
     from_attributes = True
@@ -69,11 +119,18 @@ class BillingPlanResponseSchema(BillingPlanBaseSchema):
       "example": {
         "id": "123e4567-e89b-12d3-a456-426655440000",
         "name": "Pro Plan",
-        "amount": 29.99,
+        "description": "Best for growing teams and businesses",
+        "amount": 279.0,
         "credits": 30000,
-        "discount_percentage": 0.0,
+        "discount_percentage": 20.0,
         "is_active": True,
         "currency": CurrencyType.USD,
+        "cycle": BillingCycleType.YEARLY,
+        "plan_id": "plan_123abc",
+        "is_yearly": True,
+        "is_monthly": False,
+        "effective_amount": 223.2,
+        "monthly_equivalent": 23.25,
         "created_at": "2023-01-01T00:00:00Z",
         "updated_at": "2023-01-01T00:00:00Z",
       }
@@ -87,11 +144,18 @@ class BillingPlanResponseSchema(BillingPlanBaseSchema):
     return cls(
       id=plan.id,
       name=plan.name,
+      description=plan.description,
       amount=plan.amount,
       credits=plan.credits,
       discount_percentage=plan.discount_percentage,
       is_active=plan.is_active,
       currency=plan.currency,
+      cycle=plan.cycle,
+      plan_id=plan.plan_id,
+      is_yearly=plan.is_yearly,
+      is_monthly=plan.is_monthly,
+      effective_amount=round(plan.effective_amount, 2),
+      monthly_equivalent=round(plan.monthly_equivalent, 2),
       created_at=plan.created_at,
       updated_at=updated_at,
     )

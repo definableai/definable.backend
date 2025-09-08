@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Dict, Optional
 
@@ -10,8 +11,14 @@ from sqlalchemy import (
   Float,
   ForeignKey,
   Integer,
+  Numeric,
   String,
+  Text,
   UniqueConstraint,
+  func,
+)
+from sqlalchemy import (
+  Enum as SQLAlchemyEnum,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -31,6 +38,19 @@ class TransactionStatus(str, Enum):
   COMPLETED = "COMPLETED"
   FAILED = "FAILED"
   CANCELLED = "CANCELLED"
+
+
+class BillingCycle(str, Enum):
+  MONTHLY = "MONTHLY"
+  YEARLY = "YEARLY"
+
+
+class ProcessingStatus(str, Enum):
+  PENDING = "pending"
+  PROCESSED = "processed"
+  FAILED = "failed"
+  SKIPPED = "skipped"
+  DUPLICATE = "duplicate"
 
 
 class CustomerModel(CRUD):
@@ -55,17 +75,54 @@ class CustomerModel(CRUD):
     return f"<Customer {self.user_id}@{self.payment_provider}:{self.customer_id}>"
 
 
-# Add BillingPlan model
 class BillingPlanModel(CRUD):
+  """Billing plans with cycle support (monthly/yearly) and multi-currency."""
+
   __tablename__ = "billing_plans"
 
   name = Column(String, nullable=False)
+  description = Column(String, nullable=True)
   amount = Column(Float, nullable=False)
   credits = Column(Integer, nullable=False)
   discount_percentage = Column(Float, default=0.0)
   is_active = Column(Boolean, default=True)
-  currency = Column(String(3), nullable=False, default="USD")
-  plan_id = Column(String, nullable=True)
+  currency = Column(String(3), nullable=False, default="USD", index=True)
+  cycle: Mapped[str] = mapped_column(
+    SQLAlchemyEnum(BillingCycle, name="billing_cycle_enum", create_type=False),
+    nullable=False,
+    default=BillingCycle.MONTHLY,
+    server_default="monthly",
+    index=True,
+  )
+  plan_id = Column(String, nullable=True, index=True)
+  updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+  def __repr__(self) -> str:
+    return f"<BillingPlan {self.name} {self.cycle} {self.currency}: {self.credits} credits for {self.amount}>"
+
+  @property
+  def is_yearly(self) -> bool:
+    """Check if this is a yearly billing cycle."""
+    return self.cycle == BillingCycle.YEARLY
+
+  @property
+  def is_monthly(self) -> bool:
+    """Check if this is a monthly billing cycle."""
+    return self.cycle == BillingCycle.MONTHLY
+
+  @property
+  def effective_amount(self) -> float:
+    """Get the effective amount after applying discount."""
+    if self.discount_percentage > 0:
+      return float(self.amount) * (1 - float(self.discount_percentage) / 100)
+    return float(self.amount)
+
+  @property
+  def monthly_equivalent(self) -> float:
+    """Get the monthly equivalent amount."""
+    if self.is_yearly:
+      return float(self.amount) / 12
+    return float(self.amount)
 
 
 class ChargeModel(CRUD):
@@ -142,3 +199,130 @@ class TransactionModel(CRUD):
     if not self.payment_metadata:
       return None
     return self.payment_metadata.get("payment_intent_id") or self.payment_metadata.get("payment_id")
+
+
+class PaymentProviderModel(CRUD):
+  """Payment provider model for managing different payment processors."""
+
+  __tablename__ = "payment_providers"
+
+  name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+  is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False, index=True)
+
+  # Relationships
+  subscriptions = relationship("SubscriptionModel", back_populates="provider", lazy="select")
+
+  def __repr__(self) -> str:
+    return f"<PaymentProvider {self.name} (active={self.is_active})>"
+
+  @classmethod
+  async def get_by_name(cls, name: str, session):
+    """Get payment provider by name."""
+    from sqlalchemy import select
+
+    query = select(cls).where(cls.name == name, cls.is_active)
+    result = await session.execute(query)
+    return result.scalar_one_or_none()
+
+
+class StatusCodeModel(CRUD):
+  """Status codes for webhook events across payment providers."""
+
+  __tablename__ = "status_codes"
+
+  code: Mapped[str] = mapped_column(String(10), primary_key=True)
+  name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+  category: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+
+  # Relationships
+  transaction_logs = relationship("TransactionLogModel", back_populates="status_code_ref", lazy="select")
+
+  def __repr__(self) -> str:
+    return f"<StatusCode {self.code}: {self.name} ({self.category})>"
+
+  @classmethod
+  async def get_by_code(cls, code: str, session):
+    """Get status code by code."""
+    from sqlalchemy import select
+
+    query = select(cls).where(cls.code == code)
+    result = await session.execute(query)
+    return result.scalar_one_or_none()
+
+
+class TransactionLogModel(CRUD):
+  """Transaction logs for webhook events from payment providers."""
+
+  __tablename__ = "transaction_logs"
+  __table_args__ = (UniqueConstraint("event_id", "provider_id", name="uq_transaction_logs_event_provider"),)
+
+  event_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Provider's webhook event ID
+  provider_id: Mapped[str] = mapped_column(
+    UUID(as_uuid=True), ForeignKey("payment_providers.id"), nullable=False, index=True
+  )  # Reference to payment provider
+  event_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)  # Raw event name from provider
+  status_code: Mapped[Optional[str]] = mapped_column(String(10), ForeignKey("status_codes.code"), nullable=True, index=True)
+  entity_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # subscription, payment, order, invoice
+  entity_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)  # Provider's entity ID
+  user_id: Mapped[Optional[str]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+  organization_id: Mapped[Optional[str]] = mapped_column(
+    UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True, index=True
+  )
+  customer_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Provider's customer ID
+  amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)  # Amount in original currency
+  currency: Mapped[Optional[str]] = mapped_column(String(3), nullable=True)  # Currency code (USD, INR, etc.)
+  processing_status: Mapped[str] = mapped_column(
+    SQLAlchemyEnum(ProcessingStatus, name="processing_status_enum", create_type=False),
+    nullable=False,
+    default=ProcessingStatus.PENDING,
+    server_default="pending",
+    index=True,
+  )
+  processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+  error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+  retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+  payload: Mapped[Dict] = mapped_column(JSON, nullable=False)  # Full webhook payload
+  extracted_metadata: Mapped[Optional[Dict]] = mapped_column(JSON, nullable=True)  # Extracted/processed metadata
+  signature: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # Webhook signature
+
+  # Relationships
+  status_code_ref = relationship("StatusCodeModel", back_populates="transaction_logs", lazy="select")
+  provider = relationship("PaymentProviderModel", lazy="select")
+  user = relationship("UserModel", lazy="select")
+  organization = relationship("OrganizationModel", lazy="select")
+
+  def __repr__(self) -> str:
+    return f"<TransactionLog {self.provider.name if self.provider else 'Unknown'}:{self.event_type} ({self.processing_status})>"
+
+  @property
+  def is_processed(self) -> bool:
+    """Check if the webhook has been successfully processed."""
+    return self.processing_status == ProcessingStatus.PROCESSED
+
+  @property
+  def is_failed(self) -> bool:
+    """Check if the webhook processing failed."""
+    return self.processing_status == ProcessingStatus.FAILED
+
+  @property
+  def needs_retry(self) -> bool:
+    """Check if the webhook needs to be retried."""
+    return self.processing_status in [ProcessingStatus.PENDING, ProcessingStatus.FAILED] and self.retry_count < 3
+
+  @classmethod
+  async def get_by_event_id(cls, event_id: str, provider_id: str, session):
+    """Get transaction log by event ID and provider ID."""
+    from sqlalchemy import select
+
+    query = select(cls).where(cls.event_id == event_id, cls.provider_id == provider_id)
+    result = await session.execute(query)
+    return result.scalar_one_or_none()
+
+  @classmethod
+  async def get_by_event_id_and_provider_name(cls, event_id: str, provider_name: str, session):
+    """Get transaction log by event ID and provider name."""
+    from sqlalchemy import select
+
+    query = select(cls).join(PaymentProviderModel).where(cls.event_id == event_id, PaymentProviderModel.name == provider_name)
+    result = await session.execute(query)
+    return result.scalar_one_or_none()

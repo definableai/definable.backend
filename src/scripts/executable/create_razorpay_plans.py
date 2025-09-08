@@ -17,23 +17,33 @@ if parent_dir not in sys.path:
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from scripts.core.base_script import BaseScript
 from common.logger import log as logger
 from libs.payments.razorpay.v1.engine import engine as razorpay_engine
+from scripts.core.base_script import BaseScript
 
 
-async def fetch_billing_plans(db: AsyncSession) -> List[Tuple[str, str, float, int, str]]:
+async def fetch_billing_plans(db: AsyncSession) -> List[Tuple[str, str, float, int, str, str]]:
   """Fetch all INR billing plans from the database."""
   result = await db.execute(
     text("""
-            SELECT id, name, amount, credits, currency
+            SELECT id, name, amount, credits, currency, cycle
             FROM billing_plans
             WHERE currency = 'INR' AND is_active = true
-            ORDER BY amount ASC
+            ORDER BY cycle ASC, amount ASC
         """)
   )
   plans = result.fetchall()
   logger.info(f"Found {len(plans)} INR billing plans in database")
+
+  # Log breakdown of free vs paid plans and cycle distribution
+  free_count = sum(1 for plan in plans if plan[2] <= 0)
+  paid_count = len(plans) - free_count
+  monthly_count = sum(1 for plan in plans if plan[5] == "monthly")
+  yearly_count = sum(1 for plan in plans if plan[5] == "yearly")
+
+  logger.info(f"Plan breakdown: {paid_count} paid plans, {free_count} free plans")
+  logger.info(f"Cycle breakdown: {monthly_count} monthly plans, {yearly_count} yearly plans")
+
   return [tuple(row) for row in plans]
 
 
@@ -119,10 +129,16 @@ class CreateRazorpayPlansScript(BaseScript):
 
       logger.info(f"Processing {len(billing_plans)} INR billing plans...")
 
-      for plan_id, plan_name, amount, plan_credits, currency in billing_plans:
+      for plan_id, plan_name, amount, plan_credits, currency, cycle in billing_plans:
         # Skip if plan is not INR currency (extra safety check)
         if currency != "INR":
           logger.warning(f"Skipping non-INR plan: {plan_name} ({currency})")
+          skipped_plans += 1
+          continue
+
+        # Skip free plans (amount = 0) as Razorpay doesn't support them
+        if amount <= 0:
+          logger.info(f"Skipping free plan '{plan_name}' {cycle} (amount: ₹{amount}) - Razorpay requires minimum ₹1")
           skipped_plans += 1
           continue
 
@@ -135,8 +151,10 @@ class CreateRazorpayPlansScript(BaseScript):
           continue
 
         # First, try to find matching plan in Razorpay
-        logger.info(f"Checking for existing Razorpay plan matching '{plan_name}': INR {amount}")
-        matching_plan_id = await find_matching_razorpay_plan(plan_name, float(amount), currency)
+        logger.info(f"Checking for existing Razorpay plan matching '{plan_name}' {cycle}: INR {amount}")
+        # Create a unique name combining plan name and cycle for Razorpay
+        razorpay_plan_name = f"{plan_name}_{cycle}" if cycle == "yearly" else plan_name
+        matching_plan_id = await find_matching_razorpay_plan(razorpay_plan_name, float(amount), currency)
 
         if matching_plan_id:
           # Found matching plan, update database with the plan_id
@@ -146,16 +164,19 @@ class CreateRazorpayPlansScript(BaseScript):
         else:
           # No matching plan found, create new one
           amount_in_paise = int(amount * 100)
-          description = f"{plan_name} plan - {plan_credits} credits for INR {amount}"
+          cycle_description = "monthly" if cycle == "monthly" else "annual"
+          description = f"{plan_name} {cycle_description} plan - {plan_credits} credits for INR {amount}"
 
-          logger.info(f"Creating new Razorpay plan for '{plan_name}': INR {amount} ({amount_in_paise} paise)")
+          logger.info(f"Creating new Razorpay plan for '{plan_name}' {cycle}: INR {amount} ({amount_in_paise} paise)")
 
+          # Determine billing period based on cycle
+          period = "monthly" if cycle == "monthly" else "yearly"
           # Create plan using Razorpay engine
           response = razorpay_engine.create_plan(
-            name=plan_name,
+            name=razorpay_plan_name,
             amount=amount_in_paise,
             currency=currency,
-            period="monthly",  # Default to monthly billing
+            period=period,
             interval=1,
             description=description,
           )
@@ -173,7 +194,13 @@ class CreateRazorpayPlansScript(BaseScript):
             logger.error(f"Failed to create Razorpay plan for '{plan_name}': {error_details.get('message')}")
             raise Exception(f"Razorpay plan creation failed: {error_details.get('message')}")
 
-      logger.info(f"Plan processing summary: {created_plans} created, {matched_plans} matched, {skipped_plans} skipped")
+      logger.info("Plan processing summary:")
+      logger.info(f"  - Created: {created_plans} new Razorpay plans")
+      logger.info(f"  - Matched: {matched_plans} existing Razorpay plans")
+      logger.info(f"  - Skipped: {skipped_plans} plans (free plans or already processed)")
+
+      if created_plans + matched_plans == 0:
+        logger.warning("No Razorpay plans were created or matched. This may be expected if all plans are free.")
 
     except Exception as e:
       logger.error(f"Error processing Razorpay plans: {str(e)}")
@@ -198,11 +225,13 @@ class CreateRazorpayPlansScript(BaseScript):
     logger.info(f"Cleared Razorpay plan IDs from {cleared_count} billing plans")
 
   async def verify(self, db: AsyncSession) -> bool:
-    """Verify that all INR billing plans have associated Razorpay plan IDs."""
+    """Verify that all paid INR billing plans have associated Razorpay plan IDs."""
     result = await db.execute(
       text("""
             SELECT COUNT(*) as total_plans,
-                   COUNT(plan_id) as plans_with_razorpay_id
+                   COUNT(plan_id) as plans_with_razorpay_id,
+                   COUNT(CASE WHEN amount > 0 THEN 1 END) as paid_plans,
+                   COUNT(CASE WHEN amount > 0 AND plan_id IS NOT NULL THEN 1 END) as paid_plans_with_razorpay_id
             FROM billing_plans
             WHERE currency = 'INR' AND is_active = true
         """)
@@ -210,15 +239,22 @@ class CreateRazorpayPlansScript(BaseScript):
     row = result.fetchone()
 
     if row:
-      total_plans, plans_with_razorpay_id = row
-      logger.info(f"Verification: {plans_with_razorpay_id}/{total_plans} INR billing plans have Razorpay plan IDs")
+      total_plans, plans_with_razorpay_id, paid_plans, paid_plans_with_razorpay_id = row
+      free_plans = total_plans - paid_plans
 
-      if total_plans == plans_with_razorpay_id:
-        logger.info("All INR billing plans have been synchronized with Razorpay")
+      logger.info("Verification results:")
+      logger.info(f"  - Total INR plans: {total_plans}")
+      logger.info(f"  - Paid plans: {paid_plans}")
+      logger.info(f"  - Free plans: {free_plans}")
+      logger.info(f"  - Paid plans with Razorpay IDs: {paid_plans_with_razorpay_id}/{paid_plans}")
+
+      if paid_plans == paid_plans_with_razorpay_id:
+        logger.info("✅ All paid INR billing plans have been synchronized with Razorpay")
+        logger.info(f"ℹ️  Free plans ({free_plans}) don't require Razorpay plan IDs")
         return True
       else:
-        missing_count = total_plans - plans_with_razorpay_id
-        logger.warning(f"{missing_count} billing plans are missing Razorpay plan IDs")
+        missing_count = paid_plans - paid_plans_with_razorpay_id
+        logger.warning(f"❌ {missing_count} paid billing plans are missing Razorpay plan IDs")
         return False
 
     return False

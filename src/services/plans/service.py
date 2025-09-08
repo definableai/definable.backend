@@ -10,7 +10,7 @@ from dependencies.security import RBAC
 from models import BillingPlanModel
 from services.__base.acquire import Acquire
 
-from .schema import BillingPlanCreateSchema, BillingPlanResponseSchema, BillingPlanUpdateSchema, CurrencyType
+from .schema import BillingCycleType, BillingPlanCreateSchema, BillingPlanResponseSchema, BillingPlanUpdateSchema, CurrencyType
 
 
 class BillingPlansService:
@@ -18,7 +18,6 @@ class BillingPlansService:
 
   http_exposed = [
     "get=list",
-    "post=create",
     "patch=plan",
   ]
 
@@ -45,6 +44,7 @@ class BillingPlansService:
     org_id: UUID,
     is_active: Optional[bool] = None,
     currency: Optional[CurrencyType] = None,
+    cycle: Optional[BillingCycleType] = None,
     limit: int = 100,
     offset: int = 0,
     session: AsyncSession = Depends(get_db),
@@ -59,9 +59,14 @@ class BillingPlansService:
       conditions.append(BillingPlanModel.is_active == is_active)
     if currency:
       conditions.append(BillingPlanModel.currency == currency)
+    if cycle:
+      conditions.append(BillingPlanModel.cycle == cycle)
 
     if conditions:
       query = query.where(and_(*conditions))
+
+    # Apply sorting: currency, cycle, amount
+    query = query.order_by(BillingPlanModel.currency, BillingPlanModel.cycle, BillingPlanModel.amount)
 
     # Apply pagination
     query = query.offset(offset).limit(limit)
@@ -77,8 +82,20 @@ class BillingPlansService:
     count_result = await session.execute(count_query)
     total_count = len(count_result.scalars().all())
 
+    # Group results by currency and cycle for better organization
+    grouped_plans: dict = {}
+    for plan in plans:
+      currency_key = plan.currency
+      cycle_key = plan.cycle
+      if currency_key not in grouped_plans:
+        grouped_plans[currency_key] = {}
+      if cycle_key not in grouped_plans[currency_key]:
+        grouped_plans[currency_key][cycle_key] = []
+      grouped_plans[currency_key][cycle_key].append(BillingPlanResponseSchema.from_plan(plan))
+
     return {
       "items": [BillingPlanResponseSchema.from_plan(plan) for plan in plans],
+      "grouped": grouped_plans,
       "pagination": {
         "total": total_count,
         "offset": offset,
@@ -129,14 +146,24 @@ class BillingPlansService:
     if not plan:
       raise HTTPException(status_code=404, detail="Billing plan not found")
 
-    # If name is being changed, check for duplicates
-    if plan_data.name and plan_data.name != plan.name:
-      existing_query = select(BillingPlanModel).where(BillingPlanModel.name == plan_data.name)
+    # If name, currency, or cycle is being changed, check for duplicates
+    new_name = plan_data.name if plan_data.name is not None else plan.name
+    new_currency = plan_data.currency if plan_data.currency is not None else plan.currency
+    new_cycle = plan_data.cycle if plan_data.cycle is not None else plan.cycle
+
+    # Only check for duplicates if the combination is actually changing
+    if (new_name, new_currency, new_cycle) != (plan.name, plan.currency, plan.cycle):
+      existing_query = select(BillingPlanModel).where(
+        BillingPlanModel.name == new_name,
+        BillingPlanModel.currency == new_currency,
+        BillingPlanModel.cycle == new_cycle,
+        BillingPlanModel.id != plan_id,  # Exclude current plan
+      )
       existing_result = await session.execute(existing_query)
       existing_plan = existing_result.scalars().first()
 
       if existing_plan:
-        raise HTTPException(status_code=400, detail=f"Billing plan with name '{plan_data.name}' already exists")
+        raise HTTPException(status_code=400, detail=f"Billing plan with name '{new_name}' ({new_cycle} {new_currency}) already exists")
 
     # Update plan with provided data
     update_data = plan_data.model_dump(exclude_unset=True)
@@ -146,7 +173,7 @@ class BillingPlansService:
     await session.commit()
     await session.refresh(plan)
 
-    self.logger.info(f"Updated billing plan: {plan.name} (ID: {plan_id})")
+    self.logger.info(f"Updated billing plan: {plan.name} ({plan.cycle} {plan.currency}) - ID: {plan_id}")
     return BillingPlanResponseSchema.from_plan(plan)
 
   async def delete(
@@ -177,5 +204,5 @@ class BillingPlansService:
     await session.delete(plan)
     await session.commit()
 
-    self.logger.info(f"Deleted billing plan: {plan_name} (ID: {plan_id})")
-    return {"message": f"Billing plan '{plan_name}' deleted successfully"}
+    self.logger.info(f"Deleted billing plan: {plan_name} ({plan.cycle} {plan.currency}) - ID: {plan_id}")
+    return {"message": f"Billing plan '{plan_name}' ({plan.cycle} {plan.currency}) deleted successfully"}
