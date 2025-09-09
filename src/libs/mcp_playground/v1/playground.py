@@ -7,7 +7,7 @@ from agno.models.anthropic import Claude
 from agno.models.deepseek import DeepSeek
 from agno.models.openai import OpenAIChat
 from agno.storage.postgres import PostgresStorage
-from agno.tools.mcp import MCPTools
+from agno.tools.mcp import MultiMCPTools
 
 from config.settings import settings
 
@@ -40,7 +40,7 @@ class MCPPlaygroundFactory:
   async def chat(
     self,
     session_id: str | UUID,
-    mcp_url: str,
+    mcp_urls: list[str],
     message: str,
     llm: str,
     provider: str,
@@ -51,7 +51,7 @@ class MCPPlaygroundFactory:
 
     Args:
         session_id: Unique ID for the chat session
-        mcp_url: The MCP server URL to connect to
+        mcp_urls: List of MCP server URLs to connect to
         message: User's input message
         llm: The LLM model identifier
         provider: The model provider (openai, anthropic, deepseek)
@@ -61,21 +61,17 @@ class MCPPlaygroundFactory:
         Streaming response tokens
     """
 
-    # Initialize MCP tools with the provided URL
-    mcp_tools = MCPTools(
-      url=mcp_url,
-      transport="streamable-http",  # Server-Sent Events transport for HTTP
+    mcp_tools = MultiMCPTools(
+      urls=mcp_urls,
+      urls_transports=["streamable-http"] * len(mcp_urls),
       timeout_seconds=30,
     )
 
     try:
-      # Connect to the MCP server
       await mcp_tools.connect()
 
-      # Get the appropriate model class for the provider
       model_class = self.get_model_class(provider)
 
-      # Create agent with MCP tools and storage for memory retention
       agent = Agent(
         name="MCP Playground Assistant",
         model=model_class(id=llm),  # type: ignore
