@@ -80,6 +80,19 @@ class MCPPlaygroundService:
       self.logger.error(f"Error getting MCP URL: {e}")
       raise HTTPException(status_code=500, detail="Error generating MCP URL")
 
+  def _parse_model(self, model: str) -> tuple[str, str]:
+    """Parse raw model string to determine provider and model version."""
+    model = model.lower().strip()
+
+    if model.startswith("gpt") or model.startswith("o1"):
+      return "openai", model
+    elif model.startswith("claude"):
+      return "anthropic", model
+    elif model.startswith("deepseek"):
+      return "deepseek", model
+    else:
+      raise HTTPException(status_code=400, detail=f"Unsupported model: {model}")
+
   async def post_chat(
     self,
     message_data: MCPPlaygroundMessage,
@@ -87,46 +100,41 @@ class MCPPlaygroundService:
     session: AsyncSession = Depends(get_db),
   ) -> StreamingResponse:
     """
-    Chat with an MCP server using auto-managed sessions.
-    - If mcp_server_id provided: starts new session or continues existing session for that server
-    - If no mcp_server_id: continues current active session for user
+    Chat with MCP servers using auto-managed sessions.
+    - If mcp_server_ids provided: starts new sessions or continues existing sessions for those servers
+    - If no mcp_server_ids: continues current active session for user
     """
     try:
       user_id = str(user["id"])
 
-      if message_data.mcp_server_id:
-        # New MCP server ID provided - get or create session for this server
-        mcp_server_id = str(message_data.mcp_server_id)
+      if message_data.mcp_server_ids:
+        # Multiple MCP server IDs provided - get URLs for each server
+        mcp_urls = []
+        for mcp_server_id in message_data.mcp_server_ids:
+          mcp_server_id_str = str(mcp_server_id)
+          mcp_url = await self._get_mcp_url_for_user(mcp_server_id_str, user_id, session)
+          mcp_urls.append(mcp_url)
 
-        # Get the MCP URL for this user and server
-        mcp_url = await self._get_mcp_url_for_user(mcp_server_id, user_id, session)
-
-        session_id = self._get_or_create_session_id(user_id, mcp_server_id)
-        self.logger.info(f"Using MCP server: {mcp_server_id} with session: {session_id}")
+        # Use the first server ID for session management
+        session_id = self._get_or_create_session_id(user_id, str(message_data.mcp_server_ids[0]))
+        self.logger.info(f"Using MCP servers: {message_data.mcp_server_ids} with session: {session_id}")
 
       else:
         if user_id not in self.user_sessions or not self.user_sessions[user_id]:
-          raise HTTPException(status_code=400, detail="No active MCP session. Please provide mcp_server_id to start a new session.")
+          raise HTTPException(status_code=400, detail="No active MCP session. Please provide mcp_server_ids to start a new session.")
 
         user_session_data = self.user_sessions[user_id]
         mcp_server_id = list(user_session_data.keys())[-1]
         session_id = user_session_data[mcp_server_id]
 
         mcp_url = await self._get_mcp_url_for_user(mcp_server_id, user_id, session)
+        mcp_urls = [mcp_url]
 
         self.logger.info(f"Continuing session {session_id} with existing MCP server {mcp_server_id}")
 
-      # Get model information (if model_id provided, otherwise use defaults)
-      if message_data.model_id:
-        from models import LLMModel
-
-        query = select(LLMModel).where(LLMModel.id == message_data.model_id)
-        result = await session.execute(query)
-        llm_model = result.scalar_one_or_none()
-        if not llm_model:
-          raise HTTPException(status_code=404, detail="Model not found")
-        provider = llm_model.provider
-        llm = llm_model.version
+      # Get model information
+      if message_data.model:
+        provider, llm = self._parse_model(message_data.model)
       else:
         provider = "openai"
         llm = "gpt-4o"
@@ -140,7 +148,7 @@ class MCPPlaygroundService:
 
           async for chunk in self.playground_factory.chat(
             session_id=session_id,
-            mcp_url=mcp_url,
+            mcp_urls=mcp_urls,
             message=message_data.content,
             llm=llm,
             provider=provider,

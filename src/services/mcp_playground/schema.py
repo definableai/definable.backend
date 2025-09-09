@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -8,8 +8,8 @@ class MCPPlaygroundMessage(BaseModel):
   """MCP Playground message schema."""
 
   content: str
-  mcp_server_id: Optional[UUID] = None  # Optional - if not provided, continues current session
-  model_id: Optional[UUID] = None  # Optional - if not provided, uses default model
+  mcp_server_ids: Optional[List[UUID]] = None
+  model: Optional[str] = None
 
 
 class MCPPlaygroundResponse(BaseModel):
