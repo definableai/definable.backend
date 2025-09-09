@@ -50,8 +50,14 @@ class PopulateMCPServersScript(BaseScript):
       try:
         logger.info(f"Processing MCP server: {mcp_item.get('name')}")
 
-        # Extract server data
+        # Extract server data - USE COMPOSIO'S SERVER ID
+        composio_server_id = mcp_item.get("id")
+        if not composio_server_id:
+          logger.warning(f"Skipping server {mcp_item.get('name')} - no Composio ID found")
+          continue
+
         name = mcp_item.get("name")
+        logger.info(f"Using Composio server ID: {composio_server_id} for {name}")
         toolkits = mcp_item.get("toolkits", [])
         auth_config_ids = mcp_item.get("auth_config_ids", [])
         allowed_tools = mcp_item.get("allowed_tools", [])
@@ -79,18 +85,18 @@ class PopulateMCPServersScript(BaseScript):
             logger.warning(f"Error fetching auth config {auth_config_id}: {auth_error}")
 
         # Check if server already exists using raw SQL
-        existing_server = await db.execute(text("SELECT id FROM mcp_servers WHERE name = :name"), {"name": name})
+        existing_server = await db.execute(text("SELECT id FROM mcp_servers WHERE id = :id"), {"id": composio_server_id})
         if existing_server.first():
           logger.info(f"Server {name} already exists, skipping...")
           continue
 
-        # Create MCP server using raw SQL
         await db.execute(
           text("""
-            INSERT INTO mcp_servers (name, toolkits, auth_config_ids, auth_scheme, expected_input_fields, allowed_tools, server_instance_count)
-            VALUES (:name, :toolkits, :auth_config_ids, :auth_scheme, :expected_input_fields, :allowed_tools, :server_instance_count)
+            INSERT INTO mcp_servers (id, name, toolkits, auth_config_ids, auth_scheme, expected_input_fields, allowed_tools, server_instance_count)
+            VALUES (:id, :name, :toolkits, :auth_config_ids, :auth_scheme, :expected_input_fields, :allowed_tools, :server_instance_count)
           """),
           {
+            "id": composio_server_id,
             "name": name,
             "toolkits": json.dumps(toolkits),
             "auth_config_ids": json.dumps(auth_config_ids),
