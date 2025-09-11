@@ -6,8 +6,9 @@ from pydantic import BaseModel
 class MCPServerResponse(BaseModel):
   id: str
   name: str
-  allowed_tools: Optional[List[str]] = None
-  toolkits: Optional[List[str]] = None
+  toolkit_name: str
+  toolkit_slug: str
+  toolkit_logo: Optional[str] = None
   created_at: str
   server_instance_count: int
 
@@ -52,8 +53,9 @@ class MCPServerListResponse(BaseModel):
 class MCPServerWithToolsResponse(BaseModel):
   id: str
   name: str
-  allowed_tools: Optional[List[str]] = None
-  toolkits: Optional[List[str]] = None
+  toolkit_name: str
+  toolkit_slug: str
+  toolkit_logo: Optional[str] = None
   created_at: str
   server_instance_count: int
   tools: List[Dict[str, Any]]
