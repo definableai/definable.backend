@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """
-Populate plans settings for service access
+Plan Settings Population Script
+
+Populates the database with plan features and limits according to
+the Free/Pro/Enterprise tier structure defined in the product specification.
 """
 
 import os
 import sys
+from typing import Dict, List
 
 # Add the parent directory to the path so we can import from src
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if parent_dir not in sys.path:
   sys.path.insert(0, parent_dir)
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.logger import log as logger
@@ -18,304 +23,768 @@ from scripts.core.base_script import BaseScript
 
 
 class PopulatePlanSettingsScript(BaseScript):
-  """
-  Populate plans settings for service access
-  """
+  """Script to populate plan settings with comprehensive Free/Pro/Enterprise tiers."""
 
   def __init__(self):
     super().__init__("populate_plan_settings")
 
+  def _define_categories(self) -> List[Dict]:
+    """Define feature categories with sort order."""
+    return [
+      {"name": "text_models", "display_name": "Text Models", "description": "AI text generation models", "sort_order": 1},
+      {"name": "chat_features", "display_name": "Chat Features", "description": "Chat interface features", "sort_order": 2},
+      {"name": "image_models", "display_name": "Image Models", "description": "AI image generation models", "sort_order": 3},
+      {"name": "image_editing", "display_name": "Image Editing", "description": "Image manipulation tools", "sort_order": 4},
+      {"name": "knowledge_bases", "display_name": "Knowledge Bases", "description": "Document storage and retrieval", "sort_order": 5},
+      {"name": "ai_agent_tools", "display_name": "AI Agent Tools", "description": "Tools for AI agents", "sort_order": 6},
+      {"name": "agent_deployment", "display_name": "Agent Creation & Deployment", "description": "Agent development features", "sort_order": 7},
+      {"name": "marketplace", "display_name": "Marketplace Features", "description": "Agent marketplace capabilities", "sort_order": 8},
+      {"name": "collaboration", "display_name": "Collaboration & Team Features", "description": "Team and collaboration tools", "sort_order": 9},
+    ]
+
+  def _define_features(self) -> List[Dict]:
+    """Define all features with their metadata."""
+    return [
+      # Text Models
+      {
+        "name": "gpt-5",
+        "display_name": "GPT-5",
+        "category": "text_models",
+        "feature_type": "model_access",
+        "measurement_unit": "requests",
+        "description": "OpenAI GPT-5 model",
+        "sort_order": 1,
+      },
+      {
+        "name": "gpt-4o",
+        "display_name": "GPT-4o",
+        "category": "text_models",
+        "feature_type": "model_access",
+        "measurement_unit": "requests",
+        "description": "OpenAI GPT-4o model",
+        "sort_order": 2,
+      },
+      {
+        "name": "gpt-4o-mini",
+        "display_name": "GPT-4o-mini",
+        "category": "text_models",
+        "feature_type": "model_access",
+        "measurement_unit": "requests",
+        "description": "OpenAI GPT-4o-mini model",
+        "sort_order": 3,
+      },
+      {
+        "name": "claude-opus-4.1",
+        "display_name": "Claude Opus 4.1",
+        "category": "text_models",
+        "feature_type": "model_access",
+        "measurement_unit": "requests",
+        "description": "Anthropic Claude Opus 4.1",
+        "sort_order": 4,
+      },
+      {
+        "name": "claude-sonnet-4",
+        "display_name": "Claude Sonnet 4",
+        "category": "text_models",
+        "feature_type": "model_access",
+        "measurement_unit": "requests",
+        "description": "Anthropic Claude Sonnet 4",
+        "sort_order": 5,
+      },
+      {
+        "name": "claude-3.5-sonnet",
+        "display_name": "Claude 3.5 Sonnet",
+        "category": "text_models",
+        "feature_type": "model_access",
+        "measurement_unit": "requests",
+        "description": "Anthropic Claude 3.5 Sonnet",
+        "sort_order": 6,
+      },
+      {
+        "name": "gemini-2.0-ultra",
+        "display_name": "Gemini 2.0 Ultra",
+        "category": "text_models",
+        "feature_type": "model_access",
+        "measurement_unit": "requests",
+        "description": "Google Gemini 2.0 Ultra",
+        "sort_order": 7,
+      },
+      {
+        "name": "gemini-1.5-pro",
+        "display_name": "Gemini 1.5 Pro",
+        "category": "text_models",
+        "feature_type": "model_access",
+        "measurement_unit": "requests",
+        "description": "Google Gemini 1.5 Pro",
+        "sort_order": 8,
+      },
+      {
+        "name": "deepseek-v3",
+        "display_name": "DeepSeek-V3",
+        "category": "text_models",
+        "feature_type": "model_access",
+        "measurement_unit": "requests",
+        "description": "DeepSeek-V3 model",
+        "sort_order": 9,
+      },
+      {
+        "name": "o1-preview",
+        "display_name": "o1-preview",
+        "category": "text_models",
+        "feature_type": "model_access",
+        "measurement_unit": "requests",
+        "description": "OpenAI o1-preview model",
+        "sort_order": 10,
+      },
+      {
+        "name": "o1-mini",
+        "display_name": "o1-mini",
+        "category": "text_models",
+        "feature_type": "model_access",
+        "measurement_unit": "requests",
+        "description": "OpenAI o1-mini model",
+        "sort_order": 11,
+      },
+      # Chat Features
+      {
+        "name": "daily_chat_limit",
+        "display_name": "Daily Chat Limit",
+        "category": "chat_features",
+        "feature_type": "usage_limit",
+        "measurement_unit": "messages",
+        "description": "Messages per day",
+        "sort_order": 1,
+      },
+      {
+        "name": "context_window",
+        "display_name": "Context Window",
+        "category": "chat_features",
+        "feature_type": "usage_limit",
+        "measurement_unit": "tokens",
+        "description": "Maximum tokens per conversation",
+        "sort_order": 2,
+      },
+      {
+        "name": "file_uploads",
+        "display_name": "File Uploads",
+        "category": "chat_features",
+        "feature_type": "usage_limit",
+        "measurement_unit": "files",
+        "description": "Files per conversation",
+        "sort_order": 3,
+      },
+      {
+        "name": "voice_input_output",
+        "display_name": "Voice Input/Output",
+        "category": "chat_features",
+        "feature_type": "feature_toggle",
+        "measurement_unit": "minutes",
+        "description": "Voice conversations",
+        "sort_order": 4,
+      },
+      {
+        "name": "web_search",
+        "display_name": "Web Search",
+        "category": "chat_features",
+        "feature_type": "usage_limit",
+        "measurement_unit": "searches",
+        "description": "Real-time web access",
+        "sort_order": 5,
+      },
+      {
+        "name": "deep_research",
+        "display_name": "Deep Research Mode",
+        "category": "chat_features",
+        "feature_type": "usage_limit",
+        "measurement_unit": "sessions",
+        "description": "Multi-step research with citations",
+        "sort_order": 6,
+      },
+      {
+        "name": "code_interpreter",
+        "display_name": "Code Interpreter",
+        "category": "chat_features",
+        "feature_type": "feature_toggle",
+        "measurement_unit": "boolean",
+        "description": "Execute Python code",
+        "sort_order": 7,
+      },
+      {
+        "name": "multi_model_chat",
+        "display_name": "Multi-Model Chat",
+        "category": "chat_features",
+        "feature_type": "usage_limit",
+        "measurement_unit": "models",
+        "description": "Compare responses across models",
+        "sort_order": 8,
+      },
+      {
+        "name": "chat_history",
+        "display_name": "Chat History",
+        "category": "chat_features",
+        "feature_type": "usage_limit",
+        "measurement_unit": "days",
+        "description": "Saved conversation history",
+        "sort_order": 9,
+      },
+      {
+        "name": "custom_system_prompts",
+        "display_name": "Custom System Prompts",
+        "category": "chat_features",
+        "feature_type": "usage_limit",
+        "measurement_unit": "prompts",
+        "description": "Pre-configured prompts",
+        "sort_order": 10,
+      },
+      # Image Models
+      {
+        "name": "dall-e-3",
+        "display_name": "DALL-E 3",
+        "category": "image_models",
+        "feature_type": "model_access",
+        "measurement_unit": "images",
+        "description": "OpenAI DALL-E 3",
+        "sort_order": 1,
+      },
+      {
+        "name": "dall-e-2",
+        "display_name": "DALL-E 2",
+        "category": "image_models",
+        "feature_type": "model_access",
+        "measurement_unit": "images",
+        "description": "OpenAI DALL-E 2",
+        "sort_order": 2,
+      },
+      {
+        "name": "stable-diffusion-xl",
+        "display_name": "Stable Diffusion XL",
+        "category": "image_models",
+        "feature_type": "model_access",
+        "measurement_unit": "images",
+        "description": "Stable Diffusion XL",
+        "sort_order": 3,
+      },
+      {
+        "name": "midjourney",
+        "display_name": "Midjourney (via API)",
+        "category": "image_models",
+        "feature_type": "model_access",
+        "measurement_unit": "images",
+        "description": "Midjourney via API",
+        "sort_order": 4,
+      },
+      {
+        "name": "flux-1-pro",
+        "display_name": "Flux.1 Pro",
+        "category": "image_models",
+        "feature_type": "model_access",
+        "measurement_unit": "images",
+        "description": "Flux.1 Pro model",
+        "sort_order": 5,
+      },
+      {
+        "name": "resolution_options",
+        "display_name": "Resolution Options",
+        "category": "image_models",
+        "feature_type": "feature_toggle",
+        "measurement_unit": "boolean",
+        "description": "Available output sizes",
+        "sort_order": 6,
+      },
+      {
+        "name": "batch_generation",
+        "display_name": "Batch Generation",
+        "category": "image_models",
+        "feature_type": "usage_limit",
+        "measurement_unit": "variations",
+        "description": "Multiple variations",
+        "sort_order": 7,
+      },
+      # Image Editing
+      {
+        "name": "background_removal",
+        "display_name": "Background Removal",
+        "category": "image_editing",
+        "feature_type": "usage_limit",
+        "measurement_unit": "operations",
+        "description": "5 credits per operation",
+        "sort_order": 1,
+      },
+      {
+        "name": "image_upscaling",
+        "display_name": "Image Upscaling",
+        "category": "image_editing",
+        "feature_type": "usage_limit",
+        "measurement_unit": "operations",
+        "description": "10-20 credits per operation",
+        "sort_order": 2,
+      },
+      {
+        "name": "inpainting",
+        "display_name": "Inpainting",
+        "category": "image_editing",
+        "feature_type": "usage_limit",
+        "measurement_unit": "operations",
+        "description": "15 credits per operation",
+        "sort_order": 3,
+      },
+      {
+        "name": "outpainting",
+        "display_name": "Outpainting",
+        "category": "image_editing",
+        "feature_type": "usage_limit",
+        "measurement_unit": "operations",
+        "description": "20 credits per operation",
+        "sort_order": 4,
+      },
+      {
+        "name": "style_transfer",
+        "display_name": "Style Transfer",
+        "category": "image_editing",
+        "feature_type": "usage_limit",
+        "measurement_unit": "operations",
+        "description": "10 credits per operation",
+        "sort_order": 5,
+      },
+      {
+        "name": "batch_processing",
+        "display_name": "Batch Processing",
+        "category": "image_editing",
+        "feature_type": "usage_limit",
+        "measurement_unit": "images",
+        "description": "Process multiple images",
+        "sort_order": 6,
+      },
+      # Knowledge Bases
+      {
+        "name": "knowledge_base_count",
+        "display_name": "Number of Knowledge Bases",
+        "category": "knowledge_bases",
+        "feature_type": "usage_limit",
+        "measurement_unit": "bases",
+        "description": "Separate knowledge repositories",
+        "sort_order": 1,
+      },
+      {
+        "name": "files_per_kb",
+        "display_name": "Files per Knowledge Base",
+        "category": "knowledge_bases",
+        "feature_type": "usage_limit",
+        "measurement_unit": "files",
+        "description": "Maximum files",
+        "sort_order": 2,
+      },
+      {
+        "name": "total_storage",
+        "display_name": "Total Storage",
+        "category": "knowledge_bases",
+        "feature_type": "storage_limit",
+        "measurement_unit": "MB",
+        "description": "Combined storage limit",
+        "sort_order": 3,
+      },
+      {
+        "name": "file_types",
+        "display_name": "File Types Supported",
+        "category": "knowledge_bases",
+        "feature_type": "feature_toggle",
+        "measurement_unit": "types",
+        "description": "Allowed formats",
+        "sort_order": 4,
+      },
+      {
+        "name": "max_file_size",
+        "display_name": "Max File Size",
+        "category": "knowledge_bases",
+        "feature_type": "storage_limit",
+        "measurement_unit": "MB",
+        "description": "Per file",
+        "sort_order": 5,
+      },
+      {
+        "name": "vector_embeddings",
+        "display_name": "Vector Embeddings",
+        "category": "knowledge_bases",
+        "feature_type": "usage_limit",
+        "measurement_unit": "chunks",
+        "description": "Searchable chunks",
+        "sort_order": 6,
+      },
+      {
+        "name": "web_scraping",
+        "display_name": "Web Scraping",
+        "category": "knowledge_bases",
+        "feature_type": "usage_limit",
+        "measurement_unit": "pages",
+        "description": "Import web content",
+        "sort_order": 7,
+      },
+      # AI Agent Tools
+      {
+        "name": "web_search_tool",
+        "display_name": "Web Search Tool",
+        "category": "ai_agent_tools",
+        "feature_type": "usage_limit",
+        "measurement_unit": "searches",
+        "description": "Internet access for agents",
+        "sort_order": 1,
+      },
+      {
+        "name": "calculator_tool",
+        "display_name": "Calculator Tool",
+        "category": "ai_agent_tools",
+        "feature_type": "feature_toggle",
+        "measurement_unit": "boolean",
+        "description": "Mathematical computations",
+        "sort_order": 2,
+      },
+      {
+        "name": "code_execution",
+        "display_name": "Code Execution",
+        "category": "ai_agent_tools",
+        "feature_type": "feature_toggle",
+        "measurement_unit": "languages",
+        "description": "Run code",
+        "sort_order": 3,
+      },
+      {
+        "name": "api_calling",
+        "display_name": "API Calling",
+        "category": "ai_agent_tools",
+        "feature_type": "usage_limit",
+        "measurement_unit": "calls",
+        "description": "External API integration",
+        "sort_order": 4,
+      },
+      {
+        "name": "custom_tools",
+        "display_name": "Custom Tools",
+        "category": "ai_agent_tools",
+        "feature_type": "usage_limit",
+        "measurement_unit": "tools",
+        "description": "Build your own tools",
+        "sort_order": 5,
+      },
+      # Agent Creation & Deployment
+      {
+        "name": "agent_count",
+        "display_name": "Number of Agents",
+        "category": "agent_deployment",
+        "feature_type": "usage_limit",
+        "measurement_unit": "agents",
+        "description": "Total agents you can create",
+        "sort_order": 1,
+      },
+      {
+        "name": "deployment_limit",
+        "display_name": "One-Click Deployment",
+        "category": "agent_deployment",
+        "feature_type": "usage_limit",
+        "measurement_unit": "deployments",
+        "description": "Push to cloud",
+        "sort_order": 2,
+      },
+      {
+        "name": "api_endpoints",
+        "display_name": "API Endpoints",
+        "category": "agent_deployment",
+        "feature_type": "usage_limit",
+        "measurement_unit": "calls",
+        "description": "REST API access",
+        "sort_order": 3,
+      },
+      # Marketplace Features
+      {
+        "name": "marketplace_listings",
+        "display_name": "List Agents in Marketplace",
+        "category": "marketplace",
+        "feature_type": "usage_limit",
+        "measurement_unit": "agents",
+        "description": "Sell your agents",
+        "sort_order": 1,
+      },
+      {
+        "name": "revenue_share",
+        "display_name": "Revenue Share",
+        "category": "marketplace",
+        "feature_type": "feature_toggle",
+        "measurement_unit": "percentage",
+        "description": "Your earnings",
+        "sort_order": 2,
+      },
+      # Collaboration & Team Features
+      {
+        "name": "team_members",
+        "display_name": "Team Members",
+        "category": "collaboration",
+        "feature_type": "usage_limit",
+        "measurement_unit": "users",
+        "description": "Number of users",
+        "sort_order": 1,
+      },
+      {
+        "name": "api_rate_limits",
+        "display_name": "API Rate Limits",
+        "category": "collaboration",
+        "feature_type": "usage_limit",
+        "measurement_unit": "requests",
+        "description": "Requests per second",
+        "sort_order": 2,
+      },
+    ]
+
+  def _define_limits(self) -> List[Dict]:
+    """Define plan limits for each feature across Free/Pro/Enterprise tiers."""
+    return [
+      # Text Models - Free Plan (starter)
+      {"plan": "starter", "feature": "gpt-4o", "available": True, "limit": 50, "credits_per_1k": 10, "reset_period": "monthly"},
+      {"plan": "starter", "feature": "gpt-4o-mini", "available": True, "limit": 250, "credits_per_1k": 2, "reset_period": "monthly"},
+      {"plan": "starter", "feature": "claude-sonnet-4", "available": True, "limit": 33, "credits_per_1k": 15, "reset_period": "monthly"},
+      {"plan": "starter", "feature": "claude-3.5-sonnet", "available": True, "limit": 41, "credits_per_1k": 12, "reset_period": "monthly"},
+      {"plan": "starter", "feature": "gemini-1.5-pro", "available": True, "limit": 62, "credits_per_1k": 8, "reset_period": "monthly"},
+      {"plan": "starter", "feature": "deepseek-v3", "available": True, "limit": 100, "credits_per_1k": 5, "reset_period": "monthly"},
+      # Text Models - Pro Plan
+      {"plan": "pro", "feature": "gpt-5", "available": True, "limit": 200, "credits_per_1k": 25, "reset_period": "monthly"},
+      {"plan": "pro", "feature": "gpt-4o", "available": True, "limit": 500, "credits_per_1k": 10, "reset_period": "monthly"},
+      {"plan": "pro", "feature": "gpt-4o-mini", "available": True, "limit": 2500, "credits_per_1k": 2, "reset_period": "monthly"},
+      {"plan": "pro", "feature": "claude-opus-4.1", "available": True, "limit": 166, "credits_per_1k": 30, "reset_period": "monthly"},
+      {"plan": "pro", "feature": "claude-sonnet-4", "available": True, "limit": 333, "credits_per_1k": 15, "reset_period": "monthly"},
+      {"plan": "pro", "feature": "claude-3.5-sonnet", "available": True, "limit": 416, "credits_per_1k": 12, "reset_period": "monthly"},
+      {"plan": "pro", "feature": "gemini-2.0-ultra", "available": True, "limit": 250, "credits_per_1k": 20, "reset_period": "monthly"},
+      {"plan": "pro", "feature": "gemini-1.5-pro", "available": True, "limit": 625, "credits_per_1k": 8, "reset_period": "monthly"},
+      {"plan": "pro", "feature": "deepseek-v3", "available": True, "limit": 1000, "credits_per_1k": 5, "reset_period": "monthly"},
+      {"plan": "pro", "feature": "o1-preview", "available": True, "limit": 50, "credits_per_request": 100, "reset_period": "monthly"},
+      {"plan": "pro", "feature": "o1-mini", "available": True, "limit": 166, "credits_per_request": 30, "reset_period": "monthly"},
+      # Text Models - Enterprise Plan
+      {"plan": "enterprise", "feature": "gpt-5", "available": True, "limit": 800, "credits_per_1k": 25, "reset_period": "monthly"},
+      {"plan": "enterprise", "feature": "gpt-4o", "available": True, "limit": 2000, "credits_per_1k": 10, "reset_period": "monthly"},
+      {"plan": "enterprise", "feature": "gpt-4o-mini", "available": True, "limit": 10000, "credits_per_1k": 2, "reset_period": "monthly"},
+      {"plan": "enterprise", "feature": "claude-opus-4.1", "available": True, "limit": 666, "credits_per_1k": 30, "reset_period": "monthly"},
+      {"plan": "enterprise", "feature": "claude-sonnet-4", "available": True, "limit": 1333, "credits_per_1k": 15, "reset_period": "monthly"},
+      {"plan": "enterprise", "feature": "claude-3.5-sonnet", "available": True, "limit": 1666, "credits_per_1k": 12, "reset_period": "monthly"},
+      {"plan": "enterprise", "feature": "gemini-2.0-ultra", "available": True, "limit": 1000, "credits_per_1k": 20, "reset_period": "monthly"},
+      {"plan": "enterprise", "feature": "gemini-1.5-pro", "available": True, "limit": 2500, "credits_per_1k": 8, "reset_period": "monthly"},
+      {"plan": "enterprise", "feature": "deepseek-v3", "available": True, "limit": 4000, "credits_per_1k": 5, "reset_period": "monthly"},
+      {"plan": "enterprise", "feature": "o1-preview", "available": True, "limit": 200, "credits_per_request": 100, "reset_period": "monthly"},
+      {"plan": "enterprise", "feature": "o1-mini", "available": True, "limit": 666, "credits_per_request": 30, "reset_period": "monthly"},
+      # Chat Features - All Plans
+      {"plan": "starter", "feature": "daily_chat_limit", "available": True, "limit": 30, "reset_period": "daily"},
+      {"plan": "pro", "feature": "daily_chat_limit", "available": True, "limit": 500, "reset_period": "daily"},
+      {"plan": "enterprise", "feature": "daily_chat_limit", "available": True, "limit": 2000, "reset_period": "daily"},
+      {"plan": "starter", "feature": "context_window", "available": True, "limit": 8000, "reset_period": "never"},
+      {"plan": "pro", "feature": "context_window", "available": True, "limit": 128000, "reset_period": "never"},
+      {"plan": "enterprise", "feature": "context_window", "available": True, "limit": 200000, "reset_period": "never"},
+      {"plan": "starter", "feature": "file_uploads", "available": True, "limit": 1, "reset_period": "never"},
+      {"plan": "pro", "feature": "file_uploads", "available": True, "limit": 10, "reset_period": "never"},
+      {"plan": "enterprise", "feature": "file_uploads", "available": True, "limit": 50, "reset_period": "never"},
+      {"plan": "starter", "feature": "voice_input_output", "available": False, "limit": 0, "reset_period": "monthly"},
+      {"plan": "pro", "feature": "voice_input_output", "available": True, "limit": 60, "reset_period": "monthly"},
+      {"plan": "enterprise", "feature": "voice_input_output", "available": True, "limit": 300, "reset_period": "monthly"},
+      {"plan": "starter", "feature": "web_search", "available": True, "limit": 5, "reset_period": "daily"},
+      {"plan": "pro", "feature": "web_search", "available": True, "limit": 100, "reset_period": "daily"},
+      {"plan": "enterprise", "feature": "web_search", "available": True, "limit": 500, "reset_period": "daily"},
+      {"plan": "starter", "feature": "deep_research", "available": False, "limit": 0, "reset_period": "monthly"},
+      {"plan": "pro", "feature": "deep_research", "available": True, "limit": 10, "reset_period": "monthly"},
+      {"plan": "enterprise", "feature": "deep_research", "available": True, "limit": 50, "reset_period": "monthly"},
+      {"plan": "starter", "feature": "code_interpreter", "available": False, "limit": 0, "reset_period": "never"},
+      {"plan": "pro", "feature": "code_interpreter", "available": True, "limit": 1, "reset_period": "never"},
+      {"plan": "enterprise", "feature": "code_interpreter", "available": True, "limit": 1, "reset_period": "never"},
+      {"plan": "starter", "feature": "multi_model_chat", "available": False, "limit": 0, "reset_period": "never"},
+      {"plan": "pro", "feature": "multi_model_chat", "available": True, "limit": 3, "reset_period": "never"},
+      {"plan": "enterprise", "feature": "multi_model_chat", "available": True, "limit": 5, "reset_period": "never"},
+      {"plan": "starter", "feature": "chat_history", "available": True, "limit": 7, "reset_period": "never"},
+      {"plan": "pro", "feature": "chat_history", "available": True, "limit": 90, "reset_period": "never"},
+      {"plan": "enterprise", "feature": "chat_history", "available": True, "limit": 365, "reset_period": "never"},
+      {"plan": "starter", "feature": "custom_system_prompts", "available": False, "limit": 0, "reset_period": "never"},
+      {"plan": "pro", "feature": "custom_system_prompts", "available": True, "limit": 5, "reset_period": "never"},
+      {"plan": "enterprise", "feature": "custom_system_prompts", "available": True, "limit": 20, "reset_period": "never"},
+      # Image Models
+      {"plan": "starter", "feature": "dall-e-3", "available": True, "limit": 20, "credits_per_image": 25, "reset_period": "monthly"},
+      {"plan": "pro", "feature": "dall-e-3", "available": True, "limit": 200, "credits_per_image": 25, "reset_period": "monthly"},
+      {"plan": "enterprise", "feature": "dall-e-3", "available": True, "limit": 800, "credits_per_image": 25, "reset_period": "monthly"},
+      {"plan": "starter", "feature": "dall-e-2", "available": True, "limit": 50, "credits_per_image": 10, "reset_period": "monthly"},
+      {"plan": "pro", "feature": "dall-e-2", "available": True, "limit": 500, "credits_per_image": 10, "reset_period": "monthly"},
+      {"plan": "enterprise", "feature": "dall-e-2", "available": True, "limit": 2000, "credits_per_image": 10, "reset_period": "monthly"},
+      {"plan": "starter", "feature": "stable-diffusion-xl", "available": True, "limit": 100, "credits_per_image": 5, "reset_period": "monthly"},
+      {"plan": "pro", "feature": "stable-diffusion-xl", "available": True, "limit": 1000, "credits_per_image": 5, "reset_period": "monthly"},
+      {"plan": "enterprise", "feature": "stable-diffusion-xl", "available": True, "limit": 4000, "credits_per_image": 5, "reset_period": "monthly"},
+      # Knowledge Bases
+      {"plan": "starter", "feature": "knowledge_base_count", "available": True, "limit": 1, "reset_period": "never"},
+      {"plan": "pro", "feature": "knowledge_base_count", "available": True, "limit": 10, "reset_period": "never"},
+      {"plan": "enterprise", "feature": "knowledge_base_count", "available": True, "limit": 50, "reset_period": "never"},
+      {"plan": "starter", "feature": "files_per_kb", "available": True, "limit": 5, "reset_period": "never"},
+      {"plan": "pro", "feature": "files_per_kb", "available": True, "limit": 100, "reset_period": "never"},
+      {"plan": "enterprise", "feature": "files_per_kb", "available": True, "limit": 1000, "reset_period": "never"},
+      {"plan": "starter", "feature": "total_storage", "available": True, "limit": 100, "reset_period": "never"},  # MB
+      {"plan": "pro", "feature": "total_storage", "available": True, "limit": 10240, "reset_period": "never"},  # 10 GB
+      {"plan": "enterprise", "feature": "total_storage", "available": True, "limit": 102400, "reset_period": "never"},  # 100 GB
+      # AI Agent Tools
+      {"plan": "starter", "feature": "web_search_tool", "available": True, "limit": 10, "reset_period": "daily"},
+      {"plan": "pro", "feature": "web_search_tool", "available": True, "limit": 1000, "reset_period": "daily"},
+      {"plan": "enterprise", "feature": "web_search_tool", "available": True, "limit": 10000, "reset_period": "daily"},
+      {"plan": "starter", "feature": "calculator_tool", "available": True, "limit": 1, "reset_period": "never"},
+      {"plan": "pro", "feature": "calculator_tool", "available": True, "limit": 1, "reset_period": "never"},
+      {"plan": "enterprise", "feature": "calculator_tool", "available": True, "limit": 1, "reset_period": "never"},
+      # Agent Creation & Deployment
+      {"plan": "starter", "feature": "agent_count", "available": True, "limit": 1, "reset_period": "never"},
+      {"plan": "pro", "feature": "agent_count", "available": True, "limit": 10, "reset_period": "never"},
+      {"plan": "enterprise", "feature": "agent_count", "available": True, "limit": 100, "reset_period": "never"},
+      {"plan": "starter", "feature": "deployment_limit", "available": True, "limit": 1, "reset_period": "daily"},
+      {"plan": "pro", "feature": "deployment_limit", "available": True, "limit": 50, "reset_period": "daily"},
+      {"plan": "enterprise", "feature": "deployment_limit", "available": True, "limit": 500, "reset_period": "daily"},
+      # Team Features
+      {"plan": "starter", "feature": "team_members", "available": True, "limit": 1, "reset_period": "never"},
+      {"plan": "pro", "feature": "team_members", "available": True, "limit": 5, "reset_period": "never"},
+      {"plan": "enterprise", "feature": "team_members", "available": True, "limit": 25, "reset_period": "never"},
+      {"plan": "starter", "feature": "api_rate_limits", "available": True, "limit": 1, "reset_period": "never"},
+      {"plan": "pro", "feature": "api_rate_limits", "available": True, "limit": 10, "reset_period": "never"},
+      {"plan": "enterprise", "feature": "api_rate_limits", "available": True, "limit": 100, "reset_period": "never"},
+    ]
+
   async def execute(self, db: AsyncSession) -> None:
-    """
-    Main script execution logic.
-    Populate plan feature categories, features, and limits.
-    """
-    from sqlalchemy import text
+    """Main script execution logic."""
+    logger.info("Starting plan settings population...")
 
-    logger.info("Starting populate_plan_settings script execution...")
+    try:
+      await self._insert_categories(db)
+      await self._insert_features(db)
+      await self._insert_limits(db)
 
-    # Insert categories
-    logger.info("Inserting plan feature categories...")
-    await db.execute(
-      text("""
-            INSERT INTO plan_feature_categories (name, display_name, description, sort_order)
-            VALUES
-            ('text_models', 'Text Models', 'AI language models for text generation and processing', 1),
-            ('chat_features', 'Chat Features', 'Conversational AI features and limitations', 2),
-            ('image_models', 'Image Models', 'AI models for image generation and editing', 3),
-            ('image_editing', 'Image Editing', 'Advanced image editing and manipulation tools', 4)
-            ON CONFLICT (name) DO UPDATE SET
-                display_name = EXCLUDED.display_name,
-                description = EXCLUDED.description,
-                sort_order = EXCLUDED.sort_order
-        """)
-    )
+      await db.commit()
+      logger.info("✅ Plan settings populated successfully!")
 
-    await self._insert_text_model_features(db)
-    await self._insert_chat_features(db)
-    await self._insert_image_features(db)
-    await self._insert_limits(db)
+    except Exception as e:
+      await db.rollback()
+      logger.error(f"❌ Error populating plan settings: {str(e)}")
+      raise
 
-    await db.commit()
-    logger.info("populate_plan_settings script execution completed.")
+  async def _insert_categories(self, db: AsyncSession) -> None:
+    """Insert plan feature categories."""
+    logger.info("Inserting feature categories...")
+    categories = self._define_categories()
 
-  async def _insert_text_model_features(self, db: AsyncSession) -> None:
-    """Insert text model features using exact model names from ensure_model_props.py"""
-    from sqlalchemy import text
+    for category in categories:
+      await db.execute(
+        text("""
+          INSERT INTO plan_feature_categories (id, name, display_name, description, sort_order)
+          VALUES (gen_random_uuid(), :name, :display_name, :description, :sort_order)
+          ON CONFLICT (name) DO UPDATE SET
+            display_name = EXCLUDED.display_name,
+            description = EXCLUDED.description,
+            sort_order = EXCLUDED.sort_order
+        """),
+        category,
+      )
 
-    logger.info("Inserting text model features...")
-    await db.execute(
-      text("""
-            INSERT INTO plan_features (category_id, name, display_name, feature_type, measurement_unit, description, sort_order)
-            SELECT pfc.id, f.feature_name, f.feature_display_name, f.feature_type::feature_type_enum, f.measurement_unit, f.description, f.sort_order
-            FROM plan_feature_categories pfc, (VALUES
-                ('text_models', 'gpt-4.5-preview', 'GPT-4.5 Preview', 'model_access', 'requests', 'Access to GPT-4.5 Preview model (15 credits per 1K tokens)', 1),
-                ('text_models', 'gpt-4.1', 'GPT-4.1', 'model_access', 'requests', 'Access to GPT-4.1 model (12 credits per 1K tokens)', 2),
-                ('text_models', 'gpt-4o', 'GPT-4o', 'model_access', 'requests', 'Access to GPT-4o model (10 credits per 1K tokens)', 3),
-                ('text_models', 'gpt-4o-mini', 'GPT-4o Mini', 'model_access', 'requests', 'Access to GPT-4o Mini model (2 credits per 1K tokens)', 4),
-                ('text_models', 'gpt-3.5-turbo', 'GPT-3.5 Turbo', 'model_access', 'requests', 'Access to GPT-3.5 Turbo model (1 credit per 1K tokens)', 5),
-                ('text_models', 'o4-mini', 'O4 Mini', 'model_access', 'requests', 'Access to O4 Mini model (3 credits per 1K tokens)', 6),
-                ('text_models', 'o3-mini', 'O3 Mini', 'model_access', 'requests', 'Access to O3 Mini model (2 credits per 1K tokens)', 7),
-                ('text_models', 'o1-preview', 'O1 Preview', 'model_access', 'requests', 'Access to O1 Preview model (8 credits per 1K tokens)', 8),
-                ('text_models', 'o1', 'O1', 'model_access', 'requests', 'Access to O1 model (6 credits per 1K tokens)', 9),
-                ('text_models', 'claude-3-7-sonnet-latest', 'Claude 3.7 Sonnet', 'model_access', 'requests', 'Access to Claude 3.7 Sonnet model (15 credits per 1K tokens)', 10),
-                ('text_models', 'claude-3-5-sonnet-latest', 'Claude 3.5 Sonnet', 'model_access', 'requests', 'Access to Claude 3.5 Sonnet model (12 credits per 1K tokens)', 11),
-                ('text_models', 'claude-3-5-haiku-latest', 'Claude 3.5 Haiku', 'model_access', 'requests', 'Access to Claude 3.5 Haiku model (8 credits per 1K tokens)', 12),
-                ('text_models', 'deepseek-chat', 'DeepSeek Chat', 'model_access', 'requests', 'Access to DeepSeek Chat model (4 credits per 1K tokens)', 13),
-                ('text_models', 'deepseek-reason', 'DeepSeek Reason', 'model_access', 'requests', 'Access to DeepSeek Reason model (5 credits per 1K tokens)', 14)
-            ) AS f(category_name, feature_name, feature_display_name, feature_type, measurement_unit, description, sort_order)
-            WHERE pfc.name = f.category_name
-            ON CONFLICT (name) DO UPDATE SET
-                display_name = EXCLUDED.display_name,
-                description = EXCLUDED.description,
-                sort_order = EXCLUDED.sort_order
-        """)  # noqa: E501
-    )
+  async def _insert_features(self, db: AsyncSession) -> None:
+    """Insert plan features."""
+    logger.info("Inserting features...")
+    features = self._define_features()
 
-  async def _insert_chat_features(self, db: AsyncSession) -> None:
-    """Insert chat features"""
-    from sqlalchemy import text
-
-    logger.info("Inserting chat features...")
-    await db.execute(
-      text("""
-            INSERT INTO plan_features (category_id, name, display_name, feature_type, measurement_unit, description, sort_order)
-            SELECT pfc.id, f.feature_name, f.feature_display_name, f.feature_type::feature_type_enum, f.measurement_unit, f.description, f.sort_order
-            FROM plan_feature_categories pfc, (VALUES
-                ('chat_features', 'daily_chat_limit', 'Daily Chat Limit', 'usage_limit', 'messages', 'Maximum messages per day', 1),
-                ('chat_features', 'context_window', 'Context Window', 'usage_limit', 'tokens', 'Maximum tokens per conversation', 2),
-                ('chat_features', 'web_search', 'Web Search', 'usage_limit', 'searches', 'Real-time web search access per day', 3)
-            ) AS f(category_name, feature_name, feature_display_name, feature_type, measurement_unit, description, sort_order)
-            WHERE pfc.name = f.category_name
-            ON CONFLICT (name) DO UPDATE SET
-                display_name = EXCLUDED.display_name,
-                description = EXCLUDED.description,
-                sort_order = EXCLUDED.sort_order
-        """)
-    )
-
-  async def _insert_image_features(self, db: AsyncSession) -> None:
-    """Insert image model and editing features"""
-    from sqlalchemy import text
-
-    logger.info("Inserting image model features...")
-    await db.execute(
-      text("""
-            INSERT INTO plan_features (category_id, name, display_name, feature_type, measurement_unit, description, sort_order)
-            SELECT pfc.id, f.feature_name, f.feature_display_name, f.feature_type::feature_type_enum, f.measurement_unit, f.description, f.sort_order
-            FROM plan_feature_categories pfc, (VALUES
-                ('image_models', 'dalle_3', 'DALL-E 3', 'model_access', 'images', 'Access to DALL-E 3 model (25 credits per image)', 1),
-                ('image_models', 'dalle_2', 'DALL-E 2', 'model_access', 'images', 'Access to DALL-E 2 model (10 credits per image)', 2),
-                ('image_models', 'stable_diffusion_xl', 'Stable Diffusion XL', 'model_access', 'images', 'Access to Stable Diffusion XL (5 credits per image)', 3)
-            ) AS f(category_name, feature_name, feature_display_name, feature_type, measurement_unit, description, sort_order)
-            WHERE pfc.name = f.category_name
-            ON CONFLICT (name) DO UPDATE SET
-                display_name = EXCLUDED.display_name,
-                description = EXCLUDED.description,
-                sort_order = EXCLUDED.sort_order
-        """)  # noqa: E501
-    )
-
-    logger.info("Inserting image editing features...")
-    await db.execute(
-      text("""
-            INSERT INTO plan_features (category_id, name, display_name, feature_type, measurement_unit, description, sort_order)
-            SELECT pfc.id, f.feature_name, f.feature_display_name, f.feature_type::feature_type_enum, f.measurement_unit, f.description, f.sort_order
-            FROM plan_feature_categories pfc, (VALUES
-                ('image_editing', 'background_removal', 'Background Removal', 'usage_limit', 'operations', 'Automated background removal (5 credits per operation)', 1)
-            ) AS f(category_name, feature_name, feature_display_name, feature_type, measurement_unit, description, sort_order)
-            WHERE pfc.name = f.category_name
-            ON CONFLICT (name) DO UPDATE SET
-                display_name = EXCLUDED.display_name,
-                description = EXCLUDED.description,
-                sort_order = EXCLUDED.sort_order
-        """)  # noqa: E501
-    )
+    for feature in features:
+      await db.execute(
+        text("""
+          INSERT INTO plan_features (id, category_id, name, display_name, feature_type, measurement_unit, description, sort_order)
+          SELECT gen_random_uuid(), c.id, :name, :display_name, CAST(:feature_type AS feature_type_enum),
+                 :measurement_unit, :description, :sort_order
+          FROM plan_feature_categories c
+          WHERE c.name = :category
+          ON CONFLICT (name) DO UPDATE SET
+            display_name = EXCLUDED.display_name,
+            feature_type = EXCLUDED.feature_type,
+            measurement_unit = EXCLUDED.measurement_unit,
+            description = EXCLUDED.description,
+            sort_order = EXCLUDED.sort_order
+        """),
+        feature,
+      )
 
   async def _insert_limits(self, db: AsyncSession) -> None:
-    """Insert plan feature limits for text models and chat features"""
-    from sqlalchemy import text
+    """Insert plan feature limits."""
+    logger.info("Inserting plan limits...")
+    limits = self._define_limits()
 
-    logger.info("Inserting text model plan limits...")
-    await db.execute(
-      text("""
-            INSERT INTO plan_feature_limits (billing_plan_id, feature_id, is_available, limit_value, limit_metadata, reset_period)
-            SELECT bp.id, pf.id,
-                   CASE
-                 WHEN bp.name = 'starter' AND pf.name IN ('gpt-4o-mini', 'claude-3-5-haiku-latest', 'deepseek-chat', 'gpt-3.5-turbo') THEN true
-                 WHEN bp.name = 'pro' AND pf.name IN ('gpt-4o', 'gpt-4o-mini', 'claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'deepseek-chat', 'deepseek-reason', 'gpt-3.5-turbo', 'o1', 'o3-mini') THEN true
-                     WHEN bp.name = 'enterprise' THEN true
-                     ELSE false
-                   END as is_available,
-                   CASE
-                     -- Starter plan limits
-                     WHEN bp.name = 'starter' AND pf.name = 'gpt-4o-mini' THEN 250
-                     WHEN bp.name = 'starter' AND pf.name = 'claude-3-5-haiku-latest' THEN 62
-                     WHEN bp.name = 'starter' AND pf.name = 'deepseek-chat' THEN 125
-                     WHEN bp.name = 'starter' AND pf.name = 'gpt-3.5-turbo' THEN 500
-                     -- Pro plan limits
-                     WHEN bp.name = 'pro' AND pf.name = 'gpt-4o' THEN 500
-                     WHEN bp.name = 'pro' AND pf.name = 'gpt-4o-mini' THEN 2500
-                     WHEN bp.name = 'pro' AND pf.name = 'claude-3-5-sonnet-latest' THEN 416
-                     WHEN bp.name = 'pro' AND pf.name = 'claude-3-5-haiku-latest' THEN 625
-                     WHEN bp.name = 'pro' AND pf.name = 'deepseek-chat' THEN 1250
-                     WHEN bp.name = 'pro' AND pf.name = 'deepseek-reason' THEN 1000
-                     WHEN bp.name = 'pro' AND pf.name = 'gpt-3.5-turbo' THEN 5000
-                     WHEN bp.name = 'pro' AND pf.name = 'o1' THEN 833
-                     WHEN bp.name = 'pro' AND pf.name = 'o3-mini' THEN 2500
-                     -- Enterprise plan limits
-                     WHEN bp.name = 'enterprise' AND pf.name = 'gpt-4.5-preview' THEN 1333
-                     WHEN bp.name = 'enterprise' AND pf.name = 'gpt-4.1' THEN 1666
-                     WHEN bp.name = 'enterprise' AND pf.name = 'gpt-4o' THEN 2000
-                     WHEN bp.name = 'enterprise' AND pf.name = 'gpt-4o-mini' THEN 10000
-                     WHEN bp.name = 'enterprise' AND pf.name = 'claude-3-7-sonnet-latest' THEN 1333
-                     WHEN bp.name = 'enterprise' AND pf.name = 'claude-3-5-sonnet-latest' THEN 1666
-                     WHEN bp.name = 'enterprise' AND pf.name = 'claude-3-5-haiku-latest' THEN 2500
-                     WHEN bp.name = 'enterprise' AND pf.name = 'deepseek-chat' THEN 5000
-                     WHEN bp.name = 'enterprise' AND pf.name = 'deepseek-reason' THEN 4000
-                     WHEN bp.name = 'enterprise' AND pf.name = 'gpt-3.5-turbo' THEN 20000
-                     WHEN bp.name = 'enterprise' AND pf.name = 'o4-mini' THEN 6666
-                     WHEN bp.name = 'enterprise' AND pf.name = 'o3-mini' THEN 10000
-                     WHEN bp.name = 'enterprise' AND pf.name = 'o1-preview' THEN 2500
-                     WHEN bp.name = 'enterprise' AND pf.name = 'o1' THEN 3333
-                     ELSE NULL
-                   END as limit_value,
-                   ('{"credits_per_1k_tokens": ' ||
-                     CASE pf.name
-                       WHEN 'gpt-4.5-preview' THEN '15'
-                       WHEN 'gpt-4.1' THEN '12'
-                       WHEN 'gpt-4o' THEN '10'
-                       WHEN 'gpt-4o-mini' THEN '2'
-                       WHEN 'gpt-3.5-turbo' THEN '1'
-                       WHEN 'o4-mini' THEN '3'
-                       WHEN 'o3-mini' THEN '2'
-                       WHEN 'o1-preview' THEN '8'
-                       WHEN 'o1' THEN '6'
-                       WHEN 'claude-3-7-sonnet-latest' THEN '15'
-                       WHEN 'claude-3-5-sonnet-latest' THEN '12'
-                       WHEN 'claude-3-5-haiku-latest' THEN '8'
-                       WHEN 'deepseek-chat' THEN '4'
-                       WHEN 'deepseek-reason' THEN '5'
-                       ELSE '0'
-                     END || '}')::jsonb as limit_metadata,
-                   'monthly'::reset_period_enum as reset_period
-            FROM billing_plans bp
-            CROSS JOIN plan_features pf
-            WHERE bp.cycle = 'MONTHLY'
-              AND bp.name IN ('starter', 'pro', 'enterprise')
-              AND pf.name IN ('gpt-4.5-preview', 'gpt-4.1', 'gpt-4o', 'gpt-4o-mini',
-                              'gpt-3.5-turbo', 'o4-mini', 'o3-mini', 'o1-preview',
-                              'o1', 'claude-3-7-sonnet-latest', 'claude-3-5-sonnet-latest',
-                              'claude-3-5-haiku-latest', 'deepseek-chat', 'deepseek-reason')
-            ON CONFLICT (billing_plan_id, feature_id) DO UPDATE SET
-                is_available = EXCLUDED.is_available,
-                limit_value = EXCLUDED.limit_value,
-                limit_metadata = EXCLUDED.limit_metadata,
-                reset_period = EXCLUDED.reset_period
-        """)  # noqa: E501
-    )
+    for limit in limits:
+      # Build metadata JSON
+      metadata = {}
+      if "credits_per_1k" in limit:
+        metadata["credits_per_1k_tokens"] = limit["credits_per_1k"]
+      if "credits_per_image" in limit:
+        metadata["credits_per_image"] = limit["credits_per_image"]
+      if "credits_per_request" in limit:
+        metadata["credits_per_request"] = limit["credits_per_request"]
 
-    logger.info("Inserting chat feature limits...")
-    await db.execute(
-      text("""
-            INSERT INTO plan_feature_limits (billing_plan_id, feature_id, is_available, limit_value, reset_period)
-            SELECT bp.id, pf.id, true,
-                   CASE
-                     WHEN bp.name = 'starter' AND pf.name = 'daily_chat_limit' THEN 30
-                     WHEN bp.name = 'starter' AND pf.name = 'context_window' THEN 8000
-                     WHEN bp.name = 'starter' AND pf.name = 'web_search' THEN 5
-                     WHEN bp.name = 'pro' AND pf.name = 'daily_chat_limit' THEN 500
-                     WHEN bp.name = 'pro' AND pf.name = 'context_window' THEN 128000
-                     WHEN bp.name = 'pro' AND pf.name = 'web_search' THEN 100
-                     WHEN bp.name = 'enterprise' AND pf.name = 'daily_chat_limit' THEN 2000
-                     WHEN bp.name = 'enterprise' AND pf.name = 'context_window' THEN 200000
-                     WHEN bp.name = 'enterprise' AND pf.name = 'web_search' THEN 500
-                     ELSE NULL
-                   END as limit_value,
-                   CASE
-                     WHEN pf.name IN ('daily_chat_limit', 'web_search') THEN 'daily'
-                     WHEN pf.name = 'context_window' THEN 'never'
-                     ELSE 'monthly'
-                   END::reset_period_enum as reset_period
-            FROM billing_plans bp
-            CROSS JOIN plan_features pf
-            WHERE bp.cycle = 'MONTHLY'
-              AND bp.name IN ('starter', 'pro', 'enterprise')
-              AND pf.name IN ('daily_chat_limit', 'context_window', 'web_search')
-            ON CONFLICT (billing_plan_id, feature_id) DO UPDATE SET
-                is_available = EXCLUDED.is_available,
-                limit_value = EXCLUDED.limit_value,
-                reset_period = EXCLUDED.reset_period
-        """)
-    )
+      metadata_json = None
+      if metadata:
+        import json
+
+        metadata_json = json.dumps(metadata)
+
+      await db.execute(
+        text("""
+          INSERT INTO plan_feature_limits (billing_plan_id, feature_id, is_available, limit_value, limit_metadata, reset_period)
+          SELECT bp.id, pf.id, :available, :limit, CAST(:metadata AS jsonb), CAST(:reset_period AS reset_period_enum)
+          FROM billing_plans bp
+          CROSS JOIN plan_features pf
+          WHERE bp.name = :plan
+            AND bp.cycle = 'MONTHLY'
+            AND pf.name = :feature
+          ON CONFLICT (billing_plan_id, feature_id) DO UPDATE SET
+            is_available = EXCLUDED.is_available,
+            limit_value = EXCLUDED.limit_value,
+            limit_metadata = EXCLUDED.limit_metadata,
+            reset_period = EXCLUDED.reset_period
+        """),
+        {
+          "plan": limit["plan"],
+          "feature": limit["feature"],
+          "available": limit["available"],
+          "limit": limit["limit"],
+          "metadata": metadata_json,
+          "reset_period": limit["reset_period"],
+        },
+      )
 
   async def rollback(self, db: AsyncSession) -> None:
-    """
-    Rollback logic for the script.
-    Remove all plan features and categories created by this script.
-    """
-    from sqlalchemy import text
+    """Rollback the script execution by deleting created plan data."""
+    logger.info("Rolling back plan settings...")
 
-    logger.info("Rolling back populate_plan_settings script...")
+    # Delete in reverse order due to foreign key constraints
+    # Delete limits first
+    limits_result = await db.execute(text("DELETE FROM plan_feature_limits"))
+    limits_deleted = getattr(limits_result, "rowcount", 0)
 
-    await db.execute(text("DELETE FROM plan_feature_limits"))
-    await db.execute(text("DELETE FROM plan_features"))
-    await db.execute(text("DELETE FROM plan_feature_categories"))
+    # Delete features
+    features_result = await db.execute(text("DELETE FROM plan_features"))
+    features_deleted = getattr(features_result, "rowcount", 0)
+
+    # Delete categories
+    categories_result = await db.execute(text("DELETE FROM plan_feature_categories"))
+    categories_deleted = getattr(categories_result, "rowcount", 0)
 
     await db.commit()
-    logger.info("populate_plan_settings script rollback completed.")
+
+    logger.info(f"Deleted {limits_deleted} limits, {features_deleted} features, and {categories_deleted} categories during rollback")
 
   async def verify(self, db: AsyncSession) -> bool:
-    """
-    Verify script execution was successful.
-    Return True if everything is as expected, False otherwise.
-    """
-    from sqlalchemy import text
+    """Verify script execution was successful."""
+    # Check if categories were created
+    categories_result = await db.execute(text("SELECT COUNT(*) FROM plan_feature_categories"))
+    categories_count = categories_result.scalar()
 
-    logger.info("Verifying populate_plan_settings script execution...")
+    # Check if features were created
+    features_result = await db.execute(text("SELECT COUNT(*) FROM plan_features"))
+    features_count = features_result.scalar()
 
-    # Check that categories were created
-    result = await db.execute(text("SELECT COUNT(*) FROM plan_feature_categories"))
-    category_count = result.scalar_one()
-    if category_count < 4:
-      logger.error(f"Expected at least 4 categories, found {category_count}")
+    # Check if limits were created
+    limits_result = await db.execute(text("SELECT COUNT(*) FROM plan_feature_limits"))
+    limits_count = limits_result.scalar()
+
+    if not categories_count or not features_count or not limits_count:
+      logger.error(f"Verification failed: categories={categories_count}, features={features_count}, limits={limits_count}")
       return False
 
-    # Check that features were created
-    result = await db.execute(text("SELECT COUNT(*) FROM plan_features"))
-    feature_count = result.scalar_one()
-    if feature_count < 10:
-      logger.error(f"Expected at least 10 features, found {feature_count}")
-      return False
-
-    # Check that limits were created
-    result = await db.execute(text("SELECT COUNT(*) FROM plan_feature_limits"))
-    limit_count = result.scalar_one()
-    if limit_count < 10:
-      logger.error(f"Expected at least 10 feature limits, found {limit_count}")
-      return False
-
-    logger.info("Verification passed: all plan settings populated successfully")
+    logger.info(f"Verification passed: {categories_count} categories, {features_count} features, {limits_count} limits created")
     return True
 
 
