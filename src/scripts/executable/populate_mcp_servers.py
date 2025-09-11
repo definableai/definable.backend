@@ -57,13 +57,13 @@ class PopulateMCPServersScript(BaseScript):
             "authScheme": auth_scheme.upper()
           }
         }
-      
+
       auth_response = await client.post(
         "https://backend.composio.dev/api/v3/auth_configs",
         headers={"x-api-key": settings.composio_api_key},
         json=auth_config_payload
       )
-      
+
       if auth_response.status_code == 201:
         auth_data = auth_response.json()
         auth_config_id = auth_data.get("auth_config", {}).get("id")
@@ -73,7 +73,7 @@ class PopulateMCPServersScript(BaseScript):
         logger.warning(f"Failed to create auth config for {toolkit_slug}: {auth_response.status_code}")
         logger.warning(f"Response: {auth_response.text}")
         return None
-        
+
     except Exception as e:
       logger.error(f"Error creating auth config for {toolkit_slug}: {e}")
       return None
@@ -82,44 +82,44 @@ class PopulateMCPServersScript(BaseScript):
     """Fetch all non-deprecated tools for a toolkit."""
     tool_slugs = []
     cursor = None
-    
+
     while True:
       try:
         url = f"https://backend.composio.dev/api/v3/tools?toolkit_slug={toolkit_slug}"
         if cursor:
           url += f"&cursor={cursor}"
-          
+
         response = await client.get(
           url,
           headers={"x-api-key": settings.composio_api_key}
         )
-        
+
         if response.status_code != 200:
           logger.error(f"Error fetching tools for {toolkit_slug}: {response.status_code}")
           logger.error(response.text)
           break
-          
+
         data = response.json()
         items = data.get("items", [])
-        
+
         # Filter out deprecated tools dynamically
         for item in items:
           # Check if tool is deprecated using the is_deprecated field
           is_deprecated = item.get("deprecated", {}).get("is_deprecated", False)
-          
+
           if not is_deprecated:
             tool_slugs.append(item["slug"])
           else:
             logger.info(f"Skipping deprecated tool: {item['slug']}")
-        
+
         cursor = data.get("next_cursor")
         if not cursor:
           break
-          
+
       except Exception as e:
         logger.error(f"Error fetching tools for {toolkit_slug}: {e}")
         break
-    
+
     logger.info(f"Found {len(tool_slugs)} non-deprecated tools for {toolkit_slug}")
     return tool_slugs
 
@@ -128,19 +128,19 @@ class PopulateMCPServersScript(BaseScript):
     try:
       random_number = random.randint(1, 9999)
       server_name = f"definable-{toolkit_slug}-{random_number}"
-      
+
       server_payload = {
         "name": server_name,
         "auth_config_ids": [auth_config_id],
         "allowed_tools": tool_slugs
       }
-      
+
       response = await client.post(
         "https://backend.composio.dev/api/v3/mcp/servers",
         headers={"x-api-key": settings.composio_api_key},
         json=server_payload
       )
-      
+
       if response.status_code == 201:
         server_data = response.json()
         logger.info(f"Created MCP server for {toolkit_slug}: {server_data.get('id')}")
@@ -149,7 +149,7 @@ class PopulateMCPServersScript(BaseScript):
         logger.error(f"Failed to create MCP server for {toolkit_slug}: {response.status_code}")
         logger.error(f"Response: {response.text}")
         return None
-        
+
     except Exception as e:
       logger.error(f"Error creating MCP server for {toolkit_slug}: {e}")
       return None
@@ -161,13 +161,13 @@ class PopulateMCPServersScript(BaseScript):
         f"https://backend.composio.dev/api/v3/toolkits/{toolkit_slug}",
         headers={"x-api-key": settings.composio_api_key},
       )
-      
+
       if toolkit_response.status_code == 200:
         return toolkit_response.json()
       else:
         logger.warning(f"Failed to fetch toolkit info for {toolkit_slug}: {toolkit_response.status_code}")
         return {}
-        
+
     except Exception as e:
       logger.error(f"Error fetching toolkit info for {toolkit_slug}: {e}")
       return {}
@@ -184,10 +184,10 @@ class PopulateMCPServersScript(BaseScript):
       for toolkit_slug, auth_scheme in self.TOOLKITS.items():
         try:
           logger.info(f"Processing toolkit: {toolkit_slug} with auth scheme: {auth_scheme}")
-          
+
           # Check if server already exists
           existing_server = await db.execute(
-            text("SELECT id FROM mcp_servers WHERE toolkit_slug = :toolkit_slug"), 
+            text("SELECT id FROM mcp_servers WHERE toolkit_slug = :toolkit_slug"),
             {"toolkit_slug": toolkit_slug}
           )
           if existing_server.first():
@@ -220,11 +220,11 @@ class PopulateMCPServersScript(BaseScript):
           if not composio_server_id:
             logger.warning(f"No server ID returned from Composio for {toolkit_slug}, skipping database storage")
             continue
-            
+
           await db.execute(
             text("""
               INSERT INTO mcp_servers (
-                id, name, auth_config_id, toolkit_name, toolkit_slug, toolkit_logo, 
+                id, name, auth_config_id, toolkit_name, toolkit_slug, toolkit_logo,
                 auth_scheme, expected_input_fields, server_instance_count
               )
               VALUES (
@@ -244,7 +244,7 @@ class PopulateMCPServersScript(BaseScript):
               "server_instance_count": server_data.get("server_instance_count", 0),
             },
           )
-          
+
           # Use the Composio server ID for tools
           server_id = composio_server_id
           servers_created += 1
@@ -257,10 +257,10 @@ class PopulateMCPServersScript(BaseScript):
                 f"https://backend.composio.dev/api/v3/tools/{tool_slug}",
                 headers={"x-api-key": settings.composio_api_key},
               )
-              
+
               if tool_response.status_code == 200:
                 tool_data = tool_response.json()
-                
+
                 # Check if tool already exists for this server
                 existing_tool = await db.execute(
                   text("SELECT id FROM mcp_tools WHERE slug = :slug AND mcp_server_id = :mcp_server_id"),
@@ -281,7 +281,7 @@ class PopulateMCPServersScript(BaseScript):
                     },
                   )
                   tools_created += 1
-                  
+
             except Exception as tool_error:
               logger.warning(f"Failed to process tool {tool_slug}: {tool_error}")
               continue
