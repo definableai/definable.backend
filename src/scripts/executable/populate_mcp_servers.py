@@ -5,6 +5,7 @@ Populates MCP servers from Composio into the database.
 
 import json
 import os
+import random
 import sys
 
 import httpx
@@ -24,197 +25,277 @@ from scripts.core.base_script import BaseScript
 class PopulateMCPServersScript(BaseScript):
   """Script to populate MCP servers from Composio."""
 
+  TOOLKITS = {
+    "gmail": "oauth2",
+    "github": "oauth2"
+  }
+
   def __init__(self):
     super().__init__("populate_mcp_servers")
+
+  async def create_auth_config(self, client: httpx.AsyncClient, toolkit_slug: str, auth_scheme: str) -> str:
+    """Create auth config for a toolkit and return the auth_config_id."""
+    try:
+      if auth_scheme.lower() == "oauth2":
+        # For OAuth2, use composio managed auth
+        auth_config_payload = {
+          "toolkit": {
+            "slug": toolkit_slug
+          },
+          "auth_config": {
+            "type": "use_composio_managed_auth"
+          }
+        }
+      else:
+        # For custom auth schemes (API_KEY, BEARER_TOKEN, etc.)
+        auth_config_payload = {
+          "toolkit": {
+            "slug": toolkit_slug
+          },
+          "auth_config": {
+            "type": "use_custom_auth",
+            "authScheme": auth_scheme.upper()
+          }
+        }
+      
+      auth_response = await client.post(
+        "https://backend.composio.dev/api/v3/auth_configs",
+        headers={"x-api-key": settings.composio_api_key},
+        json=auth_config_payload
+      )
+      
+      if auth_response.status_code == 201:
+        auth_data = auth_response.json()
+        auth_config_id = auth_data.get("auth_config", {}).get("id")
+        logger.info(f"Created auth config for {toolkit_slug} with {auth_scheme}: {auth_config_id}")
+        return auth_config_id
+      else:
+        logger.warning(f"Failed to create auth config for {toolkit_slug}: {auth_response.status_code}")
+        logger.warning(f"Response: {auth_response.text}")
+        return None
+        
+    except Exception as e:
+      logger.error(f"Error creating auth config for {toolkit_slug}: {e}")
+      return None
+
+  async def fetch_non_deprecated_tools(self, client: httpx.AsyncClient, toolkit_slug: str) -> list:
+    """Fetch all non-deprecated tools for a toolkit."""
+    tool_slugs = []
+    cursor = None
+    
+    while True:
+      try:
+        url = f"https://backend.composio.dev/api/v3/tools?toolkit_slug={toolkit_slug}"
+        if cursor:
+          url += f"&cursor={cursor}"
+          
+        response = await client.get(
+          url,
+          headers={"x-api-key": settings.composio_api_key}
+        )
+        
+        if response.status_code != 200:
+          logger.error(f"Error fetching tools for {toolkit_slug}: {response.status_code}")
+          logger.error(response.text)
+          break
+          
+        data = response.json()
+        items = data.get("items", [])
+        
+        # Filter out deprecated tools dynamically
+        for item in items:
+          # Check if tool is deprecated using the is_deprecated field
+          is_deprecated = item.get("deprecated", {}).get("is_deprecated", False)
+          
+          if not is_deprecated:
+            tool_slugs.append(item["slug"])
+          else:
+            logger.info(f"Skipping deprecated tool: {item['slug']}")
+        
+        cursor = data.get("next_cursor")
+        if not cursor:
+          break
+          
+      except Exception as e:
+        logger.error(f"Error fetching tools for {toolkit_slug}: {e}")
+        break
+    
+    logger.info(f"Found {len(tool_slugs)} non-deprecated tools for {toolkit_slug}")
+    return tool_slugs
+
+  async def create_mcp_server(self, client: httpx.AsyncClient, toolkit_slug: str, auth_config_id: str, tool_slugs: list) -> dict:
+    """Create MCP server via Composio API."""
+    try:
+      random_number = random.randint(1, 9999)
+      server_name = f"definable-{toolkit_slug}-{random_number}"
+      
+      server_payload = {
+        "name": server_name,
+        "auth_config_ids": [auth_config_id],
+        "allowed_tools": tool_slugs
+      }
+      
+      response = await client.post(
+        "https://backend.composio.dev/api/v3/mcp/servers",
+        headers={"x-api-key": settings.composio_api_key},
+        json=server_payload
+      )
+      
+      if response.status_code == 201:
+        server_data = response.json()
+        logger.info(f"Created MCP server for {toolkit_slug}: {server_data.get('id')}")
+        return server_data
+      else:
+        logger.error(f"Failed to create MCP server for {toolkit_slug}: {response.status_code}")
+        logger.error(f"Response: {response.text}")
+        return None
+        
+    except Exception as e:
+      logger.error(f"Error creating MCP server for {toolkit_slug}: {e}")
+      return None
+
+  async def get_toolkit_info(self, client: httpx.AsyncClient, toolkit_slug: str) -> dict:
+    """Get toolkit information for database storage."""
+    try:
+      toolkit_response = await client.get(
+        f"https://backend.composio.dev/api/v3/toolkits/{toolkit_slug}",
+        headers={"x-api-key": settings.composio_api_key},
+      )
+      
+      if toolkit_response.status_code == 200:
+        return toolkit_response.json()
+      else:
+        logger.warning(f"Failed to fetch toolkit info for {toolkit_slug}: {toolkit_response.status_code}")
+        return {}
+        
+    except Exception as e:
+      logger.error(f"Error fetching toolkit info for {toolkit_slug}: {e}")
+      return {}
 
   async def execute(self, db: AsyncSession) -> None:
     """Main script execution logic."""
     logger.info("Starting MCP servers population...")
-
-    # Get MCP servers from Composio API
-    async with httpx.AsyncClient() as client:
-      response = await client.get(
-        "https://backend.composio.dev/api/v3/mcp/servers",
-        headers={"x-api-key": settings.composio_api_key},
-      )
-      response.raise_for_status()
-      mcp_data = response.json()
-
-    logger.info(f"Found {len(mcp_data.get('items', []))} MCP servers to process")
+    logger.info(f"Processing {len(self.TOOLKITS)} toolkits: {', '.join(self.TOOLKITS.keys())}")
 
     servers_created = 0
-    toolkits_created = 0
     tools_created = 0
 
-    for mcp_item in mcp_data.get("items", []):
-      try:
-        logger.info(f"Processing MCP server: {mcp_item.get('name')}")
-
-        # Extract server data
-        name = mcp_item.get("name")
-        toolkits = mcp_item.get("toolkits", [])
-        auth_config_ids = mcp_item.get("auth_config_ids", [])
-        allowed_tools = mcp_item.get("allowed_tools", [])
-        server_instance_count = mcp_item.get("server_instance_count", 0)
-
-        auth_scheme = None
-        expected_input_fields = []
-
-        if auth_config_ids:
-          auth_config_id = auth_config_ids[0]
-          try:
-            async with httpx.AsyncClient() as auth_client:
-              auth_response = await auth_client.get(
-                f"https://backend.composio.dev/api/v3/auth_configs/{auth_config_id}",
-                headers={"x-api-key": settings.composio_api_key},
-              )
-
-              if auth_response.status_code == 200:
-                auth_data = auth_response.json()
-                auth_scheme = auth_data.get("auth_scheme")
-                expected_input_fields = auth_data.get("expected_input_fields", [])
-              else:
-                logger.warning(f"Failed to fetch auth config {auth_config_id}: {auth_response.status_code}")
-          except Exception as auth_error:
-            logger.warning(f"Error fetching auth config {auth_config_id}: {auth_error}")
-
-        # Check if server already exists using raw SQL
-        existing_server = await db.execute(text("SELECT id FROM mcp_servers WHERE name = :name"), {"name": name})
-        if existing_server.first():
-          logger.info(f"Server {name} already exists, skipping...")
-          continue
-
-        # Create MCP server using raw SQL
-        await db.execute(
-          text("""
-            INSERT INTO mcp_servers (name, toolkits, auth_config_ids, auth_scheme, expected_input_fields, allowed_tools, server_instance_count)
-            VALUES (:name, :toolkits, :auth_config_ids, :auth_scheme, :expected_input_fields, :allowed_tools, :server_instance_count)
-          """),
-          {
-            "name": name,
-            "toolkits": json.dumps(toolkits),
-            "auth_config_ids": json.dumps(auth_config_ids),
-            "auth_scheme": auth_scheme,
-            "expected_input_fields": json.dumps(expected_input_fields),
-            "allowed_tools": json.dumps(allowed_tools),
-            "server_instance_count": server_instance_count,
-          },
-        )
-        servers_created += 1
-
-        # Process toolkits for this server
-        for toolkit_slug in toolkits:
-          try:
-            # Get toolkit details from Composio
-            async with httpx.AsyncClient() as toolkit_client:
-              toolkit_response = await toolkit_client.get(
-                f"https://backend.composio.dev/api/v3/toolkits/{toolkit_slug}",
-                headers={"x-api-key": settings.composio_api_key},
-              )
-
-              if toolkit_response.status_code == 200:
-                toolkit_data = toolkit_response.json()
-
-                # Check if toolkit already exists using raw SQL
-                existing_toolkit = await db.execute(text("SELECT id FROM mcp_toolkits WHERE slug = :slug"), {"slug": toolkit_slug})
-                existing_toolkit_row = existing_toolkit.first()
-
-                if not existing_toolkit_row:
-                  # Create toolkit using raw SQL
-                  toolkit_result = await db.execute(
-                    text("""
-                      INSERT INTO mcp_toolkits (name, slug, logo)
-                      VALUES (:name, :slug, :logo)
-                      RETURNING id
-                    """),
-                    {
-                      "name": toolkit_data.get("name", toolkit_slug),
-                      "slug": toolkit_slug,
-                      "logo": toolkit_data.get("meta", {}).get("logo"),
-                    },
-                  )
-                  toolkit_id = toolkit_result.scalar_one()
-                  toolkits_created += 1
-                else:
-                  toolkit_id = existing_toolkit_row[0]
-
-                try:
-                  cursor = None
-                  total_toolkit_tools = 0
-                  page_num = 1
-
-                  while True:
-                    async with httpx.AsyncClient() as tools_client:
-                      url = f"https://backend.composio.dev/api/v3/tools?toolkit_slug={toolkit_slug}"
-                      if cursor:
-                        url += f"&cursor={cursor}"
-
-                      tools_response = await tools_client.get(
-                        url,
-                        headers={"x-api-key": settings.composio_api_key},
-                      )
-
-                      if tools_response.status_code == 200:
-                        tools_data = tools_response.json()
-                        current_page_tools = 0
-
-                        for tool_data in tools_data.get("items", []):
-                          try:
-                            # Check if tool already exists using raw SQL
-                            existing_tool = await db.execute(
-                              text("SELECT id FROM mcp_tools WHERE slug = :slug AND toolkit_id = :toolkit_id"),
-                              {"slug": tool_data.get("slug"), "toolkit_id": toolkit_id},
-                            )
-
-                            if not existing_tool.first():
-                              # Create tool using raw SQL
-                              await db.execute(
-                                text("""
-                                  INSERT INTO mcp_tools (toolkit_id, name, slug, description)
-                                  VALUES (:toolkit_id, :name, :slug, :description)
-                                """),
-                                {
-                                  "toolkit_id": toolkit_id,
-                                  "name": tool_data.get("name"),
-                                  "slug": tool_data.get("slug"),
-                                  "description": tool_data.get("description", ""),
-                                },
-                              )
-                              tools_created += 1
-                              current_page_tools += 1
-
-                          except Exception:
-                            continue
-
-                        total_toolkit_tools += current_page_tools
-
-                        # Check for next cursor
-                        next_cursor = tools_data.get("next_cursor")
-                        if not next_cursor:
-                          break
-                        cursor = next_cursor
-                        page_num += 1
-
-                      else:
-                        break
-
-                except Exception:
-                  pass
-
-              else:
-                logger.warning(f"Failed to fetch toolkit {toolkit_slug}: {toolkit_response.status_code}")
-
-          except Exception:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+      for toolkit_slug, auth_scheme in self.TOOLKITS.items():
+        try:
+          logger.info(f"Processing toolkit: {toolkit_slug} with auth scheme: {auth_scheme}")
+          
+          # Check if server already exists
+          existing_server = await db.execute(
+            text("SELECT id FROM mcp_servers WHERE toolkit_slug = :toolkit_slug"), 
+            {"toolkit_slug": toolkit_slug}
+          )
+          if existing_server.first():
+            logger.info(f"Server for toolkit {toolkit_slug} already exists, skipping...")
             continue
 
-      except Exception as server_error:
-        logger.error(f"Failed to process server {mcp_item.get('name', 'unknown')}: {server_error}")
-        continue
+          # Step 1: Create auth config
+          auth_config_id = await self.create_auth_config(client, toolkit_slug, auth_scheme)
+          if not auth_config_id:
+            logger.warning(f"Skipping {toolkit_slug} - failed to create auth config")
+            continue
+
+          # Step 2: Fetch non-deprecated tools
+          tool_slugs = await self.fetch_non_deprecated_tools(client, toolkit_slug)
+          if not tool_slugs:
+            logger.warning(f"Skipping {toolkit_slug} - no tools found")
+            continue
+
+          # Step 3: Create MCP server via API
+          server_data = await self.create_mcp_server(client, toolkit_slug, auth_config_id, tool_slugs)
+          if not server_data:
+            logger.warning(f"Skipping {toolkit_slug} - failed to create MCP server")
+            continue
+
+          # Step 4: Get toolkit info for database
+          toolkit_info = await self.get_toolkit_info(client, toolkit_slug)
+
+          # Step 5: Store server in database
+          composio_server_id = server_data.get("id")
+          if not composio_server_id:
+            logger.warning(f"No server ID returned from Composio for {toolkit_slug}, skipping database storage")
+            continue
+            
+          await db.execute(
+            text("""
+              INSERT INTO mcp_servers (
+                id, name, auth_config_id, toolkit_name, toolkit_slug, toolkit_logo, 
+                auth_scheme, expected_input_fields, server_instance_count
+              )
+              VALUES (
+                :id, :name, :auth_config_id, :toolkit_name, :toolkit_slug, :toolkit_logo,
+                :auth_scheme, :expected_input_fields, :server_instance_count
+              )
+            """),
+            {
+              "id": composio_server_id,
+              "name": server_data.get("name"),
+              "auth_config_id": auth_config_id,
+              "toolkit_name": toolkit_info.get("name", toolkit_slug.title()),
+              "toolkit_slug": toolkit_slug,
+              "toolkit_logo": toolkit_info.get("meta", {}).get("logo"),
+              "auth_scheme": auth_scheme,
+              "expected_input_fields": json.dumps(toolkit_info.get("expected_input_fields", [])),
+              "server_instance_count": server_data.get("server_instance_count", 0),
+            },
+          )
+          
+          # Use the Composio server ID for tools
+          server_id = composio_server_id
+          servers_created += 1
+
+          # Step 6: Store tools in database
+          for tool_slug in tool_slugs:
+            try:
+              # Get tool details
+              tool_response = await client.get(
+                f"https://backend.composio.dev/api/v3/tools/{tool_slug}",
+                headers={"x-api-key": settings.composio_api_key},
+              )
+              
+              if tool_response.status_code == 200:
+                tool_data = tool_response.json()
+                
+                # Check if tool already exists for this server
+                existing_tool = await db.execute(
+                  text("SELECT id FROM mcp_tools WHERE slug = :slug AND mcp_server_id = :mcp_server_id"),
+                  {"slug": tool_slug, "mcp_server_id": server_id},
+                )
+
+                if not existing_tool.first():
+                  await db.execute(
+                    text("""
+                      INSERT INTO mcp_tools (mcp_server_id, name, slug, description)
+                      VALUES (:mcp_server_id, :name, :slug, :description)
+                    """),
+                    {
+                      "mcp_server_id": server_id,
+                      "name": tool_data.get("name", tool_slug),
+                      "slug": tool_slug,
+                      "description": tool_data.get("description", ""),
+                    },
+                  )
+                  tools_created += 1
+                  
+            except Exception as tool_error:
+              logger.warning(f"Failed to process tool {tool_slug}: {tool_error}")
+              continue
+
+          logger.info(f"Successfully processed toolkit {toolkit_slug}")
+
+        except Exception as toolkit_error:
+          logger.error(f"Failed to process toolkit {toolkit_slug}: {toolkit_error}")
+          continue
 
     # Commit all changes
     await db.commit()
 
-    logger.info(f"Successfully processed {servers_created} servers, {toolkits_created} toolkits, and {tools_created} tools")
+    logger.info(f"Successfully processed {servers_created} servers and {tools_created} tools")
 
   async def rollback(self, db: AsyncSession) -> None:
     """Rollback the script execution by deleting created MCP data."""
@@ -222,14 +303,8 @@ class PopulateMCPServersScript(BaseScript):
 
     # Delete in reverse order due to foreign key constraints
     # Delete tools first
-    from sqlalchemy import text
-
     tools_result = await db.execute(text("DELETE FROM mcp_tools"))
     tools_deleted = getattr(tools_result, "rowcount", 0)
-
-    # Delete toolkits
-    toolkits_result = await db.execute(text("DELETE FROM mcp_toolkits"))
-    toolkits_deleted = getattr(toolkits_result, "rowcount", 0)
 
     # Delete servers
     servers_result = await db.execute(text("DELETE FROM mcp_servers"))
@@ -237,7 +312,7 @@ class PopulateMCPServersScript(BaseScript):
 
     await db.commit()
 
-    logger.info(f"Deleted {tools_deleted} tools, {toolkits_deleted} toolkits, and {servers_deleted} servers during rollback")
+    logger.info(f"Deleted {tools_deleted} tools and {servers_deleted} servers during rollback")
 
   async def verify(self, db: AsyncSession) -> bool:
     """Verify script execution was successful."""
