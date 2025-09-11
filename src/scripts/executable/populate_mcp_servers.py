@@ -72,11 +72,11 @@ class PopulateMCPServersScript(BaseScript):
       else:
         logger.warning(f"Failed to create auth config for {toolkit_slug}: {auth_response.status_code}")
         logger.warning(f"Response: {auth_response.text}")
-        return None
+        return ""
 
     except Exception as e:
       logger.error(f"Error creating auth config for {toolkit_slug}: {e}")
-      return None
+      return ""
 
   async def fetch_non_deprecated_tools(self, client: httpx.AsyncClient, toolkit_slug: str) -> list:
     """Fetch all non-deprecated tools for a toolkit."""
@@ -148,11 +148,11 @@ class PopulateMCPServersScript(BaseScript):
       else:
         logger.error(f"Failed to create MCP server for {toolkit_slug}: {response.status_code}")
         logger.error(f"Response: {response.text}")
-        return None
+        return {}
 
     except Exception as e:
       logger.error(f"Error creating MCP server for {toolkit_slug}: {e}")
-      return None
+      return {}
 
   async def get_toolkit_info(self, client: httpx.AsyncClient, toolkit_slug: str) -> dict:
     """Get toolkit information for database storage."""
