@@ -8,7 +8,6 @@ Create Date: 2025-01-31 10:00:00.000000
 
 from datetime import datetime, timezone
 from typing import Sequence, Union
-from uuid import uuid4
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSON, UUID
@@ -36,7 +35,7 @@ def upgrade() -> None:
   # Create transaction_logs table
   op.create_table(
     "transaction_logs",
-    sa.Column("id", UUID(as_uuid=True), primary_key=True, default=uuid4),
+    sa.Column("id", UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
     sa.Column("event_id", sa.String(255), nullable=True),  # Provider's webhook event ID
     sa.Column("provider_id", UUID(as_uuid=True), sa.ForeignKey("payment_providers.id"), nullable=False),  # Reference to payment provider
     sa.Column("event_type", sa.String(100), nullable=False),  # Raw event name from provider
@@ -65,7 +64,7 @@ def upgrade() -> None:
   )
 
   # Create indexes for transaction_logs
-  op.create_unique_constraint("uq_transaction_logs_event_provider", "transaction_logs", ["event_id", "provider_id"])
+  op.create_unique_constraint("uq_transaction_logs_event_provider", "transaction_logs", ["event_id", "provider_id", "event_type"])
   op.create_index("idx_transaction_logs_provider_id", "transaction_logs", ["provider_id"])
   op.create_index("idx_transaction_logs_event_type", "transaction_logs", ["event_type"])
   op.create_index("idx_transaction_logs_status_code", "transaction_logs", ["status_code"])

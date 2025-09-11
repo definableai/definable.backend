@@ -1,11 +1,11 @@
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Dict, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-from models import BillingPlanModel
+from models import BillingPlanModel, FeatureType
 
 
 class CurrencyType(str, Enum):
@@ -16,6 +16,57 @@ class CurrencyType(str, Enum):
 class BillingCycleType(str, Enum):
   MONTHLY = "MONTHLY"
   YEARLY = "YEARLY"
+
+
+class PlanFeatureCategorySchema(BaseModel):
+  """Schema for plan feature categories."""
+
+  id: UUID
+  name: str
+  display_name: str
+  description: Optional[str] = None
+  sort_order: int
+
+  class Config:
+    from_attributes = True
+
+
+class PlanFeatureSchema(BaseModel):
+  """Schema for individual plan features."""
+
+  id: UUID
+  name: str
+  display_name: str
+  feature_type: FeatureType
+  measurement_unit: Optional[str] = None
+  description: Optional[str] = None
+  sort_order: int
+  category: PlanFeatureCategorySchema
+
+  class Config:
+    from_attributes = True
+
+
+class PlanFeatureLimitSchema(BaseModel):
+  """Schema for plan feature limits."""
+
+  id: UUID
+  is_available: bool
+  limit_value: Optional[int] = None
+  limit_metadata: Optional[Dict] = None
+  reset_period: Optional[str] = None  # Use string to avoid enum conversion issues
+  formatted_limit: str = Field(..., description="Human-readable limit representation")
+  feature: PlanFeatureSchema
+
+  class Config:
+    from_attributes = True
+
+
+class PlanFeaturesGroupedSchema(BaseModel):
+  """Schema for grouped plan features by category."""
+
+  category: PlanFeatureCategorySchema
+  features: List[PlanFeatureLimitSchema]
 
 
 class BillingPlanBaseSchema(BaseModel):
@@ -113,6 +164,11 @@ class BillingPlanResponseSchema(BillingPlanBaseSchema):
   effective_amount: float = Field(..., description="Effective amount after applying discount")
   monthly_equivalent: float = Field(..., description="Monthly equivalent amount")
 
+  # Features and settings
+  features: List[PlanFeaturesGroupedSchema] = Field(default_factory=list, description="Grouped plan features by category")
+  feature_count: int = Field(0, description="Total number of features available in this plan")
+  available_features_count: int = Field(0, description="Number of available features in this plan")
+
   class Config:
     from_attributes = True
     json_schema_extra = {
@@ -137,9 +193,100 @@ class BillingPlanResponseSchema(BillingPlanBaseSchema):
     }
 
   @classmethod
-  def from_plan(cls, plan: BillingPlanModel):
+  def from_plan(cls, plan: BillingPlanModel, include_features: bool = True, manual_features: Optional[dict] = None):
     """Convert a BillingPlanModel to BillingPlanResponseSchema."""
+    if manual_features is None:
+      manual_features = {}
     updated_at = getattr(plan, "updated_at", None) or plan.created_at
+
+    # Group features by category
+    features_grouped = []
+    feature_count = 0
+    available_features_count = 0
+
+    # Get feature limits from manual features only (to avoid lazy loading in async context)
+    feature_limits_to_use = []
+    if include_features:
+      plan_id = str(plan.id)
+      if plan_id in manual_features and manual_features[plan_id]:
+        # Use manually provided features (from join queries)
+        feature_limits_to_use = manual_features[plan_id]
+      # Note: We don't use SQLAlchemy relationship here to avoid MissingGreenlet errors
+      # All feature data should be provided via manual_features parameter
+
+    if feature_limits_to_use:
+      # Group limits by category - using simpler approach to avoid type issues
+      categories_dict = {}
+
+      for limit in feature_limits_to_use:
+        if limit.feature and limit.feature.category:
+          category = limit.feature.category
+          category_id = str(category.id)
+
+          if category_id not in categories_dict:
+            categories_dict[category_id] = {"category_obj": category, "limit_list": []}
+
+          categories_dict[category_id]["limit_list"].append(limit)
+          feature_count += 1
+          if limit.is_available:
+            available_features_count += 1
+
+      # Convert to schema format
+      for category_data in categories_dict.values():
+        category_obj = category_data["category_obj"]
+        limit_list = category_data["limit_list"]
+
+        # Convert SQLAlchemy category object to dict for Pydantic
+        category_dict = {
+          "id": category_obj.id,
+          "name": category_obj.name,
+          "display_name": category_obj.display_name,
+          "description": category_obj.description,
+          "sort_order": category_obj.sort_order,
+        }
+        category_schema = PlanFeatureCategorySchema(**category_dict)
+        feature_schemas = []
+
+        # Sort features by sort_order within category
+        sorted_limits = sorted(limit_list, key=lambda x: x.feature.sort_order)
+        for limit in sorted_limits:
+          # Convert SQLAlchemy feature object to dict for Pydantic
+          feature_dict = {
+            "id": limit.feature.id,
+            "name": limit.feature.name,
+            "display_name": limit.feature.display_name,
+            "feature_type": limit.feature.feature_type,
+            "measurement_unit": limit.feature.measurement_unit,
+            "description": limit.feature.description,
+            "sort_order": limit.feature.sort_order,
+            "category": category_schema,
+          }
+          feature_schema = PlanFeatureSchema(**feature_dict)
+
+          # Handle reset_period enum conversion safely
+          reset_period_str = None
+          if limit.reset_period:
+            # Convert enum to string, handling both enum objects and string values
+            if hasattr(limit.reset_period, "value"):
+              reset_period_str = limit.reset_period.value
+            else:
+              reset_period_str = str(limit.reset_period)
+
+          limit_schema = PlanFeatureLimitSchema(
+            id=limit.id,
+            is_available=limit.is_available,
+            limit_value=limit.limit_value,
+            limit_metadata=limit.limit_metadata,
+            reset_period=reset_period_str,
+            formatted_limit=limit.formatted_limit,
+            feature=feature_schema,
+          )
+          feature_schemas.append(limit_schema)
+
+        features_grouped.append(PlanFeaturesGroupedSchema(category=category_schema, features=feature_schemas))
+
+      # Sort categories by sort_order
+      features_grouped.sort(key=lambda x: x.category.sort_order)
 
     return cls(
       id=plan.id,
@@ -158,4 +305,7 @@ class BillingPlanResponseSchema(BillingPlanBaseSchema):
       monthly_equivalent=round(plan.monthly_equivalent, 2),
       created_at=plan.created_at,
       updated_at=updated_at,
+      features=features_grouped,
+      feature_count=feature_count,
+      available_features_count=available_features_count,
     )

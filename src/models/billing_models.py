@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from sqlalchemy import (
   JSON,
@@ -53,26 +53,43 @@ class ProcessingStatus(str, Enum):
   DUPLICATE = "duplicate"
 
 
+class FeatureType(str, Enum):
+  MODEL_ACCESS = "model_access"
+  USAGE_LIMIT = "usage_limit"
+  STORAGE_LIMIT = "storage_limit"
+  FEATURE_TOGGLE = "feature_toggle"
+  FILE_LIMIT = "file_limit"
+  TIME_LIMIT = "time_limit"
+
+
+class ResetPeriod(str, Enum):
+  DAILY = "daily"
+  MONTHLY = "monthly"
+  NEVER = "never"
+
+
 class CustomerModel(CRUD):
   """Customer accounts for payment providers."""
 
   __tablename__ = "customer"
   __table_args__ = (
-    UniqueConstraint("user_id", "payment_provider", name="uq_customer_user_provider"),
-    UniqueConstraint("customer_id", "payment_provider", name="uq_customer_external_provider"),
+    UniqueConstraint("user_id", "provider_id", name="uq_customer_user_provider"),
+    UniqueConstraint("customer_id", "provider_id", name="uq_customer_external_provider"),
   )
 
   user_id: Mapped[str] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-  payment_provider: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+  provider_id: Mapped[str] = mapped_column(UUID(as_uuid=True), ForeignKey("payment_providers.id", ondelete="RESTRICT"), nullable=False, index=True)
   customer_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
   is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False, index=True)
   provider_metadata: Mapped[Optional[Dict]] = mapped_column(JSON, nullable=True)
 
   # Relationships
   user = relationship("UserModel", lazy="select")
+  payment_provider = relationship("PaymentProviderModel", lazy="select")
 
   def __repr__(self) -> str:
-    return f"<Customer {self.user_id}@{self.payment_provider}:{self.customer_id}>"
+    provider_name = self.payment_provider.name if self.payment_provider else "Unknown"
+    return f"<Customer {self.user_id}@{provider_name}:{self.customer_id}>"
 
 
 class BillingPlanModel(CRUD):
@@ -96,6 +113,10 @@ class BillingPlanModel(CRUD):
   )
   plan_id = Column(String, nullable=True, index=True)
   updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+  # Relationships
+  subscriptions = relationship("SubscriptionModel", back_populates="plan", lazy="select")
+  feature_limits: Mapped[List["PlanFeatureLimitModel"]] = relationship("PlanFeatureLimitModel", back_populates="billing_plan", lazy="select")
 
   def __repr__(self) -> str:
     return f"<BillingPlan {self.name} {self.cycle} {self.currency}: {self.credits} credits for {self.amount}>"
@@ -164,7 +185,10 @@ class TransactionModel(CRUD):
   transaction_metadata: Mapped[Optional[Dict]] = mapped_column(JSON, nullable=True)
 
   # Payment Provider Information
-  payment_provider = Column(String(20), nullable=True)
+  payment_provider = Column(String(20), nullable=True)  # Keep for backward compatibility
+  provider_id: Mapped[Optional[str]] = mapped_column(
+    UUID(as_uuid=True), ForeignKey("payment_providers.id", ondelete="RESTRICT"), nullable=True, index=True
+  )
 
   # Payment Provider Data (consolidated into JSON)
   payment_metadata: Mapped[Optional[Dict]] = mapped_column(JSON, nullable=True)
@@ -179,6 +203,7 @@ class TransactionModel(CRUD):
   # Relationships
   user = relationship("UserModel", lazy="select")
   organization = relationship("OrganizationModel", lazy="select")
+  provider = relationship("PaymentProviderModel", lazy="select")
 
   def __repr__(self) -> str:
     return f"<Transaction {self.id}: {self.type} {self.credits} credits>"
@@ -254,7 +279,7 @@ class TransactionLogModel(CRUD):
   """Transaction logs for webhook events from payment providers."""
 
   __tablename__ = "transaction_logs"
-  __table_args__ = (UniqueConstraint("event_id", "provider_id", name="uq_transaction_logs_event_provider"),)
+  __table_args__ = (UniqueConstraint("event_id", "provider_id", "event_type", name="uq_transaction_logs_event_provider"),)
 
   event_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Provider's webhook event ID
   provider_id: Mapped[str] = mapped_column(
@@ -271,8 +296,8 @@ class TransactionLogModel(CRUD):
   customer_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Provider's customer ID
   amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)  # Amount in original currency
   currency: Mapped[Optional[str]] = mapped_column(String(3), nullable=True)  # Currency code (USD, INR, etc.)
-  processing_status: Mapped[str] = mapped_column(
-    SQLAlchemyEnum(ProcessingStatus, name="processing_status_enum", create_type=False),
+  processing_status: Mapped[ProcessingStatus] = mapped_column(
+    SQLAlchemyEnum(ProcessingStatus, name="processing_status_enum", create_type=False, values_callable=lambda obj: [e.value for e in obj]),
     nullable=False,
     default=ProcessingStatus.PENDING,
     server_default="pending",
@@ -310,11 +335,11 @@ class TransactionLogModel(CRUD):
     return self.processing_status in [ProcessingStatus.PENDING, ProcessingStatus.FAILED] and self.retry_count < 3
 
   @classmethod
-  async def get_by_event_id(cls, event_id: str, provider_id: str, session):
-    """Get transaction log by event ID and provider ID."""
+  async def get_by_event_id(cls, event_id: str, provider_id: str, event_type: str, session):
+    """Get transaction log by event ID, provider ID, and event type."""
     from sqlalchemy import select
 
-    query = select(cls).where(cls.event_id == event_id, cls.provider_id == provider_id)
+    query = select(cls).where(cls.event_id == event_id, cls.provider_id == provider_id, cls.event_type == event_type)
     result = await session.execute(query)
     return result.scalar_one_or_none()
 
@@ -326,3 +351,81 @@ class TransactionLogModel(CRUD):
     query = select(cls).join(PaymentProviderModel).where(cls.event_id == event_id, PaymentProviderModel.name == provider_name)
     result = await session.execute(query)
     return result.scalar_one_or_none()
+
+
+class PlanFeatureCategoryModel(CRUD):
+  """Categories for organizing plan features (e.g., AI Models, Storage, Limits)."""
+
+  __tablename__ = "plan_feature_categories"
+
+  name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+  display_name: Mapped[str] = mapped_column(String(100), nullable=False)
+  description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+  sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+  updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+  # Relationships
+  features: Mapped[List["PlanFeatureModel"]] = relationship("PlanFeatureModel", back_populates="category", lazy="select")
+
+  def __repr__(self) -> str:
+    return f"<PlanFeatureCategory {self.name}: {self.display_name}>"
+
+
+class PlanFeatureModel(CRUD):
+  """Individual features that can be assigned to billing plans."""
+
+  __tablename__ = "plan_features"
+
+  category_id: Mapped[str] = mapped_column(UUID(as_uuid=True), ForeignKey("plan_feature_categories.id", ondelete="CASCADE"), nullable=False)
+  name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+  display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+  feature_type: Mapped[FeatureType] = mapped_column(
+    SQLAlchemyEnum(FeatureType, name="feature_type_enum", create_type=False, values_callable=lambda obj: [e.value for e in obj]),
+    nullable=False,
+    index=True,
+  )
+  measurement_unit: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+  description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+  sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+  updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+  # Relationships
+  category: Mapped["PlanFeatureCategoryModel"] = relationship("PlanFeatureCategoryModel", back_populates="features", lazy="select")
+  limits: Mapped[List["PlanFeatureLimitModel"]] = relationship("PlanFeatureLimitModel", back_populates="feature", lazy="select")
+
+  def __repr__(self) -> str:
+    return f"<PlanFeature {self.name}: {self.display_name} ({self.feature_type.value})>"
+
+
+class PlanFeatureLimitModel(CRUD):
+  """Specific feature limits and availability for each billing plan."""
+
+  __tablename__ = "plan_feature_limits"
+  __table_args__ = (UniqueConstraint("billing_plan_id", "feature_id", name="uq_plan_feature_limits_plan_feature"),)
+
+  billing_plan_id: Mapped[str] = mapped_column(UUID(as_uuid=True), ForeignKey("billing_plans.id", ondelete="CASCADE"), nullable=False)
+  feature_id: Mapped[str] = mapped_column(UUID(as_uuid=True), ForeignKey("plan_features.id", ondelete="CASCADE"), nullable=False)
+  is_available: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+  limit_value: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+  limit_metadata: Mapped[Optional[Dict]] = mapped_column(JSON, nullable=True)
+  reset_period: Mapped[Optional[ResetPeriod]] = mapped_column(
+    SQLAlchemyEnum(ResetPeriod, name="reset_period_enum", create_type=False, values_callable=lambda obj: [e.value for e in obj]), nullable=True
+  )
+  updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+  # Relationships
+  billing_plan: Mapped["BillingPlanModel"] = relationship("BillingPlanModel", back_populates="feature_limits", lazy="select")
+  feature: Mapped["PlanFeatureModel"] = relationship("PlanFeatureModel", back_populates="limits", lazy="select")
+
+  def __repr__(self) -> str:
+    return f"<PlanFeatureLimit {self.billing_plan.name if self.billing_plan else 'Unknown'}:{self.feature.name if self.feature else 'Unknown'} available={self.is_available}>"  # noqa: E501
+
+  @property
+  def formatted_limit(self) -> str:
+    """Get a human-readable representation of the limit."""
+    if not self.is_available:
+      return "Not Available"
+    if self.limit_value is None:
+      return "Unlimited"
+    unit = self.feature.measurement_unit if self.feature else ""
+    return f"{self.limit_value:,}{' ' + unit if unit else ''}"

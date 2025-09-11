@@ -19,6 +19,7 @@ from libs.payments.razorpay.v1 import razorpay_engine
 from models import (
   BillingPlanModel,
   CustomerModel,
+  OrganizationMemberModel,
   PaymentProviderModel,
   ProcessingStatus,
   SubscriptionModel,
@@ -62,21 +63,21 @@ class BillingService:
   # Webhook event to status code mapping
   WEBHOOK_STATUS_MAPPING = {
     # Payment events
-    RazorpayWebhookEvent.PAYMENT_AUTHORIZED: "DFP001",
-    RazorpayWebhookEvent.PAYMENT_CAPTURED: "DFP002",
-    RazorpayWebhookEvent.PAYMENT_FAILED: "DFP100",
+    RazorpayWebhookEvent.PAYMENT_AUTHORIZED: "DFP001",  # payment authenticated
+    RazorpayWebhookEvent.PAYMENT_CAPTURED: "DFP002",  # payment captured
+    RazorpayWebhookEvent.PAYMENT_FAILED: "DFP100",  # payment error
     # Order events
-    RazorpayWebhookEvent.ORDER_PAID: "DFO001",
+    RazorpayWebhookEvent.ORDER_PAID: "DFO001",  # order paid
     # Invoice events
-    RazorpayWebhookEvent.INVOICE_PAID: "DFI001",
+    RazorpayWebhookEvent.INVOICE_PAID: "DFI001",  # invoice paid
     # Subscription events
-    RazorpayWebhookEvent.SUBSCRIPTION_CHARGED: "DFS001",
-    RazorpayWebhookEvent.SUBSCRIPTION_ACTIVATED: "DFS002",
-    RazorpayWebhookEvent.SUBSCRIPTION_AUTHENTICATED: "DFS003",
-    RazorpayWebhookEvent.SUBSCRIPTION_PAUSED: "DFS004",
-    RazorpayWebhookEvent.SUBSCRIPTION_RESUMED: "DFS005",
-    RazorpayWebhookEvent.SUBSCRIPTION_CANCELLED: "DFS006",
-    RazorpayWebhookEvent.SUBSCRIPTION_PENDING: "DFS200",
+    RazorpayWebhookEvent.SUBSCRIPTION_CHARGED: "DFS001",  # subscription charged
+    RazorpayWebhookEvent.SUBSCRIPTION_ACTIVATED: "DFS002",  # subscription activated
+    RazorpayWebhookEvent.SUBSCRIPTION_AUTHENTICATED: "DFS003",  # subscription authenticated
+    RazorpayWebhookEvent.SUBSCRIPTION_PAUSED: "DFS004",  # subscription paused
+    RazorpayWebhookEvent.SUBSCRIPTION_RESUMED: "DFS005",  # subscription resumed
+    RazorpayWebhookEvent.SUBSCRIPTION_CANCELLED: "DFS006",  # subscription cancelled
+    RazorpayWebhookEvent.SUBSCRIPTION_PENDING: "DFS200",  # subscription pending
   }
 
   def __init__(self, acquire: Acquire):
@@ -100,6 +101,13 @@ class BillingService:
     if not razorpay_provider:
       self.logger.error("Razorpay payment provider not found in database")
       raise ValueError("Razorpay payment provider not found")
+
+    # Check if transaction log already exists for this event and provider
+    if event_id:
+      existing_log = await TransactionLogModel.get_by_event_id(event_id, razorpay_provider.id, webhook_event.value, session)
+      if existing_log:
+        self.logger.info(f"Transaction log already exists for event {event_id}, returning existing log {existing_log.id}")
+        return existing_log
 
     # Map webhook event to status code
     status_code = self.WEBHOOK_STATUS_MAPPING.get(webhook_event)
@@ -188,12 +196,28 @@ class BillingService:
       signature=signature,
     )
 
-    session.add(transaction_log)
-    await session.commit()
-    await session.refresh(transaction_log)
+    try:
+      session.add(transaction_log)
+      await session.commit()
+      await session.refresh(transaction_log)
 
-    self.logger.info(f"Created transaction log {transaction_log.id} for {webhook_event.value} event {event_id}")
-    return transaction_log
+      self.logger.info(f"Created transaction log {transaction_log.id} for {webhook_event.value} event {event_id}")
+      return transaction_log
+    except Exception as e:
+      # Handle constraint violations (e.g., duplicate entries) gracefully
+      await session.rollback()
+
+      # If it's a duplicate entry error, try to fetch the existing log
+      if "duplicate key" in str(e).lower() or "unique constraint" in str(e).lower():
+        if event_id:
+          existing_log = await TransactionLogModel.get_by_event_id(event_id, razorpay_provider.id, webhook_event.value, session)
+          if existing_log:
+            self.logger.info(f"Duplicate transaction log detected, returning existing log {existing_log.id} for event {event_id}")
+            return existing_log
+
+      # Re-raise if we can't handle it
+      self.logger.error(f"Failed to create transaction log for event {event_id}: {str(e)}")
+      raise
 
   async def _update_transaction_log_status(
     self, transaction_log: TransactionLogModel, status: ProcessingStatus, error_message: Optional[str] = None, session: Optional[AsyncSession] = None
@@ -1158,7 +1182,12 @@ class BillingService:
       )
     except Exception as e:
       self.logger.error(f"Failed to create transaction log: {str(e)}")
-      # Continue processing even if logging fails
+      transaction_log = None
+      # Continue processing even if logging fails, but ensure session is still usable
+      try:
+        await session.rollback()
+      except Exception as rollback_error:
+        self.logger.error(f"Failed to rollback session after transaction log error: {str(rollback_error)}")
 
     # Route to appropriate handler based on event type
     result = {"status": "success", "message": "Webhook received"}
@@ -1170,6 +1199,9 @@ class BillingService:
 
       elif webhook_event == RazorpayWebhookEvent.PAYMENT_CAPTURED:
         result = await self._handle_payment_captured(payload, session, transaction_log)
+
+      elif webhook_event == RazorpayWebhookEvent.PAYMENT_FAILED:
+        result = await self._handle_payment_failed(payload, session, transaction_log)
 
       elif webhook_event in [
         RazorpayWebhookEvent.SUBSCRIPTION_ACTIVATED,
@@ -1300,58 +1332,227 @@ class BillingService:
     payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
     payment_id = payment_entity.get("id")
     invoice_id = payment_entity.get("invoice_id")
+    subscription_id = payment_entity.get("subscription_id")
 
     if not payment_id:
       self.logger.error("Missing payment_id in payment.captured webhook payload")
       return {"status": "error", "message": "Missing payment_id"}
 
-    self.logger.info(f"Processing payment.captured webhook: payment_id={payment_id}, invoice_id={invoice_id}")
+    self.logger.info(f"Processing payment.captured webhook: payment_id={payment_id}, invoice_id={invoice_id}, subscription_id={subscription_id}")
 
+    transaction = None
+
+    # First try to find transaction by subscription_id (for subscription payments)
+    if subscription_id:
+      self.logger.info(f"Looking for transaction by subscription_id: {subscription_id}")
+      query = (
+        select(TransactionModel)
+        .where(
+          text("payment_metadata->>'subscription_id' = :subscription_id"),
+          TransactionModel.payment_provider == "razorpay",
+          TransactionModel.status == TransactionStatus.PENDING,
+        )
+        .order_by(TransactionModel.created_at.desc())
+      )
+      result = await session.execute(query, {"subscription_id": subscription_id})
+      transaction = result.scalar_one_or_none()
+
+      if transaction:
+        self.logger.info(f"Found pending subscription transaction: {transaction.id}")
+
+    # If no subscription transaction found, try by invoice_id (for regular payments)
+    if not transaction and invoice_id:
+      self.logger.info(f"Looking for transaction by invoice_id: {invoice_id}")
+      query = (
+        select(TransactionModel)
+        .where(
+          text("payment_metadata->>'invoice_id' = :invoice_id"),
+          TransactionModel.payment_provider == "razorpay",
+          TransactionModel.status == TransactionStatus.PENDING,
+        )
+        .order_by(TransactionModel.created_at.desc())
+      )
+      result = await session.execute(query, {"invoice_id": invoice_id})
+      transaction = result.scalar_one_or_none()
+
+    if not transaction:
+      self.logger.warning(f"No pending transaction found for payment_id: {payment_id}")
+      # Check if there's already a completed transaction
+      if subscription_id:
+        completed_query = select(TransactionModel).where(
+          text("payment_metadata->>'subscription_id' = :subscription_id"),
+          TransactionModel.payment_provider == "razorpay",
+          TransactionModel.status == TransactionStatus.COMPLETED,
+        )
+        completed_result = await session.execute(completed_query, {"subscription_id": subscription_id})
+        completed_transaction = completed_result.scalar_one_or_none()
+
+        if completed_transaction:
+          self.logger.info(f"Subscription payment already processed: {completed_transaction.id}")
+          return {"status": "success", "message": "Subscription payment already processed"}
+
+      # If no transaction found at all, log and return success
+      self.logger.info(f"No transaction found for payment_id: {payment_id}")
+      return {"status": "success", "message": "Payment captured event received but no transaction found"}
+
+    # Found pending transaction - mark it as completed
+    self.logger.info(f"Processing payment.captured for transaction: {transaction.id}")
+
+    # Update transaction status to COMPLETED
+    transaction.status = TransactionStatus.COMPLETED
+
+    # Update payment metadata with captured payment details
+    if not transaction.payment_metadata:
+      transaction.payment_metadata = {}
+
+    transaction.payment_metadata.update({
+      "payment_id": payment_id,
+      "captured_at": datetime.utcnow().isoformat(),
+      "payment_status": "captured",
+    })
+
+    # Update transaction metadata
+    if not transaction.transaction_metadata:
+      transaction.transaction_metadata = {}
+
+    transaction.transaction_metadata.update({
+      "payment_captured": True,
+      "webhook_event": "payment.captured",
+      "processed_at": datetime.utcnow().isoformat(),
+    })
+
+    # Add credits to the organization wallet
+    await self._add_credits(
+      transaction.user_id, transaction.organization_id, transaction.credits, f"Payment captured - {transaction.description}", session
+    )
+
+    # If this is a subscription transaction, also activate the subscription
+    if subscription_id and "db_subscription_id" in transaction.payment_metadata:
+      try:
+        subscription_query = select(SubscriptionModel).where(SubscriptionModel.id == transaction.payment_metadata["db_subscription_id"])
+        sub_result = await session.execute(subscription_query)
+        db_subscription = sub_result.scalar_one_or_none()
+
+        if db_subscription and not db_subscription.is_active:
+          db_subscription.is_active = True
+          self.logger.info(f"Activated subscription: {db_subscription.id}")
+
+      except Exception as e:
+        self.logger.error(f"Failed to activate subscription: {str(e)}")
+        # Don't fail the webhook processing for subscription activation errors
+
+    await session.commit()
+    self.logger.info(f"Successfully processed payment.captured: {payment_id}, added {transaction.credits} credits")
+
+    return {
+      "status": "success",
+      "message": "Payment captured and processed successfully",
+      "data": {
+        "transaction_id": str(transaction.id),
+        "payment_id": payment_id,
+        "credits_added": transaction.credits,
+      },
+    }
+
+  async def _handle_payment_failed(
+    self, payload: Dict[str, Any], session: AsyncSession, transaction_log: Optional[TransactionLogModel] = None
+  ) -> Dict[str, Any]:
+    """Handle payment.failed webhook events."""
+    payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+    payment_id = payment_entity.get("id")
+    invoice_id = payment_entity.get("invoice_id")
+
+    if not payment_id:
+      self.logger.error("Missing payment_id in payment.failed webhook payload")
+      return {"status": "error", "message": "Missing payment_id"}
+
+    # Extract error details from the payment
+    error_code = payment_entity.get("error_code")
+    error_description = payment_entity.get("error_description")
+    error_source = payment_entity.get("error_source")
+    error_step = payment_entity.get("error_step")
+    error_reason = payment_entity.get("error_reason")
+    payment_status = payment_entity.get("status")
+
+    self.logger.info(f"Processing payment.failed webhook: payment_id={payment_id}, invoice_id={invoice_id}, error={error_code}")
+
+    # Try to find the transaction by invoice_id if available
+    transaction = None
     if invoice_id:
-      # Find transaction by invoice_id
       query = (
         select(TransactionModel)
         .where(text("payment_metadata->>'invoice_id' = :invoice_id"), TransactionModel.payment_provider == "razorpay")
         .params(invoice_id=invoice_id)
       )
-
       result = await session.execute(query)
       transaction = result.scalar_one_or_none()
 
-      # If found, process it
-      if transaction and transaction.status != TransactionStatus.COMPLETED:
-        self.logger.info(f"Processing payment.captured for invoice: {invoice_id}")
-        transaction.status = TransactionStatus.COMPLETED
-
-        # Update payment metadata with payment ID
-        if not transaction.payment_metadata:
-          transaction.payment_metadata = {}
-        transaction.payment_metadata.update({
-          "payment_id": payment_id,
-        })
-
-        if not transaction.transaction_metadata:
-          transaction.transaction_metadata = {}
-
-        transaction.transaction_metadata.update({
-          "payment_status": "captured",
-          "webhook_event": "payment.captured",
-          "processed_at": datetime.utcnow().isoformat(),
-        })
-
-        # Only add credits if status is changing to COMPLETED
-        await self._add_credits(
-          transaction.user_id, transaction.organization_id, transaction.credits, f"Purchase of {transaction.credits} credits via Razorpay", session
+    # If not found by invoice_id, try to find by customer_id and pending status (for recent transactions)
+    if not transaction:
+      customer_id = payment_entity.get("customer_id")
+      if customer_id:
+        # Look for recent pending transactions for this customer
+        query = (
+          select(TransactionModel)
+          .where(
+            text("payment_metadata->>'customer_id' = :customer_id"),
+            TransactionModel.payment_provider == "razorpay",
+            TransactionModel.status == TransactionStatus.PENDING,
+          )
+          .order_by(TransactionModel.created_at.desc())
+          .limit(1)
+          .params(customer_id=customer_id)
         )
+        result = await session.execute(query)
+        transaction = result.scalar_one_or_none()
 
-        await session.commit()
-        self.logger.info(f"Successfully processed Razorpay payment: {payment_id} for invoice: {invoice_id}")
+    if transaction:
+      self.logger.info(f"Found transaction {transaction.id} for failed payment {payment_id}")
 
-        return {"status": "success", "message": "Payment processed successfully"}
+      # Update transaction status to FAILED
+      transaction.status = TransactionStatus.FAILED
 
-    # If no invoice_id or transaction found, just log and return success
-    self.logger.info(f"No transaction found for payment_id: {payment_id}")
-    return {"status": "success", "message": "Payment captured event received but no transaction found"}
+      # Update payment metadata with error details
+      if not transaction.payment_metadata:
+        transaction.payment_metadata = {}
+
+      transaction.payment_metadata.update({
+        "payment_id": payment_id,
+        "payment_status": payment_status,
+        "failed_at": datetime.utcnow().isoformat(),
+      })
+
+      # Update transaction metadata with detailed error information
+      if not transaction.transaction_metadata:
+        transaction.transaction_metadata = {}
+
+      transaction.transaction_metadata.update({
+        "payment_failed": True,
+        "error_code": error_code,
+        "error_description": error_description,
+        "error_source": error_source,
+        "error_step": error_step,
+        "error_reason": error_reason,
+        "webhook_event": "payment.failed",
+        "processed_at": datetime.utcnow().isoformat(),
+      })
+
+      # Update transaction log with user info if available
+      if transaction_log and transaction:
+        transaction_log.user_id = transaction.user_id
+        transaction_log.organization_id = transaction.organization_id
+
+      await session.commit()
+      self.logger.info(f"Updated transaction {transaction.id} status to FAILED due to payment failure")
+
+      return {
+        "status": "success",
+        "message": "Payment failure processed successfully",
+        "data": {"transaction_id": str(transaction.id), "payment_id": payment_id, "error_code": error_code, "error_description": error_description},
+      }
+    else:
+      self.logger.warning(f"No transaction found for failed payment: {payment_id}")
+      return {"status": "success", "message": "Payment failed event received but no matching transaction found"}
 
   async def _handle_subscription_event(
     self, webhook_event: RazorpayWebhookEvent, payload: Dict[str, Any], session: AsyncSession, transaction_log: Optional[TransactionLogModel] = None
@@ -1479,15 +1680,60 @@ class BillingService:
     # Handle subscription.charged event - this is where we add credits
     if webhook_event == RazorpayWebhookEvent.SUBSCRIPTION_CHARGED and payment_id and payment_amount:
       try:
+        # Get Razorpay payment provider
+        razorpay_provider = await PaymentProviderModel.get_by_name("razorpay", session)
+        if not razorpay_provider:
+          self.logger.error("Razorpay payment provider not found in database")
+          return {"status": "error", "message": "Payment provider not found"}
+
         # Find customer in our database
         customer_query = select(CustomerModel).where(
-          CustomerModel.customer_id == customer_id, CustomerModel.payment_provider == "razorpay", CustomerModel.is_active
+          CustomerModel.customer_id == customer_id, CustomerModel.provider_id == razorpay_provider.id, CustomerModel.is_active
         )
         customer_result = await session.execute(customer_query)
         customer = customer_result.scalar_one_or_none()
 
         if not customer:
-          self.logger.error(f"Customer not found for customer_id: {customer_id}")
+          self.logger.warning(f"Customer not found for customer_id: {customer_id}, attempting to find by subscription_id: {subscription_id}")
+
+          # Try to find customer by subscription_id in our subscription records
+          subscription_query = select(SubscriptionModel).where(SubscriptionModel.subscription_id == subscription_id, SubscriptionModel.is_active)
+          subscription_result = await session.execute(subscription_query)
+          subscription_record = subscription_result.scalar_one_or_none()
+
+          if subscription_record:
+            # Found subscription, now get the associated customer
+            customer_by_user_query = select(CustomerModel).where(
+              CustomerModel.user_id == subscription_record.user_id, CustomerModel.provider_id == razorpay_provider.id, CustomerModel.is_active
+            )
+            customer_by_user_result = await session.execute(customer_by_user_query)
+            customer = customer_by_user_result.scalar_one_or_none()
+
+            if customer:
+              # Update customer record with new customer_id from Razorpay
+              old_customer_id = customer.customer_id
+              customer.customer_id = customer_id
+
+              # Update provider metadata if it exists
+              if customer.provider_metadata:
+                customer.provider_metadata["previous_customer_id"] = old_customer_id
+                customer.provider_metadata["customer_id_updated_at"] = datetime.utcnow().isoformat()
+              else:
+                customer.provider_metadata = {"previous_customer_id": old_customer_id, "customer_id_updated_at": datetime.utcnow().isoformat()}
+
+              await session.commit()
+              await session.refresh(customer)
+
+              self.logger.info(f"Updated customer {customer.id} customer_id from {old_customer_id} to {customer_id}")
+            else:
+              self.logger.error(f"No customer record found for subscription {subscription_id} and user {subscription_record.user_id}")
+              return {"status": "error", "message": "Customer record not found for subscription"}
+          else:
+            self.logger.error(f"No subscription record found for subscription_id: {subscription_id}")
+            return {"status": "error", "message": "Subscription not found in database"}
+
+        if not customer:
+          self.logger.error(f"Unable to resolve customer for customer_id: {customer_id}")
           return {"status": "error", "message": "Customer not found"}
 
         # Convert amount from paise to rupees
@@ -1506,7 +1752,6 @@ class BillingService:
           return {"status": "error", "message": "User not found"}
 
         # Get user's organizations
-        from models import OrganizationMemberModel
 
         org_member_query = select(OrganizationMemberModel).where(OrganizationMemberModel.user_id == user.id)
         org_member_result = await session.execute(org_member_query)
@@ -1601,9 +1846,15 @@ class BillingService:
     if not session:
       raise ValueError("No database session available")
 
+    # Get Razorpay payment provider
+    razorpay_provider = await PaymentProviderModel.get_by_name("razorpay", session)
+    if not razorpay_provider:
+      self.logger.error("Razorpay payment provider not found in database")
+      raise ValueError("Razorpay payment provider not found")
+
     # Check if customer exists in our customer table for this user
     customer_query = select(CustomerModel).where(
-      CustomerModel.user_id == user_id, CustomerModel.payment_provider == "razorpay", CustomerModel.is_active
+      CustomerModel.user_id == user_id, CustomerModel.provider_id == razorpay_provider.id, CustomerModel.is_active
     )
     customer_result = await session.execute(customer_query)
     existing_customer = customer_result.scalar_one_or_none()
@@ -1624,7 +1875,7 @@ class BillingService:
 
       # Check if this Razorpay customer is already in our database (possibly with different user)
       existing_razorpay_customer_query = select(CustomerModel).where(
-        CustomerModel.customer_id == razorpay_customer_id, CustomerModel.payment_provider == "razorpay", CustomerModel.is_active
+        CustomerModel.customer_id == razorpay_customer_id, CustomerModel.provider_id == razorpay_provider.id, CustomerModel.is_active
       )
       existing_razorpay_result = await session.execute(existing_razorpay_customer_query)
       existing_razorpay_customer = existing_razorpay_result.scalar_one_or_none()
@@ -1663,7 +1914,7 @@ class BillingService:
 
     # Only create database record if it doesn't exist yet
     check_existing_query = select(CustomerModel).where(
-      CustomerModel.customer_id == razorpay_customer_id, CustomerModel.payment_provider == "razorpay", CustomerModel.is_active
+      CustomerModel.customer_id == razorpay_customer_id, CustomerModel.provider_id == razorpay_provider.id, CustomerModel.is_active
     )
     check_result = await session.execute(check_existing_query)
     existing_record = check_result.scalar_one_or_none()
@@ -1673,7 +1924,7 @@ class BillingService:
       new_customer = CustomerModel(
         id=uuid4(),
         user_id=user_id,
-        payment_provider="razorpay",
+        provider_id=razorpay_provider.id,
         customer_id=razorpay_customer_id,
         is_active=True,
         provider_metadata={"email": email, "name": name},
