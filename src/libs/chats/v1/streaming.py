@@ -101,7 +101,7 @@ class LLMFactory:
       num_history_runs=memory_size,
       instructions=prompt,
     )
-    async for token in agent.arun(message, files=files or None, images=images or None):
+    async for token in agent.arun(message, files=files or None, images=images or None, stream=True):
       yield token
 
   async def image_chat(
@@ -168,7 +168,7 @@ class LLMFactory:
       ),
     )
 
-    async for token in agent.arun(message, files=files or None, images=images or None):
+    async for token in agent.arun(message, files=files or None, images=images or None, stream=True):
       yield token
 
 

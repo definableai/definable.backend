@@ -112,7 +112,7 @@ class MCPPlaygroundFactory:
       )
 
       # Stream the response
-      async for token in agent.arun(message):
+      async for token in agent.arun(message, stream=True):
         yield token
 
     finally:

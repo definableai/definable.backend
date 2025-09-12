@@ -131,7 +131,7 @@ class IntentAnalysisService:
       response = await agent.arun(message)
 
       # Extract the intent from response
-      intent_text = response.content.strip().lower()
+      intent_text = (response.content or "").strip().lower()
 
       self.logger.debug(f"Intent analysis for message '{message[:50]}...': {intent_text}")
 
@@ -197,7 +197,7 @@ normal_chat
         analysis_message = f"Context: {recent_context}\n\nCurrent message: {message}"
 
       response = await agent.arun(analysis_message)
-      lines = response.content.strip().split("\n")
+      lines = (response.content or "").strip().split("\n")
 
       intent_text = lines[0].strip().lower()
       confidence = float(lines[1]) if len(lines) > 1 and lines[1].replace(".", "").isdigit() else 0.8

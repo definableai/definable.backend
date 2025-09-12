@@ -8,7 +8,7 @@ from config.settings import settings
 
 def map_model_to_deepseek(model_name: str) -> str:
   """Maps the generic model names to DeepSeek model IDs."""
-  model_mapping = {"chat": "deepseek-chat", "reason": "deepseek-reason"}
+  model_mapping = {"chat": "deepseek-chat", "reason": "deepseek-reasoner"}
   return model_mapping.get(model_name, "deepseek-chat")
 
 
@@ -57,15 +57,12 @@ The prompt should be clear, engaging, and directly related to the text."""
 
   extended_prompt = f"{user_prompt}\n\n{extension_prompt}"
 
-  # Get the async iterator from the agent's run method
-  run_response = await temp_agent.arun(extended_prompt, stream=True)
-
   # Buffer to accumulate tokens
   buffer = []
   buffer_size = settings.prompt_buffer_size  # Adjust this number to control chunk size
 
-  # Now we can use async for on the iterator
-  async for token in run_response:
+  # Get the async iterator from the agent's run method and iterate directly
+  async for token in temp_agent.arun(extended_prompt, stream=True):
     buffer.append(token.content)
 
     # When buffer reaches the target size, yield the content and reset

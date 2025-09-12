@@ -21,7 +21,8 @@ class ToolGenerator:
     toolkit_code = await self.agent.arun(prompt, stream=False)
 
     # remove ```python and ``` from the code
-    return toolkit_code.content.replace("```python", "").replace("```", "")
+    content = toolkit_code.content or ""
+    return content.replace("```python", "").replace("```", "")
 
   def _create_prompt(self, tool_json: Dict[str, Any]) -> str:
     """Create a prompt for the agent to generate the toolkit code."""

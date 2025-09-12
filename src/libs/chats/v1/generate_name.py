@@ -37,7 +37,7 @@ async def generate_chat_name(user_message: str) -> str:
 
     # Run the agent to generate a chat name
     response = await agent.arun(short_message)
-    clean_title = response.content.strip()
+    clean_title = (response.content or "").strip()
 
     # Extract only the title if there's any extra text
     # Pattern to match: text that looks like a title (capitalized words)
