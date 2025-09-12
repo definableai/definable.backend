@@ -9,7 +9,7 @@ from config.settings import settings
 
 class ToolGenerator:
   def __init__(self):
-    self.agent = Agent(model=Claude(id="claude-3-7-sonnet-latest", api_key=settings.anthropic_api_key), show_tool_calls=True, markdown=True)
+    self.agent = Agent(model=Claude(id="claude-3-7-sonnet-latest", api_key=settings.anthropic_api_key), stream_intermediate_steps=True, markdown=True)
 
   async def generate_toolkit_from_json(self, tool_json: Dict[str, Any]) -> str:
     """Generate an Agno toolkit from a JSON file using the Claude 3.7 model."""
