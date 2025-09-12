@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 
 from fastapi import Depends, HTTPException
@@ -305,89 +305,91 @@ class BillingPlansService:
     self.logger.info(f"Deleted billing plan: {plan_name} ({plan.cycle} {plan.currency}) - ID: {plan_id}")
     return {"message": f"Billing plan '{plan_name}' ({plan.cycle} {plan.currency}) deleted successfully"}
 
-### PRIVATE METHODS ###
+  ### PRIVATE METHODS ###
 
   async def _fetch_plan_features(self, plan_ids: list[UUID], session: AsyncSession) -> dict[str, list]:
-      """Fetch plan features separately and return as a dict mapped by plan_id.
+    """Fetch plan features separately and return as a dict mapped by plan_id.
 
-      Features are determined by plan tier (name) and currency, independent of billing cycle.
-      Since the populate script only creates features for MONTHLY plans, we use the monthly
-      plan as the canonical source for feature definitions.
-      """
-      if not plan_ids:
-        return {}
+    Features are determined by plan tier (name) and currency, independent of billing cycle.
+    Since the populate script only creates features for MONTHLY plans, we use the monthly
+    plan as the canonical source for feature definitions.
+    """
+    if not plan_ids:
+      return {}
 
-      # Get the plans to determine their names and currencies
-      plans_query = select(BillingPlanModel).where(BillingPlanModel.id.in_(plan_ids))
-      plans_result = await session.execute(plans_query)
-      plans = plans_result.scalars().all()
+    # Get the plans to determine their names and currencies
+    plans_query = select(BillingPlanModel).where(BillingPlanModel.id.in_(plan_ids))
+    plans_result = await session.execute(plans_query)
+    plans = plans_result.scalars().all()
 
-      # Get all unique plan tiers (name + currency combinations)
-      plan_tiers = set()
-      plan_tier_mapping = {}  # original_plan_id -> (name, currency)
+    # Get all unique plan tiers (name + currency combinations)
+    plan_tiers = set()
+    plan_tier_mapping: Dict[str, Tuple[Any, Any]] = {}  # original_plan_id -> (name, currency)
 
-      for plan in plans:
-        tier = (plan.name, plan.currency)
-        plan_tiers.add(tier)
-        plan_tier_mapping[str(plan.id)] = tier
+    for plan in plans:
+      tier = (plan.name, plan.currency)
+      plan_tiers.add(tier)
+      plan_tier_mapping[str(plan.id)] = tier
 
-      if not plan_tiers:
-        return {str(plan_id): [] for plan_id in plan_ids}
+    if not plan_tiers:
+      return {str(plan_id): [] for plan_id in plan_ids}
 
-      # Find the monthly plans that represent each tier (canonical feature source)
-      tier_to_monthly_plan = {}
-      for name, currency in plan_tiers:
-        monthly_query = select(BillingPlanModel).where(
-          BillingPlanModel.name == name, BillingPlanModel.currency == currency, BillingPlanModel.cycle == "MONTHLY"
-        )
-        monthly_result = await session.execute(monthly_query)
-        monthly_plan = monthly_result.scalar_one_or_none()
-
-        if monthly_plan:
-          tier_to_monthly_plan[(name, currency)] = monthly_plan.id
-
-      monthly_plan_ids = list(tier_to_monthly_plan.values())
-
-      if not monthly_plan_ids:
-        return {str(plan_id): [] for plan_id in plan_ids}
-
-      # Fetch features from the canonical monthly plans
-      features_query = (
-        select(PlanFeatureLimitModel, PlanFeatureModel, PlanFeatureCategoryModel)
-        .join(PlanFeatureModel, PlanFeatureLimitModel.feature_id == PlanFeatureModel.id)
-        .join(PlanFeatureCategoryModel, PlanFeatureModel.category_id == PlanFeatureCategoryModel.id)
-        .where(PlanFeatureLimitModel.billing_plan_id.in_(monthly_plan_ids))
-        .order_by(PlanFeatureCategoryModel.sort_order, PlanFeatureModel.sort_order)
+    # Find the monthly plans that represent each tier (canonical feature source)
+    tier_to_monthly_plan = {}
+    for name, currency in plan_tiers:
+      monthly_query = select(BillingPlanModel).where(
+        BillingPlanModel.name == name, BillingPlanModel.currency == currency, BillingPlanModel.cycle == "MONTHLY"
       )
+      monthly_result = await session.execute(monthly_query)
+      monthly_plan = monthly_result.scalar_one_or_none()
 
-      features_result = await session.execute(features_query)
-      feature_rows = features_result.fetchall()
+      if monthly_plan:
+        tier_to_monthly_plan[(name, currency)] = monthly_plan.id
 
-      # Group features by tier
-      tier_features = {}
-      for limit, feature, category in feature_rows:
-        monthly_plan_id = limit.billing_plan_id
+    monthly_plan_ids = list(tier_to_monthly_plan.values())
 
-        # Find which tier this monthly plan represents
-        for tier, plan_id in tier_to_monthly_plan.items():
-          if plan_id == monthly_plan_id:
-            if tier not in tier_features:
-              tier_features[tier] = []
+    if not monthly_plan_ids:
+      return {str(plan_id): [] for plan_id in plan_ids}
 
-            # Manually attach the feature and category to the limit
-            limit.feature = feature
-            feature.category = category
-            tier_features[tier].append(limit)
-            break
+    # Fetch features from the canonical monthly plans
+    features_query = (
+      select(PlanFeatureLimitModel, PlanFeatureModel, PlanFeatureCategoryModel)
+      .join(PlanFeatureModel, PlanFeatureLimitModel.feature_id == PlanFeatureModel.id)
+      .join(PlanFeatureCategoryModel, PlanFeatureModel.category_id == PlanFeatureCategoryModel.id)
+      .where(PlanFeatureLimitModel.billing_plan_id.in_(monthly_plan_ids))
+      .order_by(PlanFeatureCategoryModel.sort_order, PlanFeatureModel.sort_order)
+    )
 
-      # Map tier features back to all original plans of that tier
-      plans_features_dict: dict[str, list] = {}
-      for plan_id in plan_ids:
-        plan_id_str = str(plan_id)
-        tier = plan_tier_mapping.get(plan_id_str)
-        if tier and tier in tier_features:
-          plans_features_dict[plan_id_str] = tier_features[tier]
-        else:
-          plans_features_dict[plan_id_str] = []
+    features_result = await session.execute(features_query)
+    feature_rows = features_result.fetchall()
 
-      return plans_features_dict
+    # Group features by tier (using string keys for tuple tiers)
+    tier_features: Dict[str, List[PlanFeatureLimitModel]] = {}
+    for limit, feature, category in feature_rows:
+      monthly_plan_id = limit.billing_plan_id
+
+      # Find which tier this monthly plan represents
+      for monthly_tier_tuple, plan_id in tier_to_monthly_plan.items():
+        if plan_id == monthly_plan_id:
+          tier_key = f"{monthly_tier_tuple[0]}_{monthly_tier_tuple[1]}"  # Convert tuple to string key
+          if tier_key not in tier_features:
+            tier_features[tier_key] = []
+
+          # Manually attach the feature and category to the limit
+          limit.feature = feature
+          feature.category = category
+          tier_features[tier_key].append(limit)
+          break
+
+    # Map tier features back to all original plans of that tier
+    plans_features_dict: Dict[str, List[PlanFeatureLimitModel]] = {}
+    for plan_id in plan_ids:
+      plan_id_str = str(plan_id)
+      tier_tuple: Optional[Tuple[Any, Any]] = plan_tier_mapping.get(plan_id_str)
+      if tier_tuple is not None:
+        tier_key = f"{tier_tuple[0]}_{tier_tuple[1]}"  # Convert tuple to string key
+        plans_features_dict[plan_id_str] = tier_features.get(tier_key, [])
+      else:
+        plans_features_dict[plan_id_str] = []
+
+    return plans_features_dict
