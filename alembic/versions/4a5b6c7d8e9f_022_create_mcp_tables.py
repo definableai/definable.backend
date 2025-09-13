@@ -20,29 +20,21 @@ depends_on: str | None = None
 
 def upgrade():
   op.create_table(
-    "mcp_toolkits",
-    sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
-    sa.Column("name", sa.String(), nullable=False),
-    sa.Column("slug", sa.String(), nullable=False),
-    sa.Column("logo", sa.String(), nullable=True),
-    sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP")),
-  )
-
-  op.create_unique_constraint("uq_mcp_toolkits_name", "mcp_toolkits", ["name"])
-  op.create_unique_constraint("uq_mcp_toolkits_slug", "mcp_toolkits", ["slug"])
-
-  op.create_table(
     "mcp_servers",
     sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
     sa.Column("name", sa.String(), nullable=False),
-    sa.Column("toolkits", postgresql.JSONB, nullable=True),
-    sa.Column("auth_config_ids", postgresql.JSONB, nullable=True),
+    sa.Column("auth_config_id", sa.String(), nullable=True),
+    sa.Column("toolkit_name", sa.String(), nullable=False),
+    sa.Column("toolkit_slug", sa.String(), nullable=False),
+    sa.Column("toolkit_logo", sa.String(), nullable=True),
     sa.Column("auth_scheme", sa.String(), nullable=True),
     sa.Column("expected_input_fields", postgresql.JSONB, nullable=True),
-    sa.Column("allowed_tools", postgresql.JSONB, nullable=True),
     sa.Column("server_instance_count", sa.Integer(), nullable=False, default=0),
     sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP")),
   )
+
+  op.create_unique_constraint("uq_mcp_servers_toolkit_name", "mcp_servers", ["toolkit_name"])
+  op.create_unique_constraint("uq_mcp_servers_toolkit_slug", "mcp_servers", ["toolkit_slug"])
 
   op.create_table(
     "mcp_tools",
@@ -50,7 +42,8 @@ def upgrade():
     sa.Column("name", sa.String(), nullable=False),
     sa.Column("slug", sa.String(), nullable=False),
     sa.Column("description", sa.String(), nullable=True),
-    sa.Column("toolkit_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("mcp_toolkits.id"), nullable=False),
+    sa.Column("mcp_server_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("mcp_servers.id"), nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP")),
   )
 
   op.create_table(
@@ -70,4 +63,3 @@ def downgrade():
   op.drop_table("mcp_sessions")
   op.drop_table("mcp_tools")
   op.drop_table("mcp_servers")
-  op.drop_table("mcp_toolkits")

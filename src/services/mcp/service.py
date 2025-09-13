@@ -11,7 +11,7 @@ from database import get_db
 from dependencies.security import RBAC
 from libs.composio.v1 import composio
 from models.auth_model import UserModel
-from models.mcp_model import MCPServerModel, MCPSessionModel, MCPToolkitModel
+from models.mcp_model import MCPServerModel, MCPSessionModel
 from models.mcp_tool_model import MCPToolModel
 from services.__base.acquire import Acquire
 from services.mcp.schema import (
@@ -47,8 +47,8 @@ class MCPService:
     result = await session.execute(server_query)
     server = result.scalar_one_or_none()
 
-    if server and server.auth_config_ids:
-      return server.auth_config_ids[0]  # Return first auth config ID
+    if server and server.auth_config_id:
+      return server.auth_config_id
 
     raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail=f"No auth config found for server: {server_id}")
 
@@ -156,8 +156,9 @@ class MCPService:
           MCPServerResponse(
             id=str(server.id),
             name=server.name,
-            allowed_tools=server.allowed_tools or [],
-            toolkits=server.toolkits or [],
+            toolkit_name=server.toolkit_name,
+            toolkit_slug=server.toolkit_slug,
+            toolkit_logo=server.toolkit_logo,
             created_at=server.created_at.isoformat() if server.created_at else None,
             server_instance_count=server.server_instance_count,
           )
@@ -183,33 +184,26 @@ class MCPService:
       if not server:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="MCP server not found")
 
-      toolkit_query = select(MCPToolkitModel.id).where(MCPToolkitModel.slug.in_(server.toolkits or []))
-      toolkit_result = await session.execute(toolkit_query)
-      toolkit_ids = [row[0] for row in toolkit_result.fetchall()]
-
-      # Then get tools that belong to these toolkits
-      tools_query = (
-        select(MCPToolModel, MCPToolkitModel)
-        .join(MCPToolkitModel, MCPToolModel.toolkit_id == MCPToolkitModel.id)
-        .where(MCPToolModel.toolkit_id.in_(toolkit_ids))
-      )
+      # Get tools that belong to this server directly
+      tools_query = select(MCPToolModel).where(MCPToolModel.mcp_server_id == server_id)
       tools_result = await session.execute(tools_query)
-      tools_data = tools_result.fetchall()
+      tools = tools_result.scalars().all()
 
       tools_list = []
-      for tool, toolkit in tools_data:
+      for tool in tools:
         tools_list.append({
           "name": tool.name,
           "slug": tool.slug,
           "description": tool.description,
-          "toolkit": toolkit.name,  # Use toolkit name from the joined table
+          "toolkit": server.toolkit_name,  # Use toolkit name from server
         })
 
       return MCPServerWithToolsResponse(
         id=str(server.id),
         name=server.name,
-        allowed_tools=server.allowed_tools or [],
-        toolkits=server.toolkits or [],
+        toolkit_name=server.toolkit_name,
+        toolkit_slug=server.toolkit_slug,
+        toolkit_logo=server.toolkit_logo,
         created_at=server.created_at.isoformat() if server.created_at else None,
         server_instance_count=server.server_instance_count,
         tools=tools_list,

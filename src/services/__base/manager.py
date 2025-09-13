@@ -92,7 +92,27 @@ class Manager:
         else:
           service_instance = service_class()
 
-        router = APIRouter(prefix=api_path)
+        # Create tag name from the service name (last path segment, capitalized)
+        tag_name = path_segments[-1].replace("_", " ").title()
+
+        # Extract description from class docstring if it exists
+        tag_description = None
+        if service_class.__doc__:
+          # Get the first line of the docstring and clean it up
+          docstring_lines = service_class.__doc__.strip().split("\n")
+          if docstring_lines:
+            tag_description = docstring_lines[0].strip().rstrip(".")
+
+        # Create router with tags for Swagger documentation
+        router = APIRouter(prefix=api_path, tags=[tag_name])
+
+        # Add tag description to OpenAPI metadata if docstring exists
+        if tag_description:
+          if not hasattr(self.app, "openapi_tags") or self.app.openapi_tags is None:
+            self.app.openapi_tags = []
+          # Only add if tag doesn't already exist
+          if not any(tag.get("name") == tag_name for tag in self.app.openapi_tags):
+            self.app.openapi_tags.append({"name": tag_name, "description": tag_description})
 
         # Register core methods (GET, POST, PUT, DELETE)
         for method in ["get", "post", "put", "delete"]:

@@ -2,12 +2,12 @@ import asyncio
 from typing import Any, AsyncGenerator, List, Optional, Sequence, Type, Union
 from uuid import UUID
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
+from agno.db.postgres import PostgresDb
 from agno.media import File, Image
 from agno.models.anthropic import Claude
 from agno.models.deepseek import DeepSeek
 from agno.models.openai import OpenAIChat
-from agno.storage.postgres import PostgresStorage
 from agno.tools.dalle import DalleTools
 from agno.tools.reasoning import ReasoningTools
 
@@ -30,8 +30,7 @@ class LLMFactory:
   def __init__(self):
     # Configure storage for conversation persistence
     db_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
-    self.storage = PostgresStorage(table_name="__agno_chat_sessions", db_url=db_url, schema="public")
-    self.storage.create()
+    self.storage = PostgresDb(session_table="__agno_chat_sessions", db_url=db_url, db_schema="public")
 
   def get_model_class(self, provider: str) -> ModelClass:
     """Get the model class for a given provider name."""
@@ -52,7 +51,7 @@ class LLMFactory:
     max_tokens: Optional[int] = None,
     top_p: Optional[float] = None,
     thinking: bool = False,
-  ) -> AsyncGenerator[RunResponse, None]:
+  ) -> AsyncGenerator[RunOutput, None]:
     """Stream chat responses using Agno agent.
 
     Args:
@@ -92,16 +91,17 @@ class LLMFactory:
         top_p=top_p,
       ),  # type: ignore
       tools=tools or None,  # type: ignore[arg-type]
-      storage=self.storage,
+      db=self.storage,
       markdown=True,
       stream=True,
       stream_intermediate_steps=thinking,
-      add_history_to_messages=True,
+      add_history_to_context=True,
+      read_chat_history=True,
       session_id=str(chat_session_id),
-      num_history_responses=memory_size,
+      num_history_runs=memory_size,
       instructions=prompt,
     )
-    async for token in await agent.arun(message, files=files or None, images=images or None):
+    async for token in agent.arun(message, files=files or None, images=images or None, stream=True):
       yield token
 
   async def image_chat(
@@ -116,7 +116,7 @@ class LLMFactory:
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
     top_p: Optional[float] = None,
-  ) -> AsyncGenerator[RunResponse, None]:
+  ) -> AsyncGenerator[RunOutput, None]:
     """Stream image generation responses using Agno agent with DalleTools.
 
     Args:
@@ -154,12 +154,13 @@ class LLMFactory:
         top_p=top_p,
       ),  # type: ignore
       tools=[DalleTools()],  # Enable image generation
-      storage=self.storage,
+      db=self.storage,
       markdown=True,
       stream=True,
-      add_history_to_messages=True,
+      add_history_to_context=True,
+      read_chat_history=True,
       session_id=str(chat_session_id),
-      num_history_responses=memory_size,
+      num_history_runs=memory_size,
       instructions=prompt
       or (
         "You are an AI assistant that can generate images. When users ask for images, "
@@ -167,7 +168,7 @@ class LLMFactory:
       ),
     )
 
-    async for token in await agent.arun(message, files=files or None, images=images or None):
+    async for token in agent.arun(message, files=files or None, images=images or None, stream=True):
       yield token
 
 

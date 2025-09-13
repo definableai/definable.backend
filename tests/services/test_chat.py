@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from agno.agent import RunOutput
 from fastapi import HTTPException, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -242,7 +243,11 @@ async def test_send_message_model(chat_service, mock_db_session, test_user, org_
     MockCharge.return_value = mock_charge
 
     async def mock_generator():
-      yield MagicMock(content="test response")
+      # Create a proper RunOutput mock for Agno v2 compatibility
+      run_output = MagicMock(spec=RunOutput)
+      run_output.content = "test response"
+      run_output.type = "text"
+      yield run_output
 
     chat_service.llm_factory.chat = MagicMock(return_value=mock_generator())
 
