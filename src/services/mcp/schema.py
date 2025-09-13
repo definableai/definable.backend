@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
@@ -63,3 +64,9 @@ class MCPServerWithToolsResponse(BaseModel):
 
 class MCPSessionListResponse(BaseModel):
   sessions: List[MCPInstanceResponse]
+
+
+class MCPSessionStatus(str, Enum):
+  ACTIVE = "active"
+  PENDING = "pending"
+  INACTIVE = "inactive"

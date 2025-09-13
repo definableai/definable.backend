@@ -24,6 +24,7 @@ from services.mcp.schema import (
   MCPServerResponse,
   MCPServerWithToolsResponse,
   MCPSessionListResponse,
+  MCPSessionStatus,
 )
 
 
@@ -35,6 +36,7 @@ class MCPService:
     "get=server_with_tools",
     "get=user_sessions",
     "get=callback",
+    "get=list_mcp_instances",
   ]
 
   def __init__(self, acquire: Acquire):
@@ -211,6 +213,34 @@ class MCPService:
     except Exception as e:
       self.logger.error(f"Error getting MCP server with tools: {e}")
       raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Error getting MCP server with tools")
+
+  async def get_list_mcp_instances(
+    self,
+    org_id: str,
+    status: MCPSessionStatus = MCPSessionStatus.ACTIVE,
+    user: dict = Depends(RBAC("mcp", "read")),
+    session: AsyncSession = Depends(get_db),
+  ) -> MCPSessionListResponse:
+    try:
+      mcp_instances_query = select(MCPSessionModel).where(MCPSessionModel.org_id == org_id, MCPSessionModel.status == status.value)
+      result = await session.execute(mcp_instances_query)
+      mcp_instances = result.scalars().all()
+
+      session_responses = []
+      for db_session in mcp_instances:
+        session_responses.append(
+          MCPInstanceResponse(
+            id=str(db_session.id),
+            instance_id=db_session.instance_id,
+            mcp_server_id=str(db_session.mcp_server_id),
+            created_at=db_session.created_at.isoformat() if db_session.created_at else None,
+          )
+        )
+
+      return MCPSessionListResponse(sessions=session_responses)
+    except Exception as e:
+      self.logger.error(f"Error getting MCP instances: {e}")
+      raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Error getting MCP instances")
 
   async def get_user_sessions(
     self,
