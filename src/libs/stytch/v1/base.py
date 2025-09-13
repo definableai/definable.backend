@@ -29,7 +29,7 @@ class StytchBase:
     """Create user."""
     try:
       response = await self.client.users.create_async(
-        email, Name(first_name=first_name, last_name=last_name), untrusted_metadata={"message": "created from postman"}
+        [email], name=Name(first_name=first_name, last_name=last_name), untrusted_metadata={"message": "created from postman"}
       )
       return LibResponse.success_response(response)
     except Exception as e:

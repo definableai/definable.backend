@@ -5,9 +5,9 @@ from pathlib import Path
 import httpx
 import os
 
-from agno.document.reader.pdf_reader import PDFReader
-from agno.document.reader.csv_reader import CSVReader
-from agno.document.reader.docx_reader import DocxReader
+from agno.knowledge.reader.pdf_reader import PDFReader
+from agno.knowledge.reader.csv_reader import CSVReader
+from agno.knowledge.reader.docx_reader import DocxReader
 
 from common.logger import log as logger
 

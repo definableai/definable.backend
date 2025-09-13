@@ -2,11 +2,11 @@ import contextlib
 from typing import AsyncGenerator, Type, Union
 from uuid import UUID
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
+from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
 from agno.models.deepseek import DeepSeek
 from agno.models.openai import OpenAIChat
-from agno.storage.postgres import PostgresStorage
 from agno.tools.mcp import MCPTools
 
 from config.settings import settings
@@ -28,8 +28,7 @@ class MCPPlaygroundFactory:
   def __init__(self):
     # Configure storage for conversation persistence (same as chat service)
     db_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
-    self.storage = PostgresStorage(table_name="__agno_chat_sessions", db_url=db_url, schema="public")
-    self.storage.create()
+    self.storage = PostgresDb(session_table="__agno_chat_sessions", db_url=db_url, db_schema="public")
 
   def get_model_class(self, provider: str) -> ModelClass:
     """Get the model class for a given provider name."""
@@ -45,7 +44,7 @@ class MCPPlaygroundFactory:
     llm: str,
     provider: str,
     memory_size: int = 50,
-  ) -> AsyncGenerator[RunResponse, None]:
+  ) -> AsyncGenerator[RunOutput, None]:
     """
     Stream chat responses with MCP tools integration.
 
@@ -80,13 +79,14 @@ class MCPPlaygroundFactory:
         name="MCP Playground Assistant",
         model=model_class(id=llm),  # type: ignore
         tools=[mcp_tools],
-        storage=self.storage,
+        db=self.storage,
         markdown=True,
         stream=True,
-        add_history_to_messages=True,
+        add_history_to_context=True,
         session_id=str(session_id),
-        num_history_responses=memory_size,
-        show_tool_calls=True,
+        read_chat_history=True,
+        num_history_runs=memory_size,
+        stream_intermediate_steps=True,
         instructions="""
   You are an intelligent assistant with access to various tools through MCP (Model Context Protocol).
 
@@ -112,7 +112,7 @@ class MCPPlaygroundFactory:
       )
 
       # Stream the response
-      async for token in await agent.arun(message):
+      async for token in agent.arun(message, stream=True):
         yield token
 
     finally:
