@@ -1,5 +1,6 @@
 import uuid
 from http import HTTPStatus
+from typing import List, Optional
 
 from fastapi import Depends, HTTPException
 from fastapi.responses import RedirectResponse
@@ -217,27 +218,22 @@ class MCPService:
   async def get_list_mcp_instances(
     self,
     org_id: str,
-    status: MCPSessionStatus = MCPSessionStatus.ACTIVE,
+    status: Optional[MCPSessionStatus] = None,
     user: dict = Depends(RBAC("mcp", "read")),
     session: AsyncSession = Depends(get_db),
-  ) -> MCPSessionListResponse:
+  ) -> List[MCPInstanceResponse]:
     try:
-      mcp_instances_query = select(MCPSessionModel).where(MCPSessionModel.org_id == org_id, MCPSessionModel.status == status.value)
+      # Base query with org_id filter
+      mcp_instances_query = select(MCPSessionModel).where(MCPSessionModel.org_id == org_id)
+
+      # Add status filter only if status is provided
+      if status is not None:
+        mcp_instances_query = mcp_instances_query.where(MCPSessionModel.status == status.value)
+
       result = await session.execute(mcp_instances_query)
-      mcp_instances = result.scalars().all()
+      mcp_instances = list(result.scalars().all())
 
-      session_responses = []
-      for db_session in mcp_instances:
-        session_responses.append(
-          MCPInstanceResponse(
-            id=str(db_session.id),
-            instance_id=db_session.instance_id,
-            mcp_server_id=str(db_session.mcp_server_id),
-            created_at=db_session.created_at.isoformat() if db_session.created_at else None,
-          )
-        )
-
-      return MCPSessionListResponse(sessions=session_responses)
+      return [MCPInstanceResponse.model_validate(instance) for instance in mcp_instances]
     except Exception as e:
       self.logger.error(f"Error getting MCP instances: {e}")
       raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Error getting MCP instances")

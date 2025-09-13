@@ -1,5 +1,7 @@
+import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -20,10 +22,14 @@ class MCPInstanceCreate(BaseModel):
 
 
 class MCPInstanceResponse(BaseModel):
-  id: str
+  id: UUID
+  status: str
   instance_id: str
-  mcp_server_id: str
-  created_at: str
+  mcp_server_id: UUID
+  created_at: datetime.datetime
+
+  class Config:
+    from_attributes = True
 
 
 class MCPConnectedAccountCreate(BaseModel):
