@@ -8,19 +8,13 @@ from database import CRUD
 class MCPServerModel(CRUD):
   __tablename__ = "mcp_servers"
   name: Mapped[str] = mapped_column(String, nullable=False)
-  toolkits: Mapped[list] = mapped_column(JSONB, nullable=True)
-  auth_config_ids: Mapped[list] = mapped_column(JSONB, nullable=True)
+  auth_config_id: Mapped[str] = mapped_column(String, nullable=True)
+  toolkit_name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+  toolkit_slug: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+  toolkit_logo: Mapped[str] = mapped_column(String, nullable=True)
   auth_scheme: Mapped[str] = mapped_column(String, nullable=True)
   expected_input_fields: Mapped[list] = mapped_column(JSONB, nullable=True)
-  allowed_tools: Mapped[list] = mapped_column(JSONB, nullable=True)
   server_instance_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
-
-class MCPToolkitModel(CRUD):
-  __tablename__ = "mcp_toolkits"
-  name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
-  slug: Mapped[str] = mapped_column(String, nullable=False, unique=True)
-  logo: Mapped[str] = mapped_column(String, nullable=True)
 
 
 class MCPSessionModel(CRUD):
