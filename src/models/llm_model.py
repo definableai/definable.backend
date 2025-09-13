@@ -1,5 +1,7 @@
+from typing import Optional
+
 from sqlalchemy import Boolean, String
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import CRUD
@@ -17,3 +19,4 @@ class LLMModel(CRUD):
   config: Mapped[dict] = mapped_column(JSONB, nullable=False)
   props: Mapped[dict] = mapped_column(JSONB, nullable=False)
   model_metadata: Mapped[dict] = mapped_column(JSONB, nullable=True)
+  tags: Mapped[Optional[list[str]]] = mapped_column(ARRAY(String), nullable=True, default=[])
