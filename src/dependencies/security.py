@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config.settings import settings
 from database import get_db
 from libs.stytch.v1 import stytch_base
-from models import APIKeyModel, OrganizationMemberModel, PermissionModel, RoleModel, RolePermissionModel
+from models import APIKeyModel, OrganizationMemberModel, OrganizationModel, PermissionModel, RoleModel, RolePermissionModel, UserModel
 from utils.auth_util import verify_jwt_token
 
 
@@ -29,12 +29,11 @@ class JWTBearer(HTTPBearer):
       if not credentials or credentials.scheme != "Bearer":
         raise HTTPException(status_code=403, detail="Invalid authorization")
       try:
-        response = await stytch_base.authenticate_user(credentials.credentials)
-        if response.success and response.data.status_code == 200:
-          user = response.model_dump()["data"]["user"]
-          return {"id": user["trusted_metadata"]["external_user_id"], "user_data": user}
+        response = await stytch_base.authenticate_user_with_jkws(credentials.credentials)
+        if response.success:
+          return {"stytch_user_id": response.data["sub"]}
         else:
-          raise HTTPException(status_code=403, detail="Invalid authorization")
+          raise HTTPException(status_code=403, detail=str(response.errors[0]["message"]))
       except Exception as e:
         raise HTTPException(status_code=403, detail=str(e))
     elif websocket:
@@ -42,12 +41,11 @@ class JWTBearer(HTTPBearer):
       if not token:
         raise HTTPException(status_code=403, detail="Invalid authorization")
       try:
-        response = await stytch_base.authenticate_user(token)
-        if response.success and response.data.status_code == 200:
-          user = response.model_dump()["data"]["user"]
-          return {"id": user["trusted_metadata"]["external_user_id"], "user_data": user}
+        response = await stytch_base.authenticate_user_with_jkws(token)
+        if response.success:
+          return {"stytch_user_id": response.data["sub"]}
         else:
-          raise HTTPException(status_code=403, detail="Invalid authorization")
+          raise HTTPException(status_code=403, detail=str(response.errors[0]["message"]))
       except Exception as e:
         raise HTTPException(status_code=403, detail=str(e))
     else:
@@ -222,7 +220,7 @@ class RBAC:
     session: AsyncSession = Depends(get_db),
   ) -> dict:
     try:
-      user_id = UUID(token_payload.get("id"))
+      stytch_user_id = token_payload.get("stytch_user_id")
       if request:
         org_id = request.query_params.get("org_id")
       elif websocket:
@@ -230,41 +228,59 @@ class RBAC:
       else:
         raise HTTPException(status_code=403, detail="Invalid org id")
 
-      # Get user's role in organization
-      member_query = select(OrganizationMemberModel).where(
-        and_(OrganizationMemberModel.user_id == user_id, OrganizationMemberModel.organization_id == org_id)
-      )
-      members = await session.execute(member_query)
-      member = members.unique().scalar_one_or_none()
-
-      if not member:
-        raise HTTPException(status_code=403, detail="User is not a member of this organization")
-      # Check organization member status with specific error messages
-      if member.status == "deleted":
-        raise HTTPException(status_code=403, detail="Access denied: User has been removed from this organization")
-      if member.status == "suspended":
-        raise HTTPException(status_code=403, detail="Access denied: User access has been suspended in this organization")
-      if member.status == "invited":
-        raise HTTPException(status_code=403, detail="Access denied: User invitation is still pending acceptance")
-      if member.status != "active":
-        raise HTTPException(status_code=403, detail=f"Access denied: User is not active in this organization (status: {member.status})")
-
-      # Get role permissions
-      role_perms_query = (
-        select(RolePermissionModel, PermissionModel)
+      # Complex query to get user, organization, role, and permissions data
+      user_permissions_query = (
+        select(
+          UserModel.id.label("user_id"),
+          UserModel.email,
+          OrganizationModel.id.label("organization_id"),
+          OrganizationModel.name.label("organization_name"),
+          RoleModel.id.label("role_id"),
+          RoleModel.name.label("role_name"),
+          RoleModel.hierarchy_level,
+          OrganizationMemberModel.status,
+          PermissionModel.id.label("permission_id"),
+          PermissionModel.name.label("permission_name"),
+          PermissionModel.resource,
+          PermissionModel.action,
+        )
+        .select_from(UserModel)
+        .join(OrganizationMemberModel, UserModel.id == OrganizationMemberModel.user_id)
+        .join(OrganizationModel, OrganizationMemberModel.organization_id == OrganizationModel.id)
+        .join(RoleModel, OrganizationMemberModel.role_id == RoleModel.id)
+        .join(RolePermissionModel, RoleModel.id == RolePermissionModel.role_id)
         .join(PermissionModel, RolePermissionModel.permission_id == PermissionModel.id)
-        .where(RolePermissionModel.role_id == member.role_id)
+        .where(and_(UserModel.stytch_id == stytch_user_id, OrganizationModel.id == org_id))
       )
-      role_perms = await session.execute(role_perms_query)
-      permissions = role_perms.unique().all()
-      prem_list = []
+
+      result = await session.execute(user_permissions_query)
+      user_data = result.all()
+
+      if not user_data:
+        raise HTTPException(status_code=403, detail="User is not a member of this organization")
+
+      # Get the first row to check member status and get user/org info
+      first_row = user_data[0]
+
+      # Check organization member status with specific error messages
+      if first_row.status == "deleted":
+        raise HTTPException(status_code=403, detail="Access denied: User has been removed from this organization")
+      if first_row.status == "suspended":
+        raise HTTPException(status_code=403, detail="Access denied: User access has been suspended in this organization")
+      if first_row.status == "invited":
+        raise HTTPException(status_code=403, detail="Access denied: User invitation is still pending acceptance")
+      if first_row.status != "active":
+        raise HTTPException(status_code=403, detail=f"Access denied: User is not active in this organization (status: {first_row.status})")
+
       # Check permissions with wildcard support
       has_permission = False
-      for _, permission in permissions:
-        resource_match = self._check_wildcard_match(permission.resource, self.required_resource)
-        action_match = self._check_wildcard_match(permission.action, self.required_action)
-        if permission.resource != "*":
-          prem_list.append(f"{permission.resource}_{permission.action}")
+      prem_list = []
+
+      for row in user_data:
+        resource_match = self._check_wildcard_match(row.resource, self.required_resource)
+        action_match = self._check_wildcard_match(row.action, self.required_action)
+        if row.resource != "*":
+          prem_list.append(f"{row.resource}_{row.action}")
         if resource_match and action_match:
           has_permission = True
           break
@@ -272,19 +288,12 @@ class RBAC:
       if not has_permission:
         raise HTTPException(status_code=403, detail=f"Access denied. Required: {self.required_resource}:{self.required_action}")
 
-      # Get role details
-      role_query = select(RoleModel).where(RoleModel.id == member.role_id)
-      roles = await session.execute(role_query)
-      role = roles.unique().scalar_one_or_none()
-      if not role:
-        raise HTTPException(status_code=403, detail="Role not found")
-
       # Add role info to token payload
       token_payload["org_id"] = org_id
       token_payload["required_permission"] = f"{self.required_resource}_{self.required_action}"
-      token_payload["role"] = role.name
-      token_payload["role_level"] = role.hierarchy_level
-      token_payload["role_id"] = role.id
+      token_payload["role"] = first_row.role_name
+      token_payload["role_level"] = first_row.hierarchy_level
+      token_payload["role_id"] = first_row.role_id
       token_payload["permissions"] = prem_list
       return token_payload
     except Exception as e:

@@ -9,6 +9,7 @@ from stytch.consumer.models.users import CreateResponse, DeleteResponse, GetResp
 from common.logger import logger
 from config.settings import settings
 from libs.response import LibResponse
+from libs.stytch.v1.jkws import stytch_local_verifier
 
 
 class StytchBase:
@@ -162,6 +163,16 @@ class StytchBase:
       response = await self.client.passwords.authenticate_async(email, password, session_duration_minutes=1440)
       return LibResponse.success_response(response)
     except Exception as e:
+      return LibResponse.error_response([{"message": str(e)}])
+
+  async def authenticate_user_with_jkws(self, jwt: str) -> LibResponse[AuthenticateResponse] | LibResponse[None]:
+    """Authenticate user with JWT."""
+    try:
+      # this jwt comes as stythch_session_jwt in header
+      response = stytch_local_verifier.verify_session_token(session_token=jwt)
+      return LibResponse.success_response(response)
+    except Exception as e:
+      print(e)
       return LibResponse.error_response([{"message": str(e)}])
 
 
