@@ -1,7 +1,7 @@
-"""023_fix_invites_references
+"""025_fix_invites_references
 
 Revision ID: 94d74fb48263
-Revises: 3c4d5e6f7g8h
+Revises: 5e6f7g8h9i0j
 Create Date: 2025-09-03 01:25:18.630638
 
 """
@@ -14,7 +14,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "94d74fb48263"
-down_revision: Union[str, None] = "4a5b6c7d8e9f"
+down_revision: Union[str, None] = "5e6f7g8h9i0j"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

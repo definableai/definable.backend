@@ -39,11 +39,59 @@ class BillingPlanSchema(BaseModel):
   credits: int
   discount_percentage: float = 0.0
   is_active: bool = True
+  currency: str = "USD"
+  cycle: str = "MONTHLY"
+  plan_id: Optional[str] = None
   created_at: datetime
   updated_at: datetime
 
+  # Computed fields
+  is_yearly: bool = False
+  is_monthly: bool = True
+  effective_amount: float = 0.0
+  monthly_equivalent: float = 0.0
+
   class Config:
     from_attributes = True
+
+  def __init__(self, **data):
+    super().__init__(**data)
+    # Calculate computed fields after initialization
+    self.is_yearly = self.cycle == "YEARLY"
+    self.is_monthly = self.cycle == "MONTHLY"
+    self.effective_amount = self.amount * (1 - self.discount_percentage / 100) if self.discount_percentage > 0 else self.amount
+    self.monthly_equivalent = self.amount / 12 if self.is_yearly else self.amount
+
+
+class SubscriptionResponse(BaseModel):
+  subscription_id: str
+  subscription_url: str
+  created_at: datetime
+  expire_by: datetime
+
+
+class RazorpayWebhookEvent(str, Enum):
+  """Razorpay webhook event types for subscription billing."""
+
+  # Payment events
+  PAYMENT_AUTHORIZED = "payment.authorized"
+  PAYMENT_CAPTURED = "payment.captured"
+  PAYMENT_FAILED = "payment.failed"
+
+  # Order events
+  ORDER_PAID = "order.paid"
+
+  # Invoice events
+  INVOICE_PAID = "invoice.paid"
+
+  # Subscription events
+  SUBSCRIPTION_ACTIVATED = "subscription.activated"
+  SUBSCRIPTION_AUTHENTICATED = "subscription.authenticated"
+  SUBSCRIPTION_CHARGED = "subscription.charged"
+  SUBSCRIPTION_PAUSED = "subscription.paused"
+  SUBSCRIPTION_RESUMED = "subscription.resumed"
+  SUBSCRIPTION_CANCELLED = "subscription.cancelled"
+  SUBSCRIPTION_PENDING = "subscription.pending"
 
 
 class WalletResponseSchema(BaseModel):
@@ -127,6 +175,11 @@ class TransactionWithInvoiceSchema(TransactionResponseSchema):
     if tx.payment_provider == "razorpay":
       currency = "INR"
 
+    # Check if transaction has invoice using new payment_metadata structure
+    has_invoice = False
+    if tx.payment_metadata and isinstance(tx.payment_metadata, dict):
+      has_invoice = tx.payment_metadata.get("invoice_id") is not None
+
     # Create the basic schema with all fields
     schema = cls(
       id=tx.id,
@@ -138,7 +191,7 @@ class TransactionWithInvoiceSchema(TransactionResponseSchema):
       credits=tx.credits,
       description=tx.description,
       created_at=tx.created_at,
-      has_invoice=(tx.stripe_invoice_id is not None or tx.razorpay_invoice_id is not None),
+      has_invoice=has_invoice,
       currency=currency,
     )
     return schema
@@ -169,14 +222,47 @@ class BillingPlanCreateSchema(BaseModel):
 class BillingPlanResponseSchema(BaseModel):
   id: UUID4
   name: str
+  description: Optional[str] = None
   amount: float
   credits: int
   discount_percentage: float
   is_active: bool
   currency: str
+  cycle: str = "MONTHLY"
+  plan_id: Optional[str] = None
+  created_at: datetime
+  updated_at: datetime
+
+  # Computed fields
+  is_yearly: bool = False
+  is_monthly: bool = True
+  effective_amount: float = 0.0
+  monthly_equivalent: float = 0.0
 
   class Config:
-    from_attributes = True  # Change this line
+    from_attributes = True
+
+  @classmethod
+  def from_model(cls, plan):
+    """Create schema from BillingPlanModel with computed fields."""
+    return cls(
+      id=plan.id,
+      name=plan.name,
+      description=plan.description,
+      amount=plan.amount,
+      credits=plan.credits,
+      discount_percentage=plan.discount_percentage,
+      is_active=plan.is_active,
+      currency=plan.currency,
+      cycle=plan.cycle,
+      plan_id=plan.plan_id,
+      created_at=plan.created_at,
+      updated_at=plan.updated_at,
+      is_yearly=plan.is_yearly,
+      is_monthly=plan.is_monthly,
+      effective_amount=round(plan.effective_amount, 2),
+      monthly_equivalent=round(plan.monthly_equivalent, 2),
+    )
 
 
 class TransactionFilterParamsSchema(BaseModel):

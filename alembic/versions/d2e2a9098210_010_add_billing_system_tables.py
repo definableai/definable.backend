@@ -203,6 +203,8 @@ def downgrade():
   op.execute("DROP INDEX IF EXISTS ix_transactions_organization_id")
   op.execute("DROP INDEX IF EXISTS ix_transactions_user_id_organization_id")
   op.execute("DROP INDEX IF EXISTS ix_wallets_organization_id")
+  op.execute("DROP INDEX IF EXISTS ix_transactions_type")
+  op.execute("DROP INDEX IF EXISTS ix_transactions_user_id_type_status")
 
   # Drop tables in reverse order
   op.drop_table("billing_plans")
