@@ -1,8 +1,8 @@
 import contextlib
-from typing import AsyncGenerator, Type, Union
+from typing import Any, AsyncGenerator, Type, Union
 from uuid import UUID
 
-from agno.agent import Agent, RunOutput
+from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
 from agno.models.deepseek import DeepSeek
@@ -44,7 +44,7 @@ class MCPPlaygroundFactory:
     llm: str,
     provider: str,
     memory_size: int = 50,
-  ) -> AsyncGenerator[RunOutput, None]:
+  ) -> AsyncGenerator[Any, None]:
     """
     Stream chat responses with MCP tools integration.
 

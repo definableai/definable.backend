@@ -2,7 +2,7 @@ import asyncio
 from typing import Any, AsyncGenerator, List, Optional, Sequence, Type, Union
 from uuid import UUID
 
-from agno.agent import Agent, RunOutput
+from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.media import File, Image
 from agno.models.anthropic import Claude
@@ -51,7 +51,7 @@ class LLMFactory:
     max_tokens: Optional[int] = None,
     top_p: Optional[float] = None,
     thinking: bool = False,
-  ) -> AsyncGenerator[RunOutput, None]:
+  ) -> AsyncGenerator[Any, None]:
     """Stream chat responses using Agno agent.
 
     Args:
@@ -116,7 +116,7 @@ class LLMFactory:
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
     top_p: Optional[float] = None,
-  ) -> AsyncGenerator[RunOutput, None]:
+  ) -> AsyncGenerator[Any, None]:
     """Stream image generation responses using Agno agent with DalleTools.
 
     Args:

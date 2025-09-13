@@ -67,9 +67,9 @@ The prompt should be clear, engaging, and directly related to the text."""
 
     # When buffer reaches the target size, yield the content and reset
     if len(buffer) >= buffer_size:
-      yield "".join(buffer)
+      yield "".join(str(item) for item in buffer if item is not None)
       buffer = []
 
   # Don't forget any remaining content
   if buffer:
-    yield "".join(buffer)
+    yield "".join(str(item) for item in buffer if item is not None)

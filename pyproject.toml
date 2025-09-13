@@ -57,6 +57,7 @@ dependencies = [
     "firebase-admin>=7.1.0",
     "mcp>=1.13.1",
     "html5lib>=1.1",
+    "sentry-sdk>=2.37.1",
 ]
 
 [dependency-groups]
